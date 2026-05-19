@@ -25,48 +25,20 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: "No LLM config" }, { status: 500 });
   }
 
-  const url = `${config.baseUrl.replace(/\/$/, "")}/chat/completions`;
-
   try {
-    const res = await llmFetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.model,
-        max_tokens: 64,
-        messages: [
-          {
-            role: "user",
-            content: 'Reply with JSON only: {"status":"ok","provider":"gemini"}',
-          },
-        ],
-        response_format: { type: "json_object" },
-      }),
-    });
-
-    const text = await res.text();
-    if (!res.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          provider: config.provider,
-          model: config.model,
-          status: res.status,
-          error: text.slice(0, 500),
-        },
-        { status: 502 },
-      );
-    }
+    const { callLlm } = await import("@/lib/llm/client");
+    const result = await callLlm(
+      'Return JSON: {"status":"ok"}',
+      "P1",
+      { subStep: "test" },
+    );
 
     return NextResponse.json({
       ok: true,
       provider: config.provider,
       label: providerLabel(config.provider),
       model: config.model,
-      sample: text.slice(0, 200),
+      sample: result.userVisibleText?.slice(0, 200) ?? JSON.stringify(result),
     });
   } catch (e) {
     return NextResponse.json(

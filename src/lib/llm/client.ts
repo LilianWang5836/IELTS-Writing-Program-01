@@ -1,12 +1,60 @@
 import { resolveLlmConfig, providerLabel } from "./config";
+import { geminiGenerateJson } from "./gemini-native";
 import { parseLlmJson } from "./guard";
 import { llmFetch, networkHint } from "./http";
 import { mockLlmResponse } from "./mock";
 import type { LlmTurnResult, PromptModuleId } from "@/lib/domain/types";
 
-async function chatCompletions(
+const SYSTEM_JSON =
+  "You are an IELTS writing coach API. Always respond with a single valid JSON object only, no markdown fences.";
+
+type ChatCompletionBody = {
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  response_format?: { type: "json_object" };
+  messages: Array<{ role: string; content: string }>;
+};
+
+type ChatResponse = {
+  choices?: Array<{
+    message?: { content?: string | null; refusal?: string | null };
+    finish_reason?: string;
+  }>;
+  error?: { message?: string };
+};
+
+function extractOpenAiContent(data: ChatResponse): string | null {
+  const choice = data.choices?.[0];
+  const content = choice?.message?.content?.trim();
+  if (content) return content;
+  return null;
+}
+
+function buildChatBody(
   config: NonNullable<ReturnType<typeof resolveLlmConfig>>,
   prompt: string,
+  jsonMode: boolean,
+): ChatCompletionBody {
+  const body: ChatCompletionBody = {
+    model: config.model,
+    temperature: 0.4,
+    max_tokens: 1024,
+    messages: [
+      { role: "system", content: SYSTEM_JSON },
+      { role: "user", content: prompt },
+    ],
+  };
+  if (jsonMode) {
+    body.response_format = { type: "json_object" };
+  }
+  return body;
+}
+
+async function chatCompletionsOpenAi(
+  config: NonNullable<ReturnType<typeof resolveLlmConfig>>,
+  prompt: string,
+  jsonMode: boolean,
 ): Promise<string> {
   const url = `${config.baseUrl.replace(/\/$/, "")}/chat/completions`;
 
@@ -17,7 +65,7 @@ async function chatCompletions(
 
   if (config.provider === "openrouter") {
     headers["HTTP-Referer"] =
-      process.env.OPENROUTER_REFERER ?? "http://localhost:3000";
+      process.env.OPENROUTER_REFERER ?? "https://vercel.app";
     headers["X-Title"] = "AI IELTS Writing Tutor";
   }
 
@@ -26,39 +74,62 @@ async function chatCompletions(
     res = await llmFetch(url, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        model: config.model,
-        temperature: 0.4,
-        max_tokens: 800,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are an IELTS writing coach API. Always respond with a single valid JSON object only, no markdown.",
-          },
-          { role: "user", content: prompt },
-        ],
-      }),
+      body: JSON.stringify(buildChatBody(config, prompt, jsonMode)),
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "fetch failed";
     throw new Error(`${msg}. ${networkHint()}`);
   }
 
+  const raw = await res.text();
   if (!res.ok) {
-    const errText = await res.text();
     throw new Error(
-      `${providerLabel(config.provider)} API error ${res.status}: ${errText.slice(0, 300)}`,
+      `${providerLabel(config.provider)} API error ${res.status}: ${raw.slice(0, 400)}`,
     );
   }
 
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Empty LLM response");
-  return content;
+  let data: ChatResponse;
+  try {
+    data = JSON.parse(raw) as ChatResponse;
+  } catch {
+    throw new Error(`Invalid JSON from API: ${raw.slice(0, 200)}`);
+  }
+
+  const content = extractOpenAiContent(data);
+  if (content) return content;
+
+  const refusal = data.choices?.[0]?.message?.refusal;
+  const reason = data.choices?.[0]?.finish_reason;
+  throw new Error(
+    `Empty LLM response (finish_reason=${reason ?? "n/a"}${refusal ? `, refusal=${refusal}` : ""}). Raw: ${raw.slice(0, 300)}`,
+  );
+}
+
+async function chatCompletions(
+  config: NonNullable<ReturnType<typeof resolveLlmConfig>>,
+  prompt: string,
+): Promise<string> {
+  if (config.provider === "gemini") {
+    try {
+      return await geminiGenerateJson(
+        config.apiKey,
+        config.model,
+        SYSTEM_JSON,
+        prompt,
+      );
+    } catch (nativeErr) {
+      console.warn("[llm] Gemini native failed, trying OpenAI compat:", nativeErr);
+    }
+  }
+
+  try {
+    return await chatCompletionsOpenAi(config, prompt, true);
+  } catch (firstErr) {
+    if (config.provider !== "gemini" && config.provider !== "openrouter") {
+      throw firstErr;
+    }
+    return await chatCompletionsOpenAi(config, prompt, false);
+  }
 }
 
 export function getLlmMode(): {

@@ -18,6 +18,7 @@ export function SentenceInput() {
 
   const disabled = !state || loading;
   const stage3 = state?.stage === 3;
+  const awaitingSentence = stage3 && state?.s3?.mode === "assign";
 
   const onSubmit = () => {
     const trimmed = text.trim();
@@ -55,9 +56,11 @@ export function SentenceInput() {
           placeholder={
             !state
               ? "请先选择题目并开始特训…"
-              : stage3
-                ? "写一句话，Enter 提交（Shift+Enter 换行）"
-                : "输入你的回答…"
+              : awaitingSentence
+                ? "按教练给的 Keywords/Patterns 写一句英文，Enter 提交"
+                : stage3
+                  ? "写一句话，Enter 提交（Shift+Enter 换行）"
+                  : "输入你的回答…"
           }
           value={text}
           onChange={(e) => setText(e.target.value)}

@@ -8,6 +8,7 @@ import type {
   PromptModuleId,
   SessionState,
 } from "@/lib/domain/types";
+import { formatCoachDisplay } from "@/lib/llm/guard";
 import { callLlm } from "@/lib/llm/client";
 import { buildFullPrompt } from "@/lib/prompts/loader";
 import {
@@ -65,9 +66,6 @@ function buildVars(
     base.body1_logic = state.s2.body1Logic?.raw ?? "";
     base.s2_json = JSON.stringify(state.s2);
   }
-  if (state.s1 && state.subStep === "S2_3_BODY2") {
-    base.s1_position = state.s1.position;
-  }
   if (state.s3) {
     const body = state.s3.currentBody;
     const mod = getCurrentModule(
@@ -115,7 +113,7 @@ async function processLlmTurn(
     userMessage,
   );
 
-  let reply = result.userVisibleText;
+  let reply = formatCoachDisplay(result);
   let nextState = state;
   let autoContinue = false;
 
@@ -266,7 +264,15 @@ export async function handleTurn(
     const currentModule = resolvePromptModule(s);
     if (currentModule === "NONE" || currentModule === "OPENING") break;
 
-    if (currentModule === "P3_2" && s.s3?.mode === "assign" && guard > 1) break;
+    // 已有 assign 任务时勿在同一轮重复调用 P3.2
+    if (
+      currentModule === "P3_2" &&
+      s.s3?.mode === "assign" &&
+      guard > 1 &&
+      s.s3.lastAssignText
+    ) {
+      break;
+    }
 
     const needsUser =
       s.subStep !== "S3_1_BLUEPRINT" &&

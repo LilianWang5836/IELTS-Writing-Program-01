@@ -110,9 +110,16 @@ export type PromptModuleId =
   | "P3_2"
   | "P3_3";
 
+export interface LanguageSupport {
+  keywords?: string[];
+  phraseFragments?: string[];
+  starterStructures?: string[];
+}
+
 export interface LlmTurnResult {
   verdict: "pass" | "fail" | "assign";
   userVisibleText: string;
+  languageSupport?: LanguageSupport;
   extracted?: Record<string, unknown>;
   blueprint?: Blueprint;
   modulePlan?: Record<BodyKey, ModuleId[]>;

@@ -1,11 +1,23 @@
-# 当前任务：Stage 3.3 Body 全局检查
+# 【内容回应】Stage 3.3 Body Final Check
+
 Body：{{current_body}}
 
 ## 本 Body 已确认句子
 {{body_sentences}}
 
-## 检查
-Claim→Reason→Example 连贯；完整论证链；回答题目；有推进感
+## 动作
+在一个 Body 的所有 Modules 完成后执行整体检查：
+- Claim → Reason → Example 是否连贯
+- 是否形成完整论证链
+- 是否有重复或逻辑断层
+- 是否真正回答题目
+- 是否有「推进感」（not just description）
+
+- 如果不完整：
+  → 追加 1 个补充句（补 reason / example / impact 缺口）
+
+- 如果完整：
+  → 进入下一 Body（见【流程规划】）
 
 ## 输出 JSON
 {

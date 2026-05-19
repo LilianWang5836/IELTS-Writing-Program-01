@@ -23,8 +23,9 @@ function loadFile(name: string): string {
   return content;
 }
 
+/** 流程规划 + 内容回应（用户调优 Prompt 拆解，原文规则在 P0_content 与各 P* 模块） */
 export function loadPromptBase(): string {
-  return loadFile("P0_base.txt");
+  return `${loadFile("P0_flow.txt")}\n\n---\n\n${loadFile("P0_content.txt")}`;
 }
 
 export function loadPromptModule(id: PromptModuleId): string {

@@ -1,33 +1,43 @@
-# 当前任务：Stage 3.1 写作骨架 Blueprint
+# 【内容回应】Stage 3.1 写作骨架生成（Blueprint）
+
 禁止：完整句子、范文、逐句写作。
 
-## Stage1
+## Stage1 / Stage2 摘要
 {{s1_json}}
-
-## Stage2
 {{s2_json}}
+
+## 动作
+基于 Stage 2 已确认的两个论点，生成 IELTS Task 2 写作骨架（不写完整句子，只写结构+逻辑方向）。
+
+### Body 1
+- Core idea: 用户论点1
+- Logic flow:
+  → claim: 提出论点成立
+  → reason direction: 解释原因 / 机制
+  → support direction: 例子 / 现实支撑
+
+### Body 2
+- Core idea: 用户论点2
+- Logic flow:
+  → claim / reason / support direction（同上）
+
+### Conclusion
+- Function: overall judgement
+- Logic skeleton:
+  → restate position: 重申 Stage 1 总体判断（允许部分同意 / 权衡 / 条件判断）
+  → summary logic: 总结两个论点对立或支撑关系
+
+## 输出后立即进入 3.2（见【流程规划】）
+不得等待用户确认
 
 ## 输出 JSON
 {
-  "blueprint": {
-    "body1": {
-      "coreIdea": "",
-      "logicFlow": {
-        "claimDirection": "",
-        "reasonDirection": "",
-        "supportDirection": ""
-      }
-    },
-    "body2": { "coreIdea": "", "logicFlow": { "claimDirection": "", "reasonDirection": "", "supportDirection": "" } },
-    "conclusion": {
-      "restateDirection": "",
-      "summaryLogicDirection": ""
-    }
-  },
+  "verdict": "assign",
+  "userVisibleText": "≤3句，概括训练顺序",
+  "blueprint": { "body1": {...}, "body2": {...}, "conclusion": {...} },
   "modulePlan": {
     "body1": ["claim","reason","example"],
     "body2": ["claim","reason","example"],
     "conclusion": ["conclusion_restate","conclusion_summary"]
-  },
-  "userVisibleText": "≤3句，概括即将逐句训练的顺序，不给完整句子"
+  }
 }

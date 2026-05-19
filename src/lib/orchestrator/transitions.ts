@@ -158,6 +158,7 @@ export function advanceModuleAfterPass(state: SessionState): SessionState {
   s3.pendingSentence = undefined;
   s3.moduleIndex += 1;
   s3.mode = "assign";
+  s3.lastAssignText = undefined;
 
   const nextMod = getCurrentModule(s3.modulePlan, body, s3.moduleIndex);
   if (nextMod) {

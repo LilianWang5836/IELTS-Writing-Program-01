@@ -5,6 +5,7 @@ export function mockLlmResponse(
   context: { userMessage?: string; subStep: string },
 ): LlmTurnResult {
   const msg = (context.userMessage ?? "").toLowerCase();
+  const hasUserText = (context.userMessage?.trim().length ?? 0) > 8;
 
   switch (moduleId) {
     case "P1":
@@ -22,10 +23,10 @@ export function mockLlmResponse(
           userVisibleText:
             "审题完全正确！现在我们进入【Stage 2】。请直接告诉我：Body 1 和 Body 2 分别用哪两个分论点支撑你的总立场？",
           extracted: {
-            questionType: "agree/disagree",
-            taskUnderstanding: "whether benefits outweigh drawbacks",
-            position: "partial agreement with conditions",
-          } as Record<string, string>,
+            questionType: "discuss",
+            taskUnderstanding: "workplace skills vs knowledge for its own sake",
+            position: "depends on student career plan",
+          },
         };
       }
       return {
@@ -40,8 +41,8 @@ export function mockLlmResponse(
         userVisibleText:
           "两个分论点清晰。请补全 Body1：观点成立，是因为______，产生影响是因为______，可用______支持。",
         extracted: {
-          body1Point: "economic growth",
-          body2Point: "social inequality",
+          body1Point: "workplace skills and experience",
+          body2Point: "academic knowledge for research path",
         },
       };
 
@@ -71,24 +72,24 @@ export function mockLlmResponse(
           "骨架已锁定：先 Body1（claim→reason→example），再 Body2，最后 conclusion。",
         blueprint: {
           body1: {
-            coreIdea: "economic benefit",
+            coreIdea: "workplace skills",
             logicFlow: {
-              claimDirection: "state main benefit",
-              reasonDirection: "explain mechanism",
-              supportDirection: "real-world example",
+              claimDirection: "state that universities should prioritize job-ready skills",
+              reasonDirection: "explain why soft skills are hard to learn from textbooks alone",
+              supportDirection: "give internship or project example",
             },
           },
           body2: {
-            coreIdea: "social cost",
+            coreIdea: "academic knowledge",
             logicFlow: {
-              claimDirection: "state concern",
-              reasonDirection: "why it happens",
-              supportDirection: "concrete case",
+              claimDirection: "state that knowledge-for-its-own-sake suits academic paths",
+              reasonDirection: "explain long-term depth needed for research",
+              supportDirection: "contrast with short job-focused training",
             },
           },
           conclusion: {
-            restateDirection: "balanced position",
-            summaryLogicDirection: "link both bodies",
+            restateDirection: "balanced view depending on student goals",
+            summaryLogicDirection: "link employability vs academic depth",
           },
         },
         modulePlan: {
@@ -99,10 +100,10 @@ export function mockLlmResponse(
       };
 
     case "P3_2":
-      if (context.subStep.includes("feedback") || (context.userMessage?.length ?? 0) > 5) {
+      if (hasUserText && context.subStep.includes("S3_2")) {
         return {
           verdict: "pass",
-          userVisibleText: "这句功能到位，可以确认写入左侧。",
+          userVisibleText: "这句功能到位。请点击「确认写入」，随后我会给你下一句任务与词块提示。",
           moduleComplete: true,
           confirmedSentence: context.userMessage ?? "",
         };
@@ -110,7 +111,25 @@ export function mockLlmResponse(
       return {
         verdict: "assign",
         userVisibleText:
-          "请写本段 claim 句，表达明确判断。词块：one key reason / in my view / leads to。",
+          "请写 Body1 的 claim 句：明确你支持「就业技能」这一侧（或你的条件立场）。",
+        languageSupport: {
+          keywords: [
+            "prioritize",
+            "workplace skills",
+            "employability",
+            "practical training",
+            "graduates",
+          ],
+          phraseFragments: [
+            "Universities should prioritize...",
+            "This is because...",
+            "For example...",
+          ],
+          starterStructures: [
+            "Universities should prioritize job-relevant skills because...",
+            "From an employability perspective,...",
+          ],
+        },
         moduleComplete: false,
       };
 

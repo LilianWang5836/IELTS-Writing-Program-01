@@ -3,6 +3,11 @@ import { geminiGenerateJson } from "./gemini-native";
 import { parseLlmJson } from "./guard";
 import { llmFetch, networkHint } from "./http";
 import { mockLlmResponse } from "./mock";
+import {
+  fallbackFlashModel,
+  isHeavyThinkingModel,
+  outputTokenBudget,
+} from "./model-utils";
 import type { LlmTurnResult, PromptModuleId } from "@/lib/domain/types";
 
 const SYSTEM_JSON =
@@ -39,7 +44,7 @@ function buildChatBody(
   const body: ChatCompletionBody = {
     model: config.model,
     temperature: 0.4,
-    max_tokens: 1024,
+    max_tokens: outputTokenBudget(config.model),
     messages: [
       { role: "system", content: SYSTEM_JSON },
       { role: "user", content: prompt },
@@ -100,8 +105,21 @@ async function chatCompletionsOpenAi(
 
   const refusal = data.choices?.[0]?.message?.refusal;
   const reason = data.choices?.[0]?.finish_reason;
+
+  if (
+    config.provider === "gemini" &&
+    reason === "length" &&
+    isHeavyThinkingModel(config.model)
+  ) {
+    return chatCompletionsOpenAi(
+      { ...config, model: fallbackFlashModel(config.model) },
+      prompt,
+      true,
+    );
+  }
+
   throw new Error(
-    `Empty LLM response (finish_reason=${reason ?? "n/a"}${refusal ? `, refusal=${refusal}` : ""}). Raw: ${raw.slice(0, 300)}`,
+    `Empty LLM response (finish_reason=${reason ?? "n/a"}${refusal ? `, refusal=${refusal}` : ""}). 建议 Vercel 将 GEMINI_MODEL 改为 gemini-2.5-flash`,
   );
 }
 

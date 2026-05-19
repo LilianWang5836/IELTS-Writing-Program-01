@@ -1,7 +1,32 @@
+import { fallbackFlashModel, isHeavyThinkingModel, outputTokenBudget } from "./model-utils";
 import { llmFetch } from "./http";
 
-/** Gemini REST API（比 OpenAI 兼容层更稳定，尤其 JSON 输出） */
+/** Gemini REST API（比 OpenAI 兼容层更稳定） */
 export async function geminiGenerateJson(
+  apiKey: string,
+  model: string,
+  systemInstruction: string,
+  userPrompt: string,
+): Promise<string> {
+  const tryModels = isHeavyThinkingModel(model)
+    ? [model, fallbackFlashModel(model)]
+    : [model];
+
+  let lastError: Error | null = null;
+
+  for (const m of tryModels) {
+    try {
+      return await callOnce(apiKey, m, systemInstruction, userPrompt);
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      console.warn(`[llm] Gemini model ${m} failed:`, lastError.message);
+    }
+  }
+
+  throw lastError ?? new Error("Gemini request failed");
+}
+
+async function callOnce(
   apiKey: string,
   model: string,
   systemInstruction: string,
@@ -10,24 +35,23 @@ export async function geminiGenerateJson(
   const modelId = model.replace(/^models\//, "");
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
+  const generationConfig: Record<string, unknown> = {
+    temperature: 0.4,
+    maxOutputTokens: outputTokenBudget(model),
+    responseMimeType: "application/json",
+  };
+
+  if (isHeavyThinkingModel(model)) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
+
   const res = await llmFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: systemInstruction }],
-      },
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: userPrompt }],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.4,
-        maxOutputTokens: 1024,
-        responseMimeType: "application/json",
-      },
+      systemInstruction: { parts: [{ text: systemInstruction }] },
+      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+      generationConfig,
     }),
   });
 
@@ -53,7 +77,7 @@ export async function geminiGenerateJson(
 
   if (!text) {
     throw new Error(
-      `Empty Gemini response (finishReason=${finish ?? "unknown"}). Try GEMINI_MODEL=gemini-2.0-flash`,
+      `Empty Gemini response (model=${modelId}, finishReason=${finish ?? "unknown"})`,
     );
   }
 

@@ -65,6 +65,9 @@ function buildVars(
     base.body1_logic = state.s2.body1Logic?.raw ?? "";
     base.s2_json = JSON.stringify(state.s2);
   }
+  if (state.s1 && state.subStep === "S2_3_BODY2") {
+    base.s1_position = state.s1.position;
+  }
   if (state.s3) {
     const body = state.s3.currentBody;
     const mod = getCurrentModule(

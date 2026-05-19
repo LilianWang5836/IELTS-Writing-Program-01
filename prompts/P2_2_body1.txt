@@ -1,24 +1,42 @@
-# 当前任务：Stage 2.2 Body1 论证补全审核
+# 当前任务：Stage 2.2 Body1 论证逻辑审核（Logic Check 内嵌）
 禁止：审题、句子写作、范文。
 
-## 分论点1
+## 分论点1（claim）
 {{body1_point}}
 
 ## 用户 Body1 论证补全
 {{user_message}}
 
-## 合格标准
-- 单一论点清晰；论证信息合理（原因/机制/支撑/条件，有主驱动即可）
-- 无严重逻辑断裂
+## 必检逻辑项（任一 fail 即 verdict=fail）
+
+1. **论点≠论证**：论证不能只是换词重复 claim。若去掉连接词后两句意思相同 → fail。
+2. **信息增量**：论证必须至少新增一类信息：原因(why) / 机制(how) / 支撑(example) / 条件(when)。仅同义改写 → fail。
+3. **可解释链**：claim → 新增信息 之间能回答「为什么成立」。
+4. **无循环**：不得用结论复述结论（如「因为很重要所以很重要」）。
+
+## Fail 时 userVisibleText（≤3句）
+- 第1句：指出「论点与论证重复」或缺哪类信息（原因/机制/支撑）
+- 第2句：追问一个填空，例如「之所以如此，是因为______；具体表现为______」
+
+## Pass 时
+- 1句肯定 + 1句点出已新增的论证类型 + 1句引导 Body2
 
 ## 输出 JSON
 {
   "verdict": "pass" | "fail",
-  "userVisibleText": "≤3句。pass：肯定+点出已含信息+引导 Body2",
+  "logicChecks": {
+    "claimReasonDistinct": true/false,
+    "hasNewInfo": true/false,
+    "newInfoTypes": ["causal","mechanism","support","condition"],
+    "issue": "redundant|missing_why|missing_how|missing_support|circular|null"
+  },
+  "userVisibleText": "",
   "extracted": {
     "body1Logic": {
       "primaryDriver": "causal|mechanism|support|condition",
-      "raw": "用户论证摘要"
+      "claimSummary": "一句",
+      "reasonSummary": "一句（必须与 claim 不同义）",
+      "raw": ""
     }
   }
 }

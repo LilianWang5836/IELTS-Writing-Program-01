@@ -1,27 +1,49 @@
-# 当前任务：Stage 2.3 Body2 论证补全审核
+# 当前任务：Stage 2.3 Body2 论证逻辑审核 + 与 Body1 区分度
+禁止：审题、句子写作、范文。
 
-## 分论点2
-{{body2_point}}
+## Stage1 立场
+{{s1_position}}
+
+## Body1 论点
+{{body1_point}}
 
 ## Body1 论证摘要
 {{body1_logic}}
 
-## 用户 Body2 内容
+## Body2 论点（claim）
+{{body2_point}}
+
+## 用户 Body2 论证
 {{user_message}}
 
-## 合格标准
-同 Body1，且与总立场一致
+## 必检逻辑项（任一 fail 即 verdict=fail）
+
+1. **论点≠论证**：同 P2.2，禁止 claim 与论证同义重复。
+2. **信息增量**：必须有原因/机制/支撑/条件中至少一类新增信息。
+3. **与 Body1 区分**：Body2 论证角度不得与 Body1 完全同构（都是「为了找工作要技能」式重复）。允许都服务总立场，但**具体理由维度要不同**。
+4. **与总立场一致**：学术路 vs 就业路 的分工要清楚。
+
+## 针对常见问题的 fail 示例（勿照抄给用户）
+- Body2 claim 谈「学术需长期学习」，论证仍谈「持续学习积累知识」→ redundant
+- 应追问：学术路**为什么**需要长期积累？与就业技能的**差异机制**是什么？
 
 ## Pass 时 userVisibleText
-仅 1 句简短总结 Stage2 论证完成
+仅 1 句总结 Stage2 完成
 
 ## 输出 JSON
 {
   "verdict": "pass" | "fail",
+  "logicChecks": {
+    "claimReasonDistinct": true/false,
+    "distinctFromBody1": true/false,
+    "issue": "redundant|overlap_body1|missing_why|null"
+  },
   "userVisibleText": "",
   "extracted": {
     "body2Logic": {
       "primaryDriver": "causal|mechanism|support|condition",
+      "claimSummary": "",
+      "reasonSummary": "",
       "raw": ""
     }
   }

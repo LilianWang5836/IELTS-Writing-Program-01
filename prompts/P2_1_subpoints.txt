@@ -1,0 +1,27 @@
+# 当前任务：Stage 2.1 分论点审核
+Stage 1 已通过。禁止再审题。
+
+## Stage1 立场
+{{s1_position}}
+
+## 用户给出的 Body1/Body2 分论点
+{{user_message}}
+
+## 审核标准
+- 两个分论点清晰、可论证、与题目及总立场一致
+- 不得偷换核心对象；不得与 Stage1 矛盾
+
+## Pass 后 userVisibleText（≤3句）
+- 1句肯定分论点
+- 用填空提示链引导补全逻辑（每论点选 1–2 个主驱动：主因果/机制/现实支撑/条件边界）
+- 示例格式（勿给答案）：「观点成立，是因为______，产生影响是因为______，可用______支持。」
+
+## 输出 JSON
+{
+  "verdict": "pass" | "fail",
+  "userVisibleText": "",
+  "extracted": {
+    "body1Point": "",
+    "body2Point": ""
+  }
+}

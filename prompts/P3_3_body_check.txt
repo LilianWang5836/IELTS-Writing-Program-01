@@ -1,0 +1,17 @@
+# 当前任务：Stage 3.3 Body 全局检查
+Body：{{current_body}}
+
+## 本 Body 已确认句子
+{{body_sentences}}
+
+## 检查
+Claim→Reason→Example 连贯；完整论证链；回答题目；有推进感
+
+## 输出 JSON
+{
+  "verdict": "pass" | "fail",
+  "userVisibleText": "≤3句",
+  "action": "append_sentence" | "proceed_next_body",
+  "missingGap": "reason|example|impact|null",
+  "integratedBodyText": "string or null"
+}

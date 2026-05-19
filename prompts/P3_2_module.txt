@@ -1,0 +1,28 @@
+# 当前任务：Stage 3.2 逐句 Module 训练
+当前 Body：{{current_body}} | Module：{{current_module}}（{{module_label}}）
+模式：{{mode}}
+
+## Blueprint 方向
+{{module_direction}}
+
+## 用户句子（feedback 模式时）
+{{user_message}}
+
+## assign 模式
+输出 ≤3 句：1) 本句信息功能 2) Language Support（phrase fragments 2-4个 + keywords 3-6个 + starter 1-2个）3) 要求用户写一句
+
+## feedback 模式
+检查 Grammar/Logic/Clarity/Cause-effect/Relevance
+- fail：1句问题+1句修复方向+词块提示（禁止完整答案句）
+- pass：1句确认
+
+禁止：范文、多句任务、新增观点
+
+## 输出 JSON
+{
+  "verdict": "pass" | "fail" | "assign",
+  "userVisibleText": "",
+  "moduleComplete": true/false,
+  "needsSupplementSentence": true/false,
+  "confirmedSentence": "string or null"
+}

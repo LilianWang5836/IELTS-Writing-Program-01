@@ -1,0 +1,44 @@
+[
+  {
+    "id": "q1",
+    "title": "Technology & social connection",
+    "prompt": "Some people believe that technology has made life more complicated, while others think it has made life easier. Discuss both views and give your own opinion.",
+    "hintType": "discuss"
+  },
+  {
+    "id": "q2",
+    "title": "University funding",
+    "prompt": "Some people think that universities should provide graduates with the knowledge and skills needed in the workplace. Others think the true function of a university is to give access to knowledge for its own sake. Discuss both views and give your opinion.",
+    "hintType": "discuss"
+  },
+  {
+    "id": "q3",
+    "title": "Global tourism",
+    "prompt": "International tourism has brought enormous benefits to many places. At the same time, there is concern about its impact on local inhabitants and the environment. Do the disadvantages of international tourism outweigh the advantages?",
+    "hintType": "agree"
+  },
+  {
+    "id": "q4",
+    "title": "Working from home",
+    "prompt": "Many employees may work at home using modern technology. Some people claim this is only beneficial to workers, not employers. To what extent do you agree or disagree?",
+    "hintType": "agree"
+  },
+  {
+    "id": "q5",
+    "title": "City living",
+    "prompt": "In many countries, people are moving from rural areas to cities. What are the advantages and disadvantages of this trend?",
+    "hintType": "adv_disadv"
+  },
+  {
+    "id": "q6",
+    "title": "Crime & punishment",
+    "prompt": "In some countries, a high proportion of criminal acts are committed by teenagers. Why has this happened? What can be done to deal with this?",
+    "hintType": "two_part"
+  },
+  {
+    "id": "q7",
+    "title": "Online shopping",
+    "prompt": "Online shopping is becoming more popular than in-store shopping. Is this a positive or negative development?",
+    "hintType": "pos_neg"
+  }
+]

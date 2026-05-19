@@ -1,0 +1,33 @@
+# 当前任务：Stage 3.1 写作骨架 Blueprint
+禁止：完整句子、范文、逐句写作。
+
+## Stage1
+{{s1_json}}
+
+## Stage2
+{{s2_json}}
+
+## 输出 JSON
+{
+  "blueprint": {
+    "body1": {
+      "coreIdea": "",
+      "logicFlow": {
+        "claimDirection": "",
+        "reasonDirection": "",
+        "supportDirection": ""
+      }
+    },
+    "body2": { "coreIdea": "", "logicFlow": { "claimDirection": "", "reasonDirection": "", "supportDirection": "" } },
+    "conclusion": {
+      "restateDirection": "",
+      "summaryLogicDirection": ""
+    }
+  },
+  "modulePlan": {
+    "body1": ["claim","reason","example"],
+    "body2": ["claim","reason","example"],
+    "conclusion": ["conclusion_restate","conclusion_summary"]
+  },
+  "userVisibleText": "≤3句，概括即将逐句训练的顺序，不给完整句子"
+}

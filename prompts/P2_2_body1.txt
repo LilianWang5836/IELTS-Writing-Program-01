@@ -1,0 +1,24 @@
+# 当前任务：Stage 2.2 Body1 论证补全审核
+禁止：审题、句子写作、范文。
+
+## 分论点1
+{{body1_point}}
+
+## 用户 Body1 论证补全
+{{user_message}}
+
+## 合格标准
+- 单一论点清晰；论证信息合理（原因/机制/支撑/条件，有主驱动即可）
+- 无严重逻辑断裂
+
+## 输出 JSON
+{
+  "verdict": "pass" | "fail",
+  "userVisibleText": "≤3句。pass：肯定+点出已含信息+引导 Body2",
+  "extracted": {
+    "body1Logic": {
+      "primaryDriver": "causal|mechanism|support|condition",
+      "raw": "用户论证摘要"
+    }
+  }
+}

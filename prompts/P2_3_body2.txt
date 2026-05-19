@@ -1,0 +1,28 @@
+# 当前任务：Stage 2.3 Body2 论证补全审核
+
+## 分论点2
+{{body2_point}}
+
+## Body1 论证摘要
+{{body1_logic}}
+
+## 用户 Body2 内容
+{{user_message}}
+
+## 合格标准
+同 Body1，且与总立场一致
+
+## Pass 时 userVisibleText
+仅 1 句简短总结 Stage2 论证完成
+
+## 输出 JSON
+{
+  "verdict": "pass" | "fail",
+  "userVisibleText": "",
+  "extracted": {
+    "body2Logic": {
+      "primaryDriver": "causal|mechanism|support|condition",
+      "raw": ""
+    }
+  }
+}

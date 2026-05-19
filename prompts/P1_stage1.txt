@@ -1,0 +1,35 @@
+# 当前任务：Stage 1 审题立意判定
+
+## 题型判定参考
+- discuss both views：双方 + 总体判断（可分情况）
+- agree/disagree：稳定总体判断（允许部分/条件/权衡）
+- advantages/disadvantages：比较视角，非罗列
+- two-part：两问均覆盖
+- positive/negative development：价值判断（可权衡）
+
+## 必检（所有题型）
+- 限制条件：对象/时间/程度/场景
+- 是否扩大或缩小范围
+
+## 用户本轮回答
+{{user_message}}
+
+## 输出要求
+只输出 JSON，不要 markdown 代码块：
+{
+  "verdict": "pass" | "fail",
+  "questionType": "discuss|agree|adv_disadv|two_part|pos_neg|unknown",
+  "checks": {
+    "typeIdentified": true/false,
+    "taskCaptured": true/false,
+    "constraintsOk": true/false,
+    "positionStable": true/false
+  },
+  "failReason": "string or null",
+  "userVisibleText": "≤3句。pass 时：1句肯定+过渡+追问 Body1/Body2 两个分论点；fail 时：1句指错+1句追问",
+  "extracted": {
+    "questionType": "",
+    "taskUnderstanding": "",
+    "position": ""
+  }
+}

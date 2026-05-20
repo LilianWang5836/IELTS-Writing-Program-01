@@ -7,6 +7,7 @@ import {
   explorationSideStatus,
   extractProposedHandoffRule,
   formatProposalCoachMessage,
+  isMostlyEnglish,
   isDivergentCoachQuestion,
   isHandoffProposalComplete,
   proposedHandoffFromResult,
@@ -80,12 +81,13 @@ function proposalCoachResponse(
   result: LlmTurnResult,
   summary: string,
 ): { result: LlmTurnResult; state: SessionState } {
-  const msg = formatProposalCoachMessage(
-    finalProposal,
-    result.proposalSummary ||
-      summary ||
-      "两侧内容够了，我按我们聊的整理一版审题定稿，你看看是否准确。",
-  );
+  const briefSummary =
+    result.proposalSummary?.trim() && !isMostlyEnglish(result.proposalSummary)
+      ? result.proposalSummary.trim().slice(0, 60)
+      : summary?.includes("记下")
+        ? "两侧都够写两段了，六栏整理在左侧，请核对。"
+        : summary?.trim() || "两侧都够写两段了，六栏整理在左侧，请核对。";
+  const msg = formatProposalCoachMessage(finalProposal, briefSummary);
   return {
     result: {
       ...result,
@@ -250,11 +252,38 @@ function isExplorationHandoffMerge(state: SessionState): boolean {
   return !state.handoffLocked && phase !== "editing" && phase !== "locked";
 }
 
+const PROPOSAL_NUDGE =
+  "整理稿已在上一轮给出。请点左侧「确认整理并填入」，或回复「是」；要改哪一栏直接说。";
+
 export function postProcessStage1(
   state: SessionState,
   result: LlmTurnResult,
   userMessage?: string,
 ): { result: LlmTurnResult; state: SessionState } {
+  if (
+    state.handoffProposal &&
+    isHandoffProposalComplete(state.handoffProposal)
+  ) {
+    return {
+      result: {
+        verdict: "coach",
+        advance: false,
+        mirror: "",
+        coachQuestion: "",
+        userVisibleText: PROPOSAL_NUDGE,
+        essaySubstanceSufficient: true,
+      },
+      state: {
+        ...state,
+        coachContext: {
+          ...state.coachContext,
+          handoffPhase: "proposed",
+          lastQuestion: "",
+        },
+      },
+    };
+  }
+
   const rounds = (state.coachContext?.exploreRound ?? 0) + 1;
   const baseHandoff = mergeExtractedToHandoff(
     state.handoff ?? {

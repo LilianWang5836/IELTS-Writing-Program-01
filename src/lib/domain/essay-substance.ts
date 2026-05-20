@@ -485,6 +485,37 @@ function pointFromSideText(text: string, side: "employ" | "academic"): string {
   return trimPoint(firstSentence(t, MAX_BODY_POINT_CHARS));
 }
 
+export function isMostlyEnglish(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const latin = (t.match(/[a-zA-Z]/g) ?? []).length;
+  const cjk = (t.match(/[\u4e00-\u9fff]/g) ?? []).length;
+  return latin > 10 && latin >= cjk;
+}
+
+function preferChineseHandoffText(primary: string, fallback: string): string {
+  const p = primary.trim();
+  const f = fallback.trim();
+  if (!p) return f;
+  if (!f) return p;
+  if (isMostlyEnglish(p) && !isMostlyEnglish(f)) return f;
+  return p;
+}
+
+/** 已进入 Body 搭链阶段的话误发到审题聊天 */
+export function isStage1ChainLeakMessage(message?: string): boolean {
+  const m = message?.trim() ?? "";
+  if (!m || m.length < 12) return false;
+  if (/搭\s*Body|论证链|S2_2|Claim|Reason|Example|Link\s*[:：]/i.test(m)) {
+    return true;
+  }
+  return (
+    /课本.*(?:职场|实践|技能)|(?:学术|职场).*(?:不匹配|脱节)|实践项目.*补充/.test(
+      m,
+    ) && /因此|所以|才|需要/.test(m)
+  );
+}
+
 function inferTask(blob: string): string {
   if (/discuss|讨论|双方|两种|both views/i.test(blob)) {
     return "讨论大学教育应侧重职场技能还是为知识而学";
@@ -595,14 +626,35 @@ export function sanitizeHandoffProposal(
     out.body2Point = ruleBuilt.body2Point;
   }
 
-  if (!out.taskUnderstanding?.trim()) {
-    out.taskUnderstanding = ruleBuilt.taskUnderstanding;
-  }
-  if (!out.position?.trim()) {
-    out.position = ruleBuilt.position;
-  }
+  out.taskUnderstanding = preferChineseHandoffText(
+    out.taskUnderstanding ?? "",
+    ruleBuilt.taskUnderstanding ?? "",
+  );
+  out.position = preferChineseHandoffText(
+    out.position ?? "",
+    ruleBuilt.position ?? "",
+  );
+  out.body1Angle = preferChineseHandoffText(
+    out.body1Angle ?? "",
+    ruleBuilt.body1Angle ?? "",
+  );
+  out.body2Angle = preferChineseHandoffText(
+    out.body2Angle ?? "",
+    ruleBuilt.body2Angle ?? "",
+  );
 
   return isHandoffProposalComplete(out) ? out : null;
+}
+
+export function resolveConfirmableHandoffProposal(
+  state: SessionState,
+): Stage1Handoff | null {
+  const existing = state.handoffProposal;
+  if (existing) {
+    return sanitizeHandoffProposal(existing, state);
+  }
+  const built = buildHandoffFromChat(state);
+  return isHandoffProposalComplete(built) ? built : null;
 }
 
 export function assessExplorationContent(
@@ -731,26 +783,16 @@ export function extractProposedHandoffRule(
 }
 
 export function formatProposalCoachMessage(
-  proposal: Stage1Handoff,
+  _proposal: Stage1Handoff,
   summary?: string,
 ): string {
   const intro =
-    summary?.trim() ||
-    "我按我们聊的内容整理了一版审题定稿，你看看是否准确。";
-  const p1 = proposal.body1Point?.trim();
-  const p2 = proposal.body2Point?.trim();
-  const a1 = proposal.body1Angle?.trim();
-  const a2 = proposal.body2Angle?.trim();
-  const lines = [
+    (summary?.trim() && !isMostlyEnglish(summary) ? summary.trim() : "") ||
+    "两侧都够写两段了，六栏整理在左侧，请核对。";
+  return [
     intro,
-    `题意：${proposal.taskUnderstanding?.trim() || "（见左侧）"}`,
-    `立场：${proposal.position?.trim() || "（见左侧）"}`,
-    p1 ? `Body1（就业/技能）：${p1}${a1 ? ` · 范围：${a1}` : ""}` : "",
-    p2 ? `Body2（学术/知识）：${p2}${a2 ? ` · 范围：${a2}` : ""}` : "",
-    "六栏细目在左侧；若认可，请点「确认整理并填入」，可改几个字后再点「提交审题定稿」。",
-    "聊天里回复「是」也会帮你填入左侧。",
-  ].filter(Boolean);
-  return lines.join("\n");
+    "认可请点「确认整理并填入」，或回复「是」；要改哪一栏直接说。",
+  ].join("\n");
 }
 
 /** 聊天里口头认可整理提案（非改稿） */

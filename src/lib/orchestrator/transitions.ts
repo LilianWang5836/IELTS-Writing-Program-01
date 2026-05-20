@@ -1,4 +1,5 @@
 import { buildBlueprintFromStage2 } from "@/lib/domain/blueprint-from-s2";
+import { isMostlyEnglish } from "@/lib/domain/essay-substance";
 import { defaultBodySegment } from "@/lib/domain/handoff";
 import { MARKERS } from "@/lib/domain/constants";
 import {
@@ -278,14 +279,22 @@ export function mergeS1FromResult(
 ): SessionState {
   const ex = result.extracted as Record<string, string> | undefined;
   if (!ex) return state;
+  const pick = (cur: string | undefined, next: string) => {
+    const n = String(next ?? "").trim();
+    if (!n) return cur ?? "";
+    if (cur?.trim()) return cur;
+    if (isMostlyEnglish(n)) return "";
+    return n;
+  };
   return {
     ...state,
     s1: {
       questionType: String(ex.questionType ?? state.s1?.questionType ?? ""),
-      taskUnderstanding: String(
-        ex.taskUnderstanding ?? state.s1?.taskUnderstanding ?? "",
+      taskUnderstanding: pick(
+        state.s1?.taskUnderstanding,
+        ex.taskUnderstanding ?? "",
       ),
-      position: String(ex.position ?? state.s1?.position ?? ""),
+      position: pick(state.s1?.position, ex.position ?? ""),
     },
     handoff: {
       ...(state.handoff ?? {
@@ -297,10 +306,11 @@ export function mergeS1FromResult(
         body2Angle: "",
       }),
       questionType: String(ex.questionType ?? state.handoff?.questionType ?? ""),
-      taskUnderstanding:
-        state.handoff?.taskUnderstanding ||
-        String(ex.taskUnderstanding ?? ""),
-      position: state.handoff?.position || String(ex.position ?? ""),
+      taskUnderstanding: pick(
+        state.handoff?.taskUnderstanding,
+        ex.taskUnderstanding ?? "",
+      ),
+      position: pick(state.handoff?.position, ex.position ?? ""),
     },
   };
 }

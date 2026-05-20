@@ -16,6 +16,8 @@ import { logicBreakdownFromProposal } from "@/lib/domain/chain-proposal";
 import {
   assessEssaySubstance,
   explorationSideStatus,
+  isStage1ChainLeakMessage,
+  resolveConfirmableHandoffProposal,
   userMessages,
 } from "@/lib/domain/essay-substance";
 import { assessParagraphSubstance } from "@/lib/domain/paragraph-substance";
@@ -384,7 +386,7 @@ export async function handleConfirmHandoffProposal(
     },
   };
   const reply =
-    "已按整理填入左侧定稿，请检查各栏（可改几个字），无误后点「提交审题定稿」。";
+    "好，已填入左侧。请核对六栏，无误后点「提交审题定稿」，再进入 Body1。";
   return {
     replies: [reply],
     state: appendChat(s, "assistant", reply),
@@ -492,32 +494,39 @@ export async function handleTurn(
     };
   }
 
-  if (
-    s.subStep === "S1_EVAL" &&
-    !s.handoffLocked &&
-    s.coachContext?.handoffPhase === "proposed" &&
-    s.handoffProposal
-  ) {
+  if (s.subStep === "S1_EVAL" && !s.handoffLocked) {
     if (isProposalAffirmation(message)) {
-      const confirmed = await handleConfirmHandoffProposal(s);
+      const prop = resolveConfirmableHandoffProposal(s);
+      if (prop) {
+        return handleConfirmHandoffProposal({
+          ...s,
+          handoffProposal: prop,
+          coachContext: { ...s.coachContext, handoffPhase: "proposed" },
+        });
+      }
+    }
+
+    if (isStage1ChainLeakMessage(message)) {
+      const reply =
+        "这条更像 Body1 搭链里的句子。请先完成审题：点「确认整理并填入」→「提交审题定稿」，再写论证链。";
       return {
-        ...confirmed,
-        replies: [
-          "好，我先按整理版填入左侧，请核对各栏。",
-          ...confirmed.replies,
-          "无误后点「提交审题定稿」，再进入 Body1 搭链。",
-        ],
+        replies: [reply],
+        state: appendChat(s, "assistant", reply),
+        requiresConfirm: false,
+        canSubmit: true,
       };
     }
-    return {
-      replies: [
-        "整理稿已在上一轮给出；若要改某栏请直接说改哪一项。",
-        "若认可，请点左侧「确认整理并填入」，或回复「是」。",
-      ],
-      state: s,
-      requiresConfirm: false,
-      canSubmit: true,
-    };
+
+    if (s.coachContext?.handoffPhase === "proposed" && s.handoffProposal) {
+      const reply =
+        "整理稿已给出。请点左侧「确认整理并填入」，或回复「是」；要改哪一栏直接说。";
+      return {
+        replies: [reply],
+        state: appendChat(s, "assistant", reply),
+        requiresConfirm: false,
+        canSubmit: true,
+      };
+    }
   }
 
   if (s.subStep === "S3_2_MODULE" && s.s3?.mode === "assign") {

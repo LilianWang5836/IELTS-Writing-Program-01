@@ -8,6 +8,9 @@ const BODY2_ACADEMIC_RE =
 const META_QUESTION_RE =
   /我先写|写什么|写啥|从哪写|怎么写|如何写|怎么开始|不知道从|还没写|要写什么/i;
 
+const COACH_COUNTER_QUESTION_RE =
+  /为什么.*(还|要)|我不是.*(已经|都)|我这不是已经|还需要解释什么|什么意思|这是什么意思|你为什么这么问|为什么要我再|已经回答了|已经解释了/i;
+
 const STAGE2_ENTRY_RE =
   /搭\s*Body1|论证链|工作技能为主|S2_2|一起搭/i;
 
@@ -41,6 +44,13 @@ export function detectChainMetaQuestion(message?: string): boolean {
   const m = message?.trim() ?? "";
   if (!m || m.length > 80) return false;
   return META_QUESTION_RE.test(m);
+}
+
+/** 用户对教练流程提出反问/质疑：优先回答，不直接套模板 */
+export function detectCoachCounterQuestion(message?: string): boolean {
+  const m = message?.trim() ?? "";
+  if (!m || m.length > 120) return false;
+  return COACH_COUNTER_QUESTION_RE.test(m);
 }
 
 export function isMessageRelevantToBody(

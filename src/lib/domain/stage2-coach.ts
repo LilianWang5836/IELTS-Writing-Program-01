@@ -15,6 +15,7 @@ import {
   formatChainSkeleton,
   getChainBuildContext,
   getNextChainBuildStep,
+  getNextChainBuildStepLenient,
   isChainStepFilled,
   isExampleSentence,
   mergeSlots,
@@ -26,6 +27,7 @@ import {
   resolveHybridCoachTurn,
 } from "./chain-understanding";
 import {
+  detectCoachCounterQuestion,
   detectChainFrustration,
   userBlobForWorkshopBody,
 } from "./stage2-context";
@@ -87,6 +89,18 @@ function sanitizeMirror(result: LlmTurnResult, userMessage?: string): LlmTurnRes
   return { ...result, mirror, coachQuestion: result.coachQuestion?.trim() ?? "" };
 }
 
+function nextChainAskCount(
+  state: SessionState,
+  step: ChainBuildStep,
+  coachQ: string,
+): number {
+  if (!coachQ.trim()) return 0;
+  const prevStep = state.coachContext?.chainLastAskedStep;
+  const prevCount = state.coachContext?.chainStepAskCount ?? 0;
+  if (prevStep === step) return prevCount + 1;
+  return 1;
+}
+
 export function postProcessStage2(
   state: SessionState,
   result: LlmTurnResult,
@@ -124,8 +138,27 @@ export function postProcessStage2(
   );
 
   const buildCtx = getChainBuildContext(nextState, body);
-  const { step: buildStep, coachPrompt: stepPrompt } =
+  let { step: buildStep, coachPrompt: stepPrompt } =
     getNextChainBuildStep(workingSlots, body, buildCtx);
+  const prevStep = (state.coachContext?.chainBuildStep ?? "claim") as ChainBuildStep;
+  const prevAskCount = state.coachContext?.chainStepAskCount ?? 0;
+  const sameStepAsPrev = prevStep === buildStep;
+
+  const canEscalateWeak =
+    (understanding.quality === "weak" || understanding.quality === "acceptable") &&
+    (understanding.role === "reason" ||
+      understanding.role === "example" ||
+      understanding.role === "link") &&
+    understanding.role === buildStep &&
+    sameStepAsPrev &&
+    prevAskCount >= 1;
+  if (canEscalateWeak) {
+    const lenient = getNextChainBuildStepLenient(workingSlots, body, buildCtx);
+    if (lenient.step !== buildStep) {
+      buildStep = lenient.step;
+      stepPrompt = lenient.coachPrompt;
+    }
+  }
   const progressBlock = formatChainProgress(workingSlots, buildStep);
 
   let finalProposal = proposalFromLlm;
@@ -155,6 +188,47 @@ export function postProcessStage2(
     workingSlots,
   );
 
+  if (detectCoachCounterQuestion(userMessage)) {
+    const explain =
+      prevStep === "reason"
+        ? "你这句已被当作原因，我追问的目的是把机制说得更可写。"
+        : prevStep === "example"
+          ? "你这句已被当作例子，我追问通常是为了补到可直接写进段落的细节。"
+          : prevStep === "link"
+            ? "你这句已在做段末收束，我追问是为了更稳地落到就业结果。"
+            : "你的内容我已经在使用，我会避免重复模板追问。";
+    const softNext =
+      stepPrompt ||
+      (buildStep === "ready"
+        ? "如果你愿意，我可以直接整理到左侧。"
+        : `如果你愿意，我们直接继续下一环：${SLOT_LABEL[buildStep]}`);
+    const coachQ =
+      buildStep === "ready"
+        ? "要我现在整理链条吗？"
+        : `若继续，请补${SLOT_LABEL[buildStep]}（一句即可）。`;
+    return {
+      result: {
+        verdict: "coach",
+        advance: false,
+        mirror: explain,
+        coachQuestion: coachQ,
+        userVisibleText: [explain, softNext].filter(Boolean).join("\n\n"),
+        logicBreakdown: undefined,
+      },
+      state: {
+        ...nextState,
+        coachContext: {
+          ...nextState.coachContext,
+          chainBuildStep: buildStep,
+          chainLastAskedStep: buildStep,
+          chainStepAskCount: nextChainAskCount(state, buildStep, coachQ),
+          lastQuestion: coachQ,
+          openIssue: undefined,
+        },
+      },
+    };
+  }
+
   if (detectChainMetaQuestion(userMessage)) {
     const point =
       body === "body1" ? nextState.s2?.body1Point : nextState.s2?.body2Point;
@@ -183,6 +257,8 @@ export function postProcessStage2(
         coachContext: {
           ...nextState.coachContext,
           chainBuildStep: buildStep,
+          chainLastAskedStep: buildStep,
+          chainStepAskCount: nextChainAskCount(state, buildStep, coachQ),
           lastQuestion: coachQ,
           openIssue: undefined,
         },
@@ -225,6 +301,8 @@ export function postProcessStage2(
           coachContext: {
             ...nextState.coachContext,
             chainBuildStep: afterF.step,
+            chainLastAskedStep: afterF.step,
+            chainStepAskCount: nextChainAskCount(state, afterF.step, coachQ),
             lastQuestion: coachQ,
             openIssue: undefined,
           },
@@ -249,6 +327,8 @@ export function postProcessStage2(
           coachContext: {
             ...nextState.coachContext,
             chainBuildStep: "example",
+            chainLastAskedStep: "example",
+            chainStepAskCount: nextChainAskCount(state, "example", coachQ),
             lastQuestion: coachQ,
             openIssue: coachQ,
           },
@@ -277,6 +357,8 @@ export function postProcessStage2(
         coachContext: {
           ...nextState.coachContext,
           chainBuildStep: buildStep,
+          chainLastAskedStep: buildStep,
+          chainStepAskCount: nextChainAskCount(state, buildStep, coachQ),
           lastQuestion: coachQ,
           openIssue: undefined,
         },
@@ -317,6 +399,8 @@ export function postProcessStage2(
         coachContext: {
           ...nextState.coachContext,
           chainBuildStep: "ready",
+          chainLastAskedStep: "ready",
+          chainStepAskCount: 0,
           lastQuestion: "",
           openIssue: undefined,
         },
@@ -324,7 +408,6 @@ export function postProcessStage2(
     };
   }
 
-  const prevStep = (state.coachContext?.chainBuildStep ?? "claim") as ChainBuildStep;
   const lastQ = state.coachContext?.lastQuestion ?? "";
   const { mirror, coachQ } = resolveHybridCoachTurn({
     understanding,
@@ -354,6 +437,8 @@ export function postProcessStage2(
       coachContext: {
         ...nextState.coachContext,
         chainBuildStep: buildStep,
+        chainLastAskedStep: buildStep,
+        chainStepAskCount: nextChainAskCount(state, buildStep, coachQ),
         lastQuestion: coachQ,
         openIssue: coachQ || substance.coachPrompt,
       },

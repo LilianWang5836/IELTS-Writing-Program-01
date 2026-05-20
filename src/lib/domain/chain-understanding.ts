@@ -13,7 +13,7 @@ import { detectChainFrustration } from "./stage2-context";
 import type { LlmTurnResult, ParagraphSlots, WorkshopBodyKey } from "./types";
 
 export type ChainTurnRole = "reason" | "example" | "link" | "none" | "meta";
-export type ChainTurnQuality = "ok" | "weak" | "off_topic" | "none";
+export type ChainTurnQuality = "ok" | "acceptable" | "weak" | "off_topic" | "none";
 
 export interface ChainTurnUnderstanding {
   role: ChainTurnRole;
@@ -35,7 +35,7 @@ function normalizeQuality(v: unknown): ChainTurnQuality {
   const s = String(v ?? "")
     .toLowerCase()
     .trim();
-  if (s === "ok" || s === "weak" || s === "off_topic") return s;
+  if (s === "ok" || s === "acceptable" || s === "weak" || s === "off_topic") return s;
   return "none";
 }
 
@@ -249,7 +249,7 @@ export function resolveHybridCoachTurn(
   }
 
   if (
-    understanding.quality === "ok" &&
+    (understanding.quality === "ok" || understanding.quality === "acceptable") &&
     (understanding.role === "reason" ||
       understanding.role === "example" ||
       understanding.role === "link") &&
@@ -296,7 +296,9 @@ export function resolveHybridCoachTurn(
     llmQ &&
     !isSameCoachPrompt(llmQ, lastQuestion) &&
     understanding.role === buildStep &&
-    (understanding.quality === "weak" || understanding.quality === "ok")
+    (understanding.quality === "weak" ||
+      understanding.quality === "ok" ||
+      understanding.quality === "acceptable")
   ) {
     return {
       mirror: llmMirror || `这一步还差一句，请参考下面提示补全。`,

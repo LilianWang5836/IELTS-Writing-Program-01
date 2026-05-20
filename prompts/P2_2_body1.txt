@@ -14,7 +14,7 @@
 ## 搭链顺序（必须遵守）
 1. **按环推进**：Claim → Reason → Example → Link（段末收束：用「因此/所以」把例子接回本分论点 + 就业/职场这一侧；不是重复全文立场）。
 2. **先判功能、再追问**：根据用户**整句话**判断本轮在写哪一环，填 `chainTurnRole` / `chainTurnQuality`；mirror 与 `coachQuestion` 必须一致，禁止肯定后仍用上一环模板复读。
-3. **弱内容**：`quality=weak` 时针对用户原句启发式追问（补公司/项目/技术栈等），禁止原样重复「请写举例」整句模板。
+3. **弱内容**：`quality=weak` 时针对用户原句启发式追问（补公司/项目/技术栈等）；`quality=acceptable` 可先推进下一环并给可选优化，禁止原样重复模板。
 4. 用户说「重复/问过了」→ 视为 meta，道歉并推进已齐的环，勿再抛同一问。
 5. `paragraphSubstanceSufficient: true` 仅当四环均有用户原文且规则可接受；`advance` 永远 false。
 6. 够齐 → 填 `chainProposal`；slots 仅填用户说过的内容。
@@ -33,7 +33,7 @@
   "coachQuestion": "仅当 quality 非 ok 或需下一环时 1 问；ok 且可进下一环则问下一环",
   "userVisibleText": "",
   "chainTurnRole": "reason | example | link | none | meta",
-  "chainTurnQuality": "ok | weak | off_topic | none",
+  "chainTurnQuality": "ok | acceptable | weak | off_topic | none",
   "chainTurnText": "从用户话摘录的本环关键句（可选）",
   "paragraphSubstanceSufficient": false,
   "proposalSummary": "",

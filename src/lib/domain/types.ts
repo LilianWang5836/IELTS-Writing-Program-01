@@ -128,6 +128,10 @@ export interface CoachContext {
   angleTeachDone?: boolean;
   /** Stage2 当前搭链环节 */
   chainBuildStep?: "claim" | "reason" | "example" | "link" | "ready";
+  /** Stage2 同一环节追问计数（防无限追问） */
+  chainStepAskCount?: number;
+  /** Stage2 上一次追问的环节 */
+  chainLastAskedStep?: "claim" | "reason" | "example" | "link" | "ready";
 }
 
 export interface SessionState {
@@ -233,6 +237,6 @@ export interface LlmTurnResult {
   syntaxHint?: string | null;
   /** Stage2：本轮用户话在论证链中的功能（理解轨） */
   chainTurnRole?: "reason" | "example" | "link" | "none" | "meta";
-  chainTurnQuality?: "ok" | "weak" | "off_topic" | "none";
+  chainTurnQuality?: "ok" | "acceptable" | "weak" | "off_topic" | "none";
   chainTurnText?: string;
 }

@@ -552,6 +552,34 @@ export function getNextChainBuildStep(
   return { step: "ready", coachPrompt: "" };
 }
 
+/** 宽松推进：用于防止同一环节反复追问（允许 weak 先过，再下一环修整） */
+export function getNextChainBuildStepLenient(
+  slots: ParagraphSlots,
+  body: WorkshopBodyKey = "body1",
+  ctx?: ChainBuildContext,
+): {
+  step: ChainBuildStep;
+  coachPrompt: string;
+} {
+  const claim = slots.claim?.trim() || slots.elaboration?.trim();
+  if (!claim) return getNextChainBuildStep(slots, body, ctx);
+  if (!slots.reason?.trim() || !isReasonSentence(slots.reason, body)) {
+    return getNextChainBuildStep(slots, body, ctx);
+  }
+  const ex = slots.example?.trim() || slots.support?.trim();
+  if (!ex || !isExampleSentence(ex, body)) {
+    return getNextChainBuildStep(slots, body, ctx);
+  }
+  const link = slots.link?.trim();
+  if (!link || !isLinkSentence(link, body)) {
+    return {
+      step: "link",
+      coachPrompt: linkCoachPrompt(body, ctx, slots.example?.trim()),
+    };
+  }
+  return { step: "ready", coachPrompt: "" };
+}
+
 export function formatChainProgress(
   slots: ParagraphSlots,
   currentStep: ChainBuildStep,

@@ -67,14 +67,19 @@ export function mockLlmResponse(
         /取决于|规划|路径|分流|反之|部分同意|看情况/.test(msg);
       const hasTask = /discuss|讨论|双方|两种/.test(msg);
 
+      const bothLabeled =
+        /为就业|就业准备/.test(raw) &&
+        /知识本身|学术道路/.test(raw) &&
+        raw.length >= 40;
       const substanceReady =
-        hasTask &&
-        hasPosition &&
-        hasEmploy &&
-        hasAcademic &&
-        raw.length >= 90 &&
-        (/因为|所以|应该|实习|研究|才能/.test(raw) ||
-          (raw.match(/。|\./g)?.length ?? 0) >= 2);
+        bothLabeled ||
+        (hasTask &&
+          hasPosition &&
+          hasEmploy &&
+          hasAcademic &&
+          raw.length >= 90 &&
+          (/因为|所以|应该|实习|研究|才能/.test(raw) ||
+            (raw.match(/。|\./g)?.length ?? 0) >= 2));
 
       if (substanceReady) {
         return {
@@ -94,14 +99,21 @@ export function mockLlmResponse(
       const contentReady =
         hasTask && hasPosition && hasEmploy && hasAcademic && raw.length > 40;
 
-      if (contentReady) {
+      if (contentReady && !substanceReady) {
+        const needAcademic =
+          hasEmploy && hasAcademic && raw.length < 50 && !/系统性|积累|学术道路/.test(raw);
         return {
           verdict: "coach",
           advance: false,
-          mirror: "两条线有了，还可以各补一句「写什么、为什么」。",
-          coachQuestion:
-            "就业技能一侧、学术知识一侧，各用一句话说清你想在段里论证什么？",
-          userVisibleText: "两条线有了，还可以各补一句「写什么、为什么」。",
+          mirror: needAcademic
+            ? "题型和立场清楚了，学术/知识一侧还可以再写实一点。"
+            : "两条线有了，还可以各补一句「写什么、为什么」。",
+          coachQuestion: needAcademic
+            ? "学术/知识一侧：补一句「写什么 + 为什么」（例如长期学习、研究兴趣）"
+            : "就业技能一侧、学术知识一侧，各用一句话说清你想在段里论证什么？",
+          userVisibleText: needAcademic
+            ? "题型和立场清楚了，学术/知识一侧还可以再写实一点。"
+            : "两条线有了，还可以各补一句「写什么、为什么」。",
           essaySubstanceSufficient: false,
           gapsRemaining: ["两侧尚需更具体的论证方向"],
           extracted: {

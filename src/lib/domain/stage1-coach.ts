@@ -1,12 +1,17 @@
 import {
   assessEssaySubstance,
+  assessExplorationContent,
+  buildHandoffFromChat,
   extractProposedHandoffRule,
   formatProposalCoachMessage,
   isHandoffProposalComplete,
   proposedHandoffFromResult,
+  userAnsweredBothSidesInMessage,
 } from "./essay-substance";
 import { ANGLE_TEACH_CHAT } from "./constants";
 import type { LlmTurnResult, SessionState, Stage1Handoff } from "./types";
+
+export { assessExplorationContent } from "./essay-substance";
 
 const FRUSTRATION_RE =
   /看不懂|不懂你的|不清楚|不明白|已经说|说得很清楚|什么意思|别绕|听不懂/i;
@@ -58,44 +63,25 @@ export function detectFrustration(message: string): boolean {
   return FRUSTRATION_RE.test(message);
 }
 
-export function assessExplorationContent(
+/** 按轮次变化的短反馈，避免每轮重复同一句 */
+export function buildExplorationSummary(
   state: SessionState,
+  contentReady: boolean,
+  substanceSufficient: boolean,
   userMessage?: string,
-): { contentReady: boolean; summary: string } {
-  const blob = [
-    state.s1?.taskUnderstanding ?? "",
-    state.s1?.position ?? "",
-    state.handoff?.taskUnderstanding ?? "",
-    state.handoff?.position ?? "",
-    userMessage ?? "",
-    ...state.chatHistory.filter((m) => m.role === "user").map((m) => m.content),
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  const TASK_RE =
-    /discuss|讨论|双方|两种观点|agree|disagree|优缺点|利弊/i;
-  const POSITION_RE =
-    /取决于|看情况|部分同意|分开|分流|不同学生|规划|路径|条件|反之|尽快/i;
-  const DIM_EMPLOY_RE =
-    /就业|工作|职场|技能|实操|实习|job|career|employ|尽快工作/i;
-  const DIM_ACADEMIC_RE =
-    /学术|研究|理论|知识|深造|phd|academic|纯粹|系统/i;
-
-  const hasTask =
-    TASK_RE.test(blob) ||
-    (state.s1?.taskUnderstanding?.trim().length ?? 0) > 8;
-  const hasPosition =
-    POSITION_RE.test(blob) || (state.s1?.position?.trim().length ?? 0) > 6;
-  const hasEmploy = DIM_EMPLOY_RE.test(blob);
-  const hasAcademic = DIM_ACADEMIC_RE.test(blob);
-  const contentReady = hasTask && hasPosition && hasEmploy && hasAcademic;
-
-  const summary = contentReady
-    ? "题型、立场和两条线（就业技能 / 学术知识）我都听到了。"
-    : "";
-
-  return { contentReady, summary };
+): string {
+  if (!contentReady) return "";
+  if (substanceSufficient) {
+    return "两侧都够写两段了，我帮你整理一版审题定稿。";
+  }
+  if (userAnsweredBothSidesInMessage(userMessage)) {
+    return "你这轮把就业侧和学术侧都说到位了，我再核对一下就能整理。";
+  }
+  const rounds = state.coachContext?.exploreRound ?? 0;
+  if (rounds <= 1) {
+    return "题型和立场我听到了，我们把两条线各再写实一点。";
+  }
+  return "两条线方向有了，再补具体一点就能整理定稿。";
 }
 
 function normQ(s: string): string {
@@ -114,6 +100,9 @@ export function isRepeatedQuestion(prev: string, next: string): boolean {
     ["平衡", "体现", "价值"],
     ["概括", "一句话", "任务"],
     ["填左侧", "6 栏", "定稿"],
+    ["各用一句话", "就业技能一侧", "学术知识一侧"],
+    ["两侧", "写实"],
+    ["补一句", "写什么", "为什么"],
   ];
   for (const group of themes) {
     if (group.some((w) => prev.includes(w)) && group.some((w) => next.includes(w))) {
@@ -174,23 +163,37 @@ export function postProcessStage1(
   };
 
   const substance = assessEssaySubstance(nextState);
-  const { contentReady, summary } = assessExplorationContent(
+  const { contentReady } = assessExplorationContent(nextState, userMessage);
+  const summary = buildExplorationSummary(
     nextState,
+    contentReady,
+    substance.sufficient,
     userMessage,
   );
   const frustrated = userMessage ? detectFrustration(userMessage) : false;
-  const repeated = isRepeatedQuestion(
-    state.coachContext?.lastQuestion ?? "",
-    result.coachQuestion ?? result.userVisibleText ?? "",
-  );
+  const lastQ = state.coachContext?.lastQuestion ?? "";
+  const nextQ =
+    result.coachQuestion?.trim() ||
+    substance.coachPrompt ||
+    result.userVisibleText ||
+    "";
+  const repeated =
+    isRepeatedQuestion(lastQ, nextQ) ||
+    (substance.sufficient &&
+      /各用一句话|就业技能一侧|学术知识一侧/.test(lastQ) &&
+      userAnsweredBothSidesInMessage(userMessage));
 
   const proposalFromLlm = proposedHandoffFromResult(result);
-  const rulesOk = substance.sufficient;
+  const rulesOk =
+    substance.sufficient || userAnsweredBothSidesInMessage(userMessage);
   const llmOk = llmSaysSubstanceOk(result);
 
   let finalProposal = proposalFromLlm;
-  if (rulesOk && !finalProposal) {
+  if (!finalProposal) {
     finalProposal = extractProposedHandoffRule(nextState);
+  }
+  if (rulesOk && !isHandoffProposalComplete(finalProposal ?? {})) {
+    finalProposal = buildHandoffFromChat(nextState);
   }
 
   const canPropose =
@@ -227,7 +230,9 @@ export function postProcessStage1(
   if (canPropose && finalProposal) {
     const msg = formatProposalCoachMessage(
       finalProposal,
-      result.proposalSummary,
+      result.proposalSummary ||
+        summary ||
+        "我按我们聊的内容整理了一版审题定稿，你看看是否准确。",
     );
     return {
       result: {
@@ -282,38 +287,17 @@ export function postProcessStage1(
     };
   }
 
-  if (rulesOk && !canPropose) {
-    const coachQ =
-      substance.gaps[0] ??
-      "请各用一句话说清：就业技能一侧写什么？学术知识一侧写什么？";
-    return {
-      result: {
-        ...result,
-        verdict: "coach",
-        advance: false,
-        mirror: summary || "两条线有了，还可以再写实一点。",
-        coachQuestion: coachQ,
-        userVisibleText: summary || "两条线有了，还可以再写实一点。",
-      },
-      state: {
-        ...nextState,
-        coachContext: {
-          ...nextState.coachContext,
-          lastQuestion: coachQ,
-        },
-      },
-    };
-  }
-
   if (contentReady && !rulesOk && substance.coachPrompt) {
+    const coachQ = substance.coachPrompt;
+    const mirror = summary || coachQ;
     return {
       result: {
         ...result,
         verdict: "coach",
         advance: false,
-        mirror: summary,
-        coachQuestion: substance.coachPrompt,
-        userVisibleText: summary,
+        mirror,
+        coachQuestion: coachQ,
+        userVisibleText: mirror,
       },
       state: {
         ...nextState,

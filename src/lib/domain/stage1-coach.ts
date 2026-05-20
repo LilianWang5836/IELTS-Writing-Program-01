@@ -6,6 +6,7 @@ import {
   formatProposalCoachMessage,
   isHandoffProposalComplete,
   proposedHandoffFromResult,
+  sanitizeHandoffProposal,
   userAnsweredBothSidesInMessage,
 } from "./essay-substance";
 import { ANGLE_TEACH_CHAT } from "./constants";
@@ -75,7 +76,7 @@ export function buildExplorationSummary(
     return "两侧都够写两段了，我帮你整理一版审题定稿。";
   }
   if (userAnsweredBothSidesInMessage(userMessage)) {
-    return "你这轮把就业侧和学术侧都说到位了，我再核对一下就能整理。";
+    return "两侧方向有了，再各用一句话说清 Body1、Body2 各写什么，我就能整理定稿。";
   }
   const rounds = state.coachContext?.exploreRound ?? 0;
   if (rounds <= 1) {
@@ -142,10 +143,6 @@ function isExplorationHandoffMerge(state: SessionState): boolean {
   return !state.handoffLocked && phase !== "editing" && phase !== "locked";
 }
 
-function llmSaysSubstanceOk(result: LlmTurnResult): boolean {
-  return result.essaySubstanceSufficient === true;
-}
-
 export function postProcessStage1(
   state: SessionState,
   result: LlmTurnResult,
@@ -195,21 +192,23 @@ export function postProcessStage1(
       /各用一句话|就业技能一侧|学术知识一侧/.test(lastQ) &&
       userAnsweredBothSidesInMessage(userMessage));
 
-  const proposalFromLlm = proposedHandoffFromResult(result);
-  const rulesOk =
-    substance.sufficient || userAnsweredBothSidesInMessage(userMessage);
-  const llmOk = llmSaysSubstanceOk(result);
+  const proposalFromLlm = proposedHandoffFromResult(result, nextState);
 
   let finalProposal = proposalFromLlm;
   if (!finalProposal) {
     finalProposal = extractProposedHandoffRule(nextState);
   }
-  if (rulesOk && !isHandoffProposalComplete(finalProposal ?? {})) {
-    finalProposal = buildHandoffFromChat(nextState);
+  if (substance.sufficient && !isHandoffProposalComplete(finalProposal ?? {})) {
+    const built = buildHandoffFromChat(nextState);
+    finalProposal = isHandoffProposalComplete(built) ? built : finalProposal;
+  }
+  if (finalProposal) {
+    finalProposal =
+      sanitizeHandoffProposal(finalProposal, nextState) ?? finalProposal;
   }
 
   const canPropose =
-    (rulesOk || (llmOk && !!proposalFromLlm)) &&
+    substance.sufficient &&
     !!finalProposal &&
     isHandoffProposalComplete(finalProposal);
 
@@ -271,7 +270,7 @@ export function postProcessStage1(
   if (frustrated || repeated) {
     const angleAgain = detectAngleConfusion(userMessage);
     const coachQ =
-      rulesOk && finalProposal
+      substance.sufficient && finalProposal
         ? "若下面整理没问题，点左侧「确认整理并填入」即可。"
         : angleAgain
           ? needsAngleTeaching(baseHandoff, userMessage, contentReady).followUp
@@ -299,7 +298,7 @@ export function postProcessStage1(
     };
   }
 
-  if (contentReady && !rulesOk && substance.coachPrompt) {
+  if (contentReady && !substance.sufficient && substance.coachPrompt) {
     const coachQ = substance.coachPrompt;
     const mirror =
       summary ||

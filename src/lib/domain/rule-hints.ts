@@ -67,7 +67,7 @@ export function buildRuleHintsBlock(state: SessionState): string {
       );
     } else {
       lines.push(
-        "规则提示：仅当就业侧与学术侧各有足够具体内容时才 essaySubstanceSufficient；首轮勿收口。若学生问切入面/角度，先用「讨论范围/视角」解释。",
+        "规则提示：仅当就业侧与学术侧各有足够具体内容时才 essaySubstanceSufficient；首轮勿收口。若学生问切入面/角度，先用「讨论范围/视角」解释。两侧已齐时勿问开放/批判性/教学方法类发散题，应整理 proposedHandoff。",
       );
     }
   }

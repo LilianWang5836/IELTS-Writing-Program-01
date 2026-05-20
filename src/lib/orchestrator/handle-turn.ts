@@ -13,7 +13,11 @@ import type {
   Stage1Handoff,
 } from "@/lib/domain/types";
 import { logicBreakdownFromProposal } from "@/lib/domain/chain-proposal";
-import { assessEssaySubstance } from "@/lib/domain/essay-substance";
+import {
+  assessEssaySubstance,
+  explorationSideStatus,
+  userMessages,
+} from "@/lib/domain/essay-substance";
 import { assessParagraphSubstance } from "@/lib/domain/paragraph-substance";
 import { assessExplorationContent, postProcessStage1 } from "@/lib/domain/stage1-coach";
 import {
@@ -110,11 +114,14 @@ function buildVars(
   if (state.subStep === "S1_EVAL" && !state.handoffLocked) {
     const substance = assessEssaySubstance(state);
     const { contentReady } = assessExplorationContent(state, userMessage);
+    const explorationSides = explorationSideStatus(userMessages(state));
     base.substance_assessment = JSON.stringify({
       contentReady,
       substanceSufficient: substance.sufficient,
+      explorationSides,
       gaps: substance.gaps,
       handoffPhase: state.coachContext?.handoffPhase ?? "exploring",
+      exploreRound: state.coachContext?.exploreRound ?? 0,
     });
   }
   if (state.subStep === "S2_2_BODY1" || state.subStep === "S2_3_BODY2") {

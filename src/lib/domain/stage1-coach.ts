@@ -2,12 +2,16 @@ import {
   assessEssaySubstance,
   assessExplorationContent,
   buildHandoffFromChat,
+  buildRecordedSidesPreview,
+  detectExplorationStuck,
   explorationSideStatus,
   extractProposedHandoffRule,
   formatProposalCoachMessage,
+  isDivergentCoachQuestion,
   isHandoffProposalComplete,
   proposedHandoffFromResult,
   sanitizeHandoffProposal,
+  singleGapCoachPrompt,
   userAnsweredBothSidesInMessage,
   userMessages,
 } from "./essay-substance";
@@ -18,6 +22,85 @@ export { assessExplorationContent } from "./essay-substance";
 
 const FRUSTRATION_RE =
   /看不懂|不懂你的|不清楚|不明白|已经说|说得很清楚|什么意思|别绕|听不懂/i;
+
+/** 两侧已齐后不再无限追问 */
+const MAX_EXPLORE_ROUNDS_BEFORE_FORCE = 4;
+
+function resolveHandoffProposal(
+  state: SessionState,
+  result: LlmTurnResult,
+): Stage1Handoff | null {
+  let proposal = proposedHandoffFromResult(result, state);
+  if (!proposal) proposal = extractProposedHandoffRule(state);
+  const substance = assessEssaySubstance(state);
+  const sides = explorationSideStatus(userMessages(state));
+  const shouldBuild =
+    substance.sufficient || (sides.employ && sides.academic);
+  if (shouldBuild && !isHandoffProposalComplete(proposal ?? {})) {
+    const built = buildHandoffFromChat(state);
+    if (isHandoffProposalComplete(built)) proposal = built;
+  }
+  if (!proposal) return null;
+  return sanitizeHandoffProposal(proposal, state);
+}
+
+function shouldForceStage1Proposal(
+  contentReady: boolean,
+  substanceSufficient: boolean,
+  sides: { employ: boolean; academic: boolean },
+  exploreRound: number,
+  userMessage?: string,
+): boolean {
+  if (!contentReady) return false;
+  if (substanceSufficient) return true;
+  if (sides.employ && sides.academic) return true;
+  if (
+    detectExplorationStuck(userMessage) &&
+    sides.employ &&
+    sides.academic
+  ) {
+    return true;
+  }
+  if (exploreRound >= MAX_EXPLORE_ROUNDS_BEFORE_FORCE && sides.employ && sides.academic) {
+    return true;
+  }
+  return false;
+}
+
+function proposalCoachResponse(
+  finalProposal: Stage1Handoff,
+  nextState: SessionState,
+  result: LlmTurnResult,
+  summary: string,
+): { result: LlmTurnResult; state: SessionState } {
+  const msg = formatProposalCoachMessage(
+    finalProposal,
+    result.proposalSummary ||
+      summary ||
+      "两侧内容够了，我按我们聊的整理一版审题定稿，你看看是否准确。",
+  );
+  return {
+    result: {
+      ...result,
+      verdict: "coach",
+      advance: false,
+      mirror: "",
+      coachQuestion: "",
+      userVisibleText: msg,
+      essaySubstanceSufficient: true,
+    },
+    state: {
+      ...nextState,
+      handoffProposal: finalProposal,
+      coachContext: {
+        ...nextState.coachContext,
+        handoffPhase: "proposed",
+        readyForHandoff: false,
+        lastQuestion: "",
+      },
+    },
+  };
+}
 
 const ANGLE_TERM_RE =
   /切入面|角度|视角|讨论范围|什么.*面|不懂.*(面|角度)|body\s*[12].*角度/i;
@@ -76,7 +159,10 @@ export function buildExplorationSummary(
   if (!contentReady) return "";
   const sides = explorationSideStatus(userMessages(state));
   if (substanceSufficient) {
-    return "两侧都够写两段了，我帮你整理一版审题定稿。";
+    const preview = buildRecordedSidesPreview(userMessages(state));
+    return preview
+      ? `${preview}两侧都够写两段了，我帮你整理一版审题定稿。`
+      : "两侧都够写两段了，我帮你整理一版审题定稿。";
   }
   if (sides.academic && !sides.employ) {
     return "学术侧方向有了，请再补一句就业/技能侧：这段想写什么、为什么。";
@@ -113,6 +199,9 @@ export function isRepeatedQuestion(prev: string, next: string): boolean {
     ["各用一句话", "就业技能一侧", "学术知识一侧"],
     ["两侧", "写实"],
     ["补一句", "写什么", "为什么"],
+    ["开放", "批判性", "教学机会"],
+    ["哪些领域", "教学方法", "学习机会"],
+    ["你认为大学", "应该提供哪些"],
   ];
   for (const group of themes) {
     if (group.some((w) => prev.includes(w)) && group.some((w) => next.includes(w))) {
@@ -201,29 +290,29 @@ export function postProcessStage1(
       /各用一句话|就业技能一侧|学术知识一侧/.test(lastQ) &&
       userAnsweredBothSidesInMessage(userMessage));
 
-  const proposalFromLlm = proposedHandoffFromResult(result, nextState);
-
-  let finalProposal = proposalFromLlm;
-  if (!finalProposal) {
-    finalProposal = extractProposedHandoffRule(nextState);
-  }
-  if (substance.sufficient && !isHandoffProposalComplete(finalProposal ?? {})) {
-    const built = buildHandoffFromChat(nextState);
-    finalProposal = isHandoffProposalComplete(built) ? built : finalProposal;
-  }
-  if (finalProposal) {
-    finalProposal = sanitizeHandoffProposal(finalProposal, nextState);
-  }
-
+  const msgs = userMessages(nextState);
+  const sides = explorationSideStatus(msgs);
+  const forcePropose = shouldForceStage1Proposal(
+    contentReady,
+    substance.sufficient,
+    sides,
+    rounds,
+    userMessage,
+  );
+  const finalProposal = resolveHandoffProposal(nextState, result);
   const canPropose =
-    substance.sufficient &&
+    forcePropose &&
     !!finalProposal &&
     isHandoffProposalComplete(finalProposal);
 
   const angleTeach = needsAngleTeaching(baseHandoff, userMessage, contentReady);
   const angleAlreadyTaught = !!state.coachContext?.angleTeachDone;
 
-  if (!canPropose && angleTeach.needed && !angleAlreadyTaught) {
+  if (canPropose) {
+    return proposalCoachResponse(finalProposal, nextState, result, summary);
+  }
+
+  if (!canPropose && angleTeach.needed && !angleAlreadyTaught && !forcePropose) {
     const coachQ = angleTeach.followUp;
     return {
       result: {
@@ -246,47 +335,25 @@ export function postProcessStage1(
     };
   }
 
-  if (canPropose && finalProposal) {
-    const msg = formatProposalCoachMessage(
-      finalProposal,
-      result.proposalSummary ||
-        summary ||
-        "我按我们聊的内容整理了一版审题定稿，你看看是否准确。",
-    );
-    return {
-      result: {
-        ...result,
-        verdict: "coach",
-        advance: false,
-        mirror: "",
-        coachQuestion: "",
-        userVisibleText: msg,
-      },
-      state: {
-        ...nextState,
-        handoffProposal: finalProposal,
-        coachContext: {
-          ...nextState.coachContext,
-          handoffPhase: "proposed",
-          readyForHandoff: false,
-          lastQuestion: "",
-        },
-      },
-    };
-  }
-
   if (frustrated || repeated) {
+    if (forcePropose && finalProposal && isHandoffProposalComplete(finalProposal)) {
+      return proposalCoachResponse(finalProposal, nextState, result, summary);
+    }
     const angleAgain = detectAngleConfusion(userMessage);
     const coachQ =
-      substance.sufficient && finalProposal
+      forcePropose && finalProposal
         ? "若下面整理没问题，点左侧「确认整理并填入」即可。"
         : angleAgain
           ? needsAngleTeaching(baseHandoff, userMessage, contentReady).followUp
-          : substance.coachPrompt ??
+          : singleGapCoachPrompt(sides) ||
+            substance.coachPrompt ||
             "Body1 写就业/技能、Body2 写学术/知识——各用一句话说清你想写什么。";
+    const preview = buildRecordedSidesPreview(msgs);
     const mirror = angleAgain
       ? `抱歉，我说清楚一点。${ANGLE_TEACH_CHAT}`
-      : "抱歉，我换种更具体的说法。";
+      : preview
+        ? `${preview}我换种更具体的问法。`
+        : "抱歉，我换种更具体的说法。";
     return {
       result: {
         ...result,
@@ -306,11 +373,23 @@ export function postProcessStage1(
     };
   }
 
-  if (contentReady && !substance.sufficient && substance.coachPrompt) {
-    const coachQ = substance.coachPrompt;
+  if (
+    (isDivergentCoachQuestion(nextQ) || isDivergentCoachQuestion(result.coachQuestion ?? "")) &&
+    sides.employ &&
+    sides.academic &&
+    finalProposal &&
+    isHandoffProposalComplete(finalProposal)
+  ) {
+    return proposalCoachResponse(finalProposal, nextState, result, summary);
+  }
+
+  if (contentReady && !forcePropose && substance.coachPrompt) {
+    const coachQ = singleGapCoachPrompt(sides) || substance.coachPrompt;
+    const preview = buildRecordedSidesPreview(msgs);
     const mirror =
+      preview ||
       summary ||
-      "题型和立场有了；定稿要等两侧都写实后，我会在左侧给出整理。";
+      "题型和立场有了；还差一侧各一句，补完我就整理定稿。";
     return {
       result: {
         ...result,
@@ -324,19 +403,47 @@ export function postProcessStage1(
         ...nextState,
         coachContext: {
           ...nextState.coachContext,
-          lastQuestion: substance.coachPrompt,
+          lastQuestion: coachQ,
         },
       },
     };
   }
 
-  const q = result.coachQuestion?.trim() || "";
-  if (q) {
-    nextState = {
-      ...nextState,
-      coachContext: {
-        ...nextState.coachContext,
-        lastQuestion: q,
+  if (forcePropose && finalProposal && isHandoffProposalComplete(finalProposal)) {
+    return proposalCoachResponse(finalProposal, nextState, result, summary);
+  }
+
+  let coachQ = result.coachQuestion?.trim() || "";
+  if (isDivergentCoachQuestion(coachQ) && sides.employ && sides.academic) {
+    coachQ = "";
+  }
+  if (coachQ && isRepeatedQuestion(lastQ, coachQ)) {
+    coachQ = singleGapCoachPrompt(sides) || substance.coachPrompt || coachQ;
+  }
+
+  const preview = buildRecordedSidesPreview(msgs);
+  const mirror =
+    result.mirror?.trim() && result.mirror !== userMessage?.trim()
+      ? result.mirror
+      : preview || summary || "";
+
+  if (coachQ || mirror) {
+    return {
+      result: {
+        ...result,
+        verdict: "coach",
+        advance: false,
+        mirror,
+        coachQuestion: coachQ,
+        userVisibleText: [mirror, coachQ].filter(Boolean).join("\n\n"),
+        essaySubstanceSufficient: false,
+      },
+      state: {
+        ...nextState,
+        coachContext: {
+          ...nextState.coachContext,
+          lastQuestion: coachQ || lastQ,
+        },
       },
     };
   }

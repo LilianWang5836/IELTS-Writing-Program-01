@@ -201,6 +201,23 @@ const GENERIC_ACADEMIC_POINT =
 const GENERIC_EMPLOY_POINT_RE =
   /^以就业为目标的学生|^想尽快就业的学生应侧重可上岗的工作技能/;
 
+function sideMessageSubstantive(m: string, side: "employ" | "academic"): boolean {
+  if (isExplorationTaskChunk(m) || isPositionOnlyChunk(m, side)) return false;
+  const { employText, academicText } = accumulateDimensionTexts([m]);
+  const t = side === "employ" ? employText : academicText;
+  if (t.length >= 10 && scoreTextSubstance(t) >= 2) return true;
+  if (side === "employ") {
+    return (
+      /项目|实习|实操|课本|竞争优势|项目经验|职场|招聘/.test(m) &&
+      m.length >= 12
+    );
+  }
+  return (
+    /课程|由浅入深|系统|医学|学术道路|领域|持续.*学习|知识本身/.test(m) &&
+    m.length >= 10
+  );
+}
+
 /** 用户是否分别用实质性内容说过就业侧 / 学术侧（立场总述不算） */
 export function explorationSideStatus(msgs: string[]): {
   employ: boolean;
@@ -210,23 +227,8 @@ export function explorationSideStatus(msgs: string[]): {
   let academic = false;
 
   for (const m of msgs) {
-    if (isExplorationTaskChunk(m)) continue;
-    const { employText, academicText } = accumulateDimensionTexts([m]);
-
-    if (
-      employText.length >= 12 &&
-      scoreTextSubstance(employText) >= 2 &&
-      !isPositionOnlyChunk(m, "employ")
-    ) {
-      employ = true;
-    }
-    if (
-      academicText.length >= 12 &&
-      scoreTextSubstance(academicText) >= 2 &&
-      !isPositionOnlyChunk(m, "academic")
-    ) {
-      academic = true;
-    }
+    if (sideMessageSubstantive(m, "employ")) employ = true;
+    if (sideMessageSubstantive(m, "academic")) academic = true;
   }
 
   return { employ, academic };
@@ -241,13 +243,60 @@ function isPositionOnlyChunk(message: string, side: "employ" | "academic"): bool
       /尽快工作|工作技能为主|就业导向|应以工作技能/.test(m) &&
       !/实习|项目|实践|岗位|招聘|雇主|课程|训练|因为.*(?:技能|就业|工作)/.test(m);
     const hasSubstance =
-      /例如|比如|写什么|一段|论证|积累|提升|竞争力/.test(m);
+      /例如|比如|写什么|一段|论证|积累|提升|竞争力|实操|课本|项目经验|竞争优势/.test(
+        m,
+      );
     return employish && !hasSubstance && m.length < 85;
   }
   const academicish =
     /学术道路|纯粹|反之亦然/.test(m) &&
-    !/持续|积累|领域|研究|兴趣|因为|体系|医学|理论/.test(m);
+    !/持续|积累|领域|研究|兴趣|因为|体系|医学|理论|课程|由浅入深|专业/.test(
+      m,
+    );
   return academicish && m.length < 40;
+}
+
+/** 学生表示暂时无法补充（两侧已够时可收口） */
+export function detectExplorationStuck(message?: string): boolean {
+  return (
+    !!message?.trim() &&
+    /想不到|暂时想不出|没有特别|说不清|不太清楚|不知道.*方法|没法说/.test(
+      message,
+    )
+  );
+}
+
+export function isDivergentCoachQuestion(question: string): boolean {
+  return /开放|批判性|教学机会|学习环境|教学方法|哪些领域|深入探索|特别的教学|更具.*批判/.test(
+    question,
+  );
+}
+
+export function buildRecordedSidesPreview(msgs: string[]): string {
+  const { employText, academicText } = accumulateDimensionTexts(msgs);
+  const parts: string[] = [];
+  if (employText.length >= 10) {
+    const hint = employText.slice(0, 36).trim();
+    parts.push(`就业侧（技能/项目/实操）：${hint}${employText.length > 36 ? "…" : ""}`);
+  }
+  if (academicText.length >= 10) {
+    const hint = academicText.slice(0, 36).trim();
+    parts.push(`学术侧（课程/系统学习）：${hint}${academicText.length > 36 ? "…" : ""}`);
+  }
+  if (!parts.length) return "";
+  return `我已记下 ${parts.join("；")}。`;
+}
+
+export function singleGapCoachPrompt(
+  sides: { employ: boolean; academic: boolean },
+): string {
+  if (!sides.employ) {
+    return "就业侧请填空一句：大学应提供___（如实习/项目/实操技能），帮助学生___（如更快就业）。";
+  }
+  if (!sides.academic) {
+    return "学术侧请填空一句：大学应提供___（如系统课程/领域学习），帮助学生___（如深造/积累知识）。";
+  }
+  return "";
 }
 
 export function isValidBodyPoint(
@@ -312,6 +361,9 @@ function extractEmployPoint(...sources: string[]): string {
       /(?:应以|应该|需要)[^。；,，]{0,20}(?:工作技能|职场技能|就业)[^。；,，]{0,24}/,
       /(?:侧重|优先)[^。；,，]{0,16}(?:工作技能|就业|职场)[^。；,，]{0,20}/,
       /工作技能[^。；,，]{0,36}/,
+      /项目经验[^。；,，]{0,36}/,
+      /实操[^。；,，]{0,30}/,
+      /课本[^。；,，]{0,20}[^。；,，]{0,24}/,
     ];
     for (const re of patterns) {
       const m = text.match(re);
@@ -334,6 +386,12 @@ function extractAcademicPoint(...sources: string[]): string {
     }
     if (/医学|专业理论/.test(text) && text.length >= 20) {
       return trimPoint("大学应为深造导向学生提供系统专业理论知识");
+    }
+    if (/课程规划|由浅入深|系统.*学习/.test(text) && text.length >= 12) {
+      return trimPoint("大学应提供系统课程与由浅入深的递进式学习");
+    }
+    if (/看学生专业|医学/.test(text) && /系统|学习/.test(text)) {
+      return trimPoint("按专业需要系统学习（如医学）以打好理论基础");
     }
     const patterns = [
       /知识(?:本身)?[:：]\s*([^；;\n,，]+)/i,
@@ -549,12 +607,17 @@ export function assessEssaySubstance(state: SessionState): EssaySubstanceAssessm
     gaps.push("题目中的两种观点是否都点到（职场技能 vs 为知识而学）");
   }
 
-  const sufficient = gaps.length === 0 && sides.employ && sides.academic;
+  const roundsHint = msgs.length;
+  const sufficient =
+    gaps.length === 0 &&
+    sides.employ &&
+    sides.academic &&
+    (roundsHint >= 2 || blob.length >= 80);
 
   return {
     sufficient,
     gaps: sufficient ? [] : gaps,
-    coachPrompt: gaps[0],
+    coachPrompt: singleGapCoachPrompt(sides) || gaps[0],
   };
 }
 

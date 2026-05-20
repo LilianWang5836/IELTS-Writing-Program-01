@@ -71,8 +71,17 @@ export function mockLlmResponse(
         /为就业|就业准备/.test(raw) &&
         /知识本身|学术道路/.test(raw) &&
         raw.length >= 40;
+      const richBothSides =
+        hasEmploy &&
+        hasAcademic &&
+        (/项目|实习|实操|课本|竞争优势/.test(raw) ||
+          /尽快工作|工作技能/.test(raw)) &&
+        (/课程|由浅入深|系统|医学|专业理论|领域|持续.*学习/.test(raw) ||
+          /知识本身|学术道路/.test(raw)) &&
+        raw.length >= 30;
       const substanceReady =
         bothLabeled ||
+        richBothSides ||
         (hasTask &&
           hasPosition &&
           hasEmploy &&
@@ -124,6 +133,35 @@ export function mockLlmResponse(
             body1Angle: hasEmploy ? "就业与技能" : "",
             body2Point: "",
             body2Angle: hasAcademic ? "学术与知识" : "",
+          },
+        };
+      }
+
+      if (hasEmploy && hasAcademic && raw.length > 20) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: richBothSides
+            ? "就业与学术两条线我都听到了。"
+            : "两条线方向有了，还可以各补一句具体写什么。",
+          coachQuestion: richBothSides
+            ? ""
+            : "就业技能一侧、学术知识一侧，各用一句话说清你想在段里论证什么？",
+          userVisibleText: richBothSides
+            ? "就业与学术两条线我都听到了。"
+            : "两条线方向有了，还可以各补一句具体写什么。",
+          essaySubstanceSufficient: !!richBothSides,
+          ...(richBothSides
+            ? {
+                proposalSummary:
+                  "这题是 discuss，你采取条件立场；Body1 走就业技能，Body2 走学术知识。",
+                proposedHandoff: { ...MOCK_PROPOSAL },
+              }
+            : { gapsRemaining: ["两侧尚需更具体的论证方向"] }),
+          extracted: {
+            questionType: "discuss",
+            taskUnderstanding: MOCK_PROPOSAL.taskUnderstanding,
+            position: MOCK_PROPOSAL.position,
           },
         };
       }

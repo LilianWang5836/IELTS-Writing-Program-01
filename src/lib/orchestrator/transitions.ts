@@ -1,3 +1,4 @@
+import { mergeSlots } from "@/lib/domain/chain-scaffold";
 import { buildBlueprintFromStage2 } from "@/lib/domain/blueprint-from-s2";
 import { isMostlyEnglish } from "@/lib/domain/essay-substance";
 import { defaultBodySegment } from "@/lib/domain/handoff";
@@ -341,7 +342,9 @@ export function applyBodyCoachUpdate(
     status: "coaching",
     draft: appendDraft(seg.draft, userMessage),
     chainSummary: result.logicBreakdown?.chainSummary ?? seg.chainSummary,
-    slots: result.logicBreakdown?.slots ?? seg.slots,
+    slots: result.logicBreakdown?.slots
+      ? mergeSlots(seg.slots, result.logicBreakdown.slots)
+      : seg.slots,
     openIssues: openIssue ? [String(openIssue)] : seg.openIssues,
   };
   return {

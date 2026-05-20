@@ -37,7 +37,7 @@ import type {
 } from "./types";
 import { assessParagraphSubstance } from "./paragraph-substance";
 
-const MAX_MIRROR_CHARS = 100;
+const MAX_MIRROR_CHARS = 220;
 
 function truncateMirror(text: string): string {
   const t = text.trim();
@@ -400,7 +400,20 @@ export function postProcessStage2(
     };
   }
 
-  const { mirror, ask: coachQ } = decision.coach;
+  let { mirror, ask: coachQ } = decision.coach;
+  if (
+    buildStep === "ready" &&
+    areChainSlotsSemanticallyValid(workingSlots, body)
+  ) {
+    coachQ = "";
+    if (
+      !mirror?.trim() ||
+      /请补|具体.*例子|职业|行业|举例/.test(mirror)
+    ) {
+      mirror =
+        "原因、举例和段末收束都齐了，请看左侧链条与下方进度；要改哪一环直接说。";
+    }
+  }
   const userVisible = [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n");
 
   return {

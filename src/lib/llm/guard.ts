@@ -165,7 +165,7 @@ export function formatStage2CoachDisplay(result: LlmTurnResult): string {
     }
   }
 
-  return guardUserVisibleText(parts.join("\n\n"), 5);
+  return guardUserVisibleText(parts.join("\n\n"), 8);
 }
 
 /** Assign 模式保留 keywords；Stage 2 链条在左侧展示 */

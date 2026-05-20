@@ -108,6 +108,7 @@ export function isReasonSentence(s: string, body: WorkshopBodyKey): boolean {
   const raw = s.trim();
   const t = normalizeCoachSentence(s);
   if (t.length < 10 || isStanceOnlySentence(t)) return false;
+  if (hasOutcomeForward(t, body)) return false;
 
   const labeledReason = /^原因\s*[:：]/i.test(raw);
   if (hasExampleLead(raw) && !labeledReason) return false;
@@ -209,6 +210,11 @@ export function isWeakExampleSentence(
 ): boolean {
   if (!isExampleSentence(s, body)) return true;
   const t = s.trim();
+  if (
+    /公司|实习|项目|编程|c\+\+|技术栈|岗位|校企|工程师|工作坊/.test(t)
+  ) {
+    return false;
+  }
   if (exampleQualityScore(s, body) >= 4) return false;
   if (hasExampleLead(t) && t.length < 22) return true;
   return hasExampleLead(t) && !/实习|项目|技术栈|计算机|岗位|课程|医学|公司/.test(t);

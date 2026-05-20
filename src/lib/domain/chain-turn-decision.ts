@@ -7,6 +7,7 @@ import {
   getChainBuildContext,
   getNextChainBuildStep,
   getNextChainBuildStepLenient,
+  isBannedCoachQuestion,
   isChainStepFilled,
   isExampleSentence,
   isLinkSentence,
@@ -45,6 +46,60 @@ const STEP_HINT: Record<Exclude<ChainBuildStep, "ready">, string> = {
   example: "举例",
   link: "段末收束",
 };
+
+const RING_DETECT_ORDER: ChainRing[] = ["link", "example", "reason"];
+
+/** 在标点处截断，避免半句追问 */
+export function clipCoachAsk(text: string, max = 280): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const slice = t.slice(0, max);
+  const punct = Math.max(
+    slice.lastIndexOf("。"),
+    slice.lastIndexOf("？"),
+    slice.lastIndexOf("！"),
+    slice.lastIndexOf("；"),
+    slice.lastIndexOf("\n"),
+  );
+  if (punct >= 48) return slice.slice(0, punct + 1).trim();
+  return `${slice.trim()}…`;
+}
+
+function detectMessageRing(
+  msg: string,
+  body: WorkshopBodyKey,
+): ChainRing | null {
+  for (const ring of RING_DETECT_ORDER) {
+    if (messageFillsRing(msg, ring, body)) return ring;
+  }
+  return null;
+}
+
+function shouldUseLlmCoachQuestion(
+  llmQ: string,
+  advanceTo: ChainBuildStep,
+  workingSlots: ParagraphSlots,
+  body: WorkshopBodyKey,
+): boolean {
+  if (!llmQ.trim() || isBannedCoachQuestion(llmQ)) return false;
+  if (advanceTo === "ready") return false;
+  if (areChainSlotsSemanticallyValid(workingSlots, body)) return false;
+  if (
+    /具体.*(?:职业|行业)|再.*(?:举例|例子)|举一个.*例子|哪个行业|什么职业/.test(
+      llmQ,
+    ) &&
+    isChainStepFilled(workingSlots, "example", body)
+  ) {
+    return false;
+  }
+  if (
+    /面试|上岗|对口|段末|收束|Link/i.test(llmQ) &&
+    isChainStepFilled(workingSlots, "link", body)
+  ) {
+    return false;
+  }
+  return true;
+}
 
 function ringFromStep(step: ChainBuildStep): ChainRing | null {
   if (step === "reason" || step === "example" || step === "link") return step;
@@ -85,6 +140,19 @@ export function parseUnderstandingForStep(
   const base = parseChainTurnUnderstanding(result, userMessage);
   const msg = userMessage?.trim() ?? "";
   if (!msg || base.role === "meta") return base;
+
+  const detected = detectMessageRing(msg, body);
+  if (detected) {
+    const q =
+      base.role === detected && base.quality !== "none"
+        ? base.quality
+        : inferQualityForRing(msg, detected, body);
+    return {
+      role: detected,
+      quality: q === "none" ? inferQualityForRing(msg, detected, body) : q,
+      slotText: base.slotText || msg,
+    };
+  }
 
   const expectedRing = ringFromStep(expectedStep);
   if (!expectedRing) return base;
@@ -203,7 +271,9 @@ function buildCoachMessage(input: {
 
   if (advanceTo === "ready" && areChainSlotsSemanticallyValid(workingSlots, body)) {
     return {
-      mirror: llmMirror || "各环齐了，请看左侧与下方进度。",
+      mirror:
+        llmMirror ||
+        "原因、举例和段末收束都齐了，请看左侧链条与下方进度；要改哪一环直接说。",
       ask: "",
     };
   }
@@ -215,9 +285,7 @@ function buildCoachMessage(input: {
     const ask =
       next.step === "ready"
         ? ""
-        : next.coachPrompt.length > 160
-          ? `${next.coachPrompt.slice(0, 160)}…`
-          : next.coachPrompt;
+        : clipCoachAsk(next.coachPrompt);
     return {
       mirror:
         llmMirror ||
@@ -288,16 +356,20 @@ function buildCoachMessage(input: {
   }
 
   const llmQ = sanitized.coachQuestion?.trim() ?? "";
-  if (llmQ && !isSameCoachPrompt(llmQ, lastQuestion)) {
+  if (
+    llmQ &&
+    !isSameCoachPrompt(llmQ, lastQuestion) &&
+    shouldUseLlmCoachQuestion(llmQ, advanceTo, workingSlots, body)
+  ) {
     return {
       mirror: llmMirror || `请补${STEP_HINT[expectedRing ?? "reason"]}。`,
-      ask: llmQ,
+      ask: clipCoachAsk(llmQ),
     };
   }
 
   return {
     mirror: llmMirror || `请补${STEP_HINT[expectedRing ?? "reason"]}。`,
-    ask: fullPrompt.length > 140 ? `${fullPrompt.slice(0, 140)}…` : fullPrompt,
+    ask: clipCoachAsk(fullPrompt),
   };
 }
 
@@ -386,9 +458,12 @@ export function resolveChainTurnDecision(
     }
   }
 
-  if (
-    primaryRing === "link" &&
-    isChainStepFilled(workingSlots, "link", body)
+  if (isChainStepFilled(workingSlots, "link", body)) {
+    advanceTo = "ready";
+    stepPrompt = "";
+  } else if (
+    areChainSlotsSemanticallyValid(workingSlots, body) &&
+    getNextChainBuildStep(workingSlots, body, buildCtx).step === "ready"
   ) {
     advanceTo = "ready";
     stepPrompt = "";

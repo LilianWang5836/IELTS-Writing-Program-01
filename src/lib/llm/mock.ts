@@ -1,68 +1,129 @@
 import type { LlmTurnResult, PromptModuleId } from "@/lib/domain/types";
 
+const MOCK_PROPOSAL = {
+  questionType: "discuss",
+  taskUnderstanding: "讨论大学应侧重就业技能还是为知识而学",
+  position: "取决于学生职业规划，可分路径",
+  body1Point: "以就业为导向的学生应优先获得可上岗的技能",
+  body1Angle: "就业市场与职场技能",
+  body2Point: "以学术深造为目标的学生应保留系统学习与知识积累",
+  body2Angle: "学术深造与知识体系",
+};
+
 export function mockLlmResponse(
   moduleId: PromptModuleId,
   context: { userMessage?: string; subStep: string },
 ): LlmTurnResult {
   const msg = (context.userMessage ?? "").toLowerCase();
   const hasUserText = (context.userMessage?.trim().length ?? 0) > 8;
+  const raw = context.userMessage ?? "";
 
   switch (moduleId) {
     case "P1": {
-      if (
-        /看不懂|不懂|已经说|说得很清楚/.test(context.userMessage ?? "")
-      ) {
+      if (/切入面|角度|视角|讨论范围/.test(raw)) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror:
+            "「切入面」不是新观点，而是这一段从题目哪一面展开，比如就业市场 vs 学术深造。",
+          coachQuestion:
+            "Body1、Body2 各打算用什么词标出两段不同的范围？",
+          userVisibleText:
+            "「切入面」不是新观点，而是这一段从题目哪一面展开，比如就业市场 vs 学术深造。",
+          essaySubstanceSufficient: false,
+          extracted: {
+            questionType: "discuss",
+            taskUnderstanding: MOCK_PROPOSAL.taskUnderstanding,
+            position: MOCK_PROPOSAL.position,
+            body1Point: "",
+            body1Angle: "",
+            body2Point: "",
+            body2Angle: "",
+          },
+        };
+      }
+      if (/看不懂|不懂|已经说|说得很清楚/.test(raw)) {
         return {
           verdict: "coach",
           advance: false,
           mirror: "抱歉，我换种更具体的说法。",
           coachQuestion:
-            "Body1 先写就业/技能，Body2 先写学术/知识——请填左侧审题定稿并提交，可以吗？",
-          userVisibleText: "不是在考你审题，而是帮你定两个分论点方向。",
+            "Body1 先写就业/技能一侧、Body2 写学术/知识一侧——各用一句话说清你想写什么？",
+          userVisibleText: "抱歉，我换种更具体的说法。",
+          essaySubstanceSufficient: false,
           extracted: {
             questionType: "discuss",
-            taskUnderstanding: "university: job skills vs academic knowledge",
-            position: "depends on student career plan; split pathways",
+            taskUnderstanding: MOCK_PROPOSAL.taskUnderstanding,
+            position: MOCK_PROPOSAL.position,
           },
         };
       }
-      const rich =
-        (msg.includes("discuss") || msg.includes("讨论")) &&
-        (msg.includes("技能") ||
-          msg.includes("知识") ||
-          msg.includes("规划") ||
-          msg.includes("学术") ||
-          msg.includes("工作"));
-      const contentReady =
-        rich &&
-        (msg.includes("技能") || msg.includes("知识")) &&
-        (msg.includes("规划") || msg.includes("取决于") || msg.includes("反之"));
-      const userTurns = (context.userMessage?.match(/./g)?.length ?? 0) > 0 ? 1 : 0;
-      // mock 无完整 history，用长度近似：长回复视为可肯定首轮
-      if (contentReady && context.userMessage!.length > 50) {
+
+      const hasEmploy =
+        /就业|工作|技能|实习|职场|job|career|employ/.test(msg);
+      const hasAcademic =
+        /学术|知识|研究|深造|academic|phd|纯粹/.test(msg);
+      const hasPosition =
+        /取决于|规划|路径|分流|反之|部分同意|看情况/.test(msg);
+      const hasTask = /discuss|讨论|双方|两种/.test(msg);
+
+      const substanceReady =
+        hasTask &&
+        hasPosition &&
+        hasEmploy &&
+        hasAcademic &&
+        raw.length >= 90 &&
+        (/因为|所以|应该|实习|研究|才能/.test(raw) ||
+          (raw.match(/。|\./g)?.length ?? 0) >= 2);
+
+      if (substanceReady) {
         return {
           verdict: "coach",
           advance: false,
-          mirror:
-            "Discuss 题、条件立场，以及就业技能 vs 学术知识两条线，我都听到了。",
+          mirror: "题型、立场和就业/学术两条线我都听到了，内容够写两段了。",
+          coachQuestion: "",
+          userVisibleText: "题型、立场和就业/学术两条线我都听到了，内容够写两段了。",
+          essaySubstanceSufficient: true,
+          proposalSummary:
+            "这题是 discuss，你采取条件立场；Body1 走就业技能，Body2 走学术知识，两段角度不同。",
+          proposedHandoff: { ...MOCK_PROPOSAL },
+          extracted: { ...MOCK_PROPOSAL },
+        };
+      }
+
+      const contentReady =
+        hasTask && hasPosition && hasEmploy && hasAcademic && raw.length > 40;
+
+      if (contentReady) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "两条线有了，还可以各补一句「写什么、为什么」。",
           coachQuestion:
-            "若你认可这两条线，可直接填左侧定稿；若想补充限制条件（如专业/国家），请说一句。",
-          userVisibleText:
-            "Discuss 题、条件立场，以及就业技能 vs 学术知识两条线，我都听到了。",
+            "就业技能一侧、学术知识一侧，各用一句话说清你想在段里论证什么？",
+          userVisibleText: "两条线有了，还可以各补一句「写什么、为什么」。",
+          essaySubstanceSufficient: false,
+          gapsRemaining: ["两侧尚需更具体的论证方向"],
           extracted: {
             questionType: "discuss",
-            taskUnderstanding: "skills vs knowledge in university education",
-            position: "conditional on student career plan",
+            taskUnderstanding: MOCK_PROPOSAL.taskUnderstanding,
+            position: MOCK_PROPOSAL.position,
+            body1Point: "",
+            body1Angle: hasEmploy ? "就业与技能" : "",
+            body2Point: "",
+            body2Angle: hasAcademic ? "学术与知识" : "",
           },
         };
       }
+
       if (msg.length > 15) {
         return {
           verdict: "coach",
           advance: false,
           mirror: "你正在说题型、立场或两个方向。",
-          coachQuestion: "若已有就业 vs 学术两条线，请直接填左侧定稿并提交。",
+          coachQuestion: "这题要你讨论什么？你的总体判断是什么？",
           userVisibleText: "你正在说题型、立场或两个方向。",
+          essaySubstanceSufficient: false,
           extracted: {
             questionType: "discuss",
             taskUnderstanding: "skills vs knowledge",
@@ -76,6 +137,7 @@ export function mockLlmResponse(
         mirror: "先从题目要求说起。",
         coachQuestion: "这题是 discuss 还是 agree/disagree？题目要你比较什么？",
         userVisibleText: "先从题目要求说起。",
+        essaySubstanceSufficient: false,
       };
     }
 

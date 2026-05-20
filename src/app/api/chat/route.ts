@@ -10,6 +10,7 @@ import type { Question, SessionState, Stage1Handoff } from "@/lib/domain/types";
 import {
   handleConfirm,
   handleInit,
+  handleConfirmHandoffProposal,
   handleSubmitHandoff,
   handleTurn,
 } from "@/lib/orchestrator/handle-turn";
@@ -25,7 +26,13 @@ const handoffSchema = z.object({
 });
 
 const bodySchema = z.object({
-  action: z.enum(["init", "turn", "confirm", "submit_handoff"]),
+  action: z.enum([
+    "init",
+    "turn",
+    "confirm",
+    "submit_handoff",
+    "confirm_handoff_proposal",
+  ]),
   questionId: z.string().optional(),
   message: z.string().optional(),
   handoff: handoffSchema.optional(),
@@ -79,6 +86,11 @@ export async function POST(req: NextRequest) {
     }
 
     const migrated = migrateSessionState(state);
+
+    if (action === "confirm_handoff_proposal") {
+      const result = await handleConfirmHandoffProposal(migrated);
+      return respond(result);
+    }
 
     if (action === "submit_handoff") {
       if (!handoff) {

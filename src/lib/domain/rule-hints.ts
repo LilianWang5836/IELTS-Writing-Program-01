@@ -57,15 +57,17 @@ export function buildRuleHintsBlock(state: SessionState): string {
   const lines: string[] = [];
 
   if (state.subStep === "S1_EVAL" && !state.handoffLocked) {
-    const userTurns = state.chatHistory.filter((m) => m.role === "user").length;
-    if (userTurns >= 4) {
-      lines.push("规则提示：探索轮次已多，应引导左侧定稿提交，勿再追问双方观点含义。");
-    }
-    if (state.coachContext?.readyForHandoff) {
-      lines.push("规则提示：已达探索完成度，本轮引导填写左侧审题定稿。");
-    } else if (userTurns === 1) {
+    if (state.coachContext?.handoffPhase === "proposed") {
       lines.push(
-        "规则提示：首轮勿说「探索够了」；可肯定并允许再补一句，或提示可填定稿。",
+        "规则提示：已输出整理提案，引导学生点左侧「确认整理并填入」，勿再列 6 栏清单。",
+      );
+    } else if (state.coachContext?.angleTeachDone) {
+      lines.push(
+        "规则提示：已在聊天教过切入面；若学生已答范围词，可写入 proposedHandoff 的 body1Angle/body2Angle。",
+      );
+    } else {
+      lines.push(
+        "规则提示：仅当就业侧与学术侧各有足够具体内容时才 essaySubstanceSufficient；首轮勿收口。若学生问切入面/角度，先用「讨论范围/视角」解释。",
       );
     }
   }

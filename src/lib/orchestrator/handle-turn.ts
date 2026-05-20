@@ -12,7 +12,8 @@ import type {
   SessionState,
   Stage1Handoff,
 } from "@/lib/domain/types";
-import { postProcessStage1 } from "@/lib/domain/stage1-coach";
+import { assessEssaySubstance } from "@/lib/domain/essay-substance";
+import { assessExplorationContent, postProcessStage1 } from "@/lib/domain/stage1-coach";
 import { formatCoachDisplay } from "@/lib/llm/guard";
 import { callLlm } from "@/lib/llm/client";
 import { buildFullPrompt } from "@/lib/prompts/loader";
@@ -98,6 +99,16 @@ function buildVars(
   }
   if (state.coachContext?.lastQuestion) {
     base.last_coach_question = state.coachContext.lastQuestion;
+  }
+  if (state.subStep === "S1_EVAL" && !state.handoffLocked) {
+    const substance = assessEssaySubstance(state);
+    const { contentReady } = assessExplorationContent(state, userMessage);
+    base.substance_assessment = JSON.stringify({
+      contentReady,
+      substanceSufficient: substance.sufficient,
+      gaps: substance.gaps,
+      handoffPhase: state.coachContext?.handoffPhase ?? "exploring",
+    });
   }
 
   if (state.s3) {
@@ -239,6 +250,39 @@ export async function handleInit(state: SessionState): Promise<TurnResponse> {
   return {
     replies: [opening],
     state: s,
+    requiresConfirm: false,
+    canSubmit: true,
+  };
+}
+
+export async function handleConfirmHandoffProposal(
+  state: SessionState,
+): Promise<TurnResponse> {
+  const s0 = ensureMigrated(state);
+  const proposal = s0.handoffProposal;
+  if (!proposal) {
+    return {
+      replies: ["还没有可确认的整理，请继续在右侧聊审题。"],
+      state: s0,
+      requiresConfirm: false,
+      canSubmit: true,
+    };
+  }
+
+  const s: SessionState = {
+    ...s0,
+    handoff: { ...proposal },
+    coachContext: {
+      ...s0.coachContext,
+      handoffPhase: "editing",
+      readyForHandoff: true,
+    },
+  };
+  const reply =
+    "已按整理填入左侧定稿，请检查各栏（可改几个字），无误后点「提交审题定稿」。";
+  return {
+    replies: [reply],
+    state: appendChat(s, "assistant", reply),
     requiresConfirm: false,
     canSubmit: true,
   };

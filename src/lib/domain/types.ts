@@ -104,11 +104,16 @@ export interface Blueprint {
   };
 }
 
+export type HandoffPhase = "exploring" | "proposed" | "editing" | "locked";
+
 export interface CoachContext {
   lastQuestion?: string;
   openIssue?: string;
   exploreRound?: number;
   readyForHandoff?: boolean;
+  handoffPhase?: HandoffPhase;
+  /** 本轮 Stage1 是否已在聊天里教过「切入面」 */
+  angleTeachDone?: boolean;
 }
 
 export interface SessionState {
@@ -125,6 +130,8 @@ export interface SessionState {
     stage2Pass: boolean;
   };
   handoff?: Stage1Handoff;
+  /** 教练整理的 6 栏提案，待用户确认填入 */
+  handoffProposal?: Stage1Handoff;
   handoffLocked?: boolean;
   coachContext?: CoachContext;
   s1?: Stage1Data;
@@ -194,6 +201,11 @@ export interface LlmTurnResult {
   logicBreakdown?: LogicBreakdown;
   languageSupport?: LanguageSupport;
   extracted?: Record<string, unknown>;
+  /** 教练判断：两侧料是否够写一篇充实作文 */
+  essaySubstanceSufficient?: boolean;
+  gapsRemaining?: string[];
+  proposedHandoff?: Stage1Handoff;
+  proposalSummary?: string;
   blueprint?: Blueprint;
   modulePlan?: Record<BodyKey, ModuleId[]>;
   moduleComplete?: boolean;

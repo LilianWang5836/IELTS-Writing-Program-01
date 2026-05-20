@@ -30,6 +30,7 @@ interface WritingStore {
   sendMessage: (text: string) => Promise<void>;
   confirmSentence: () => Promise<void>;
   submitHandoff: () => Promise<void>;
+  confirmHandoffProposal: () => Promise<void>;
   setHandoffField: (key: HandoffFieldTarget, value: string) => void;
   setInsertTarget: (key: HandoffFieldTarget) => void;
   applySelectionToHandoff: (text: string) => void;
@@ -143,6 +144,44 @@ export const useWritingStore = create<WritingStore>()(
         get().setHandoffField(insertTarget, trimmed);
       },
 
+      confirmHandoffProposal: async () => {
+        const { state } = get();
+        if (!state?.handoffProposal) return;
+        set({ loading: true, error: null });
+        try {
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "confirm_handoff_proposal",
+              state,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error ?? "Confirm failed");
+          set({
+            state: data.state,
+            handoffDraft: data.state.handoff ?? state.handoffProposal,
+            messages: [
+              ...get().messages,
+              ...data.replies.map((t: string) => ({
+                role: "assistant" as const,
+                text: t,
+              })),
+            ],
+            leftPanel: data.leftPanel ?? "",
+            requiresConfirm: data.requiresConfirm,
+            canSubmit: data.canSubmit,
+            loading: false,
+          });
+        } catch (e) {
+          set({
+            loading: false,
+            error: e instanceof Error ? e.message : "确认整理失败",
+          });
+        }
+      },
+
       submitHandoff: async () => {
         const { state, handoffDraft } = get();
         if (!state) return;
@@ -200,7 +239,10 @@ export const useWritingStore = create<WritingStore>()(
           if (!res.ok) throw new Error(data.error ?? "Request failed");
           set({
             state: data.state,
-            handoffDraft: data.state.handoff ?? get().handoffDraft,
+            handoffDraft:
+              data.state.coachContext?.handoffPhase === "proposed"
+                ? get().handoffDraft
+                : data.state.handoff ?? get().handoffDraft,
             insertTarget: data.state.handoffLocked
               ? get().insertTarget
               : defaultHandoffTarget(data.state),

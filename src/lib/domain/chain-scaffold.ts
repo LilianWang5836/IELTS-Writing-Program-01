@@ -597,7 +597,7 @@ export function buildChainProposalFromChat(
 ): ChainProposal {
   const slots = buildSlotsFromChat(state, body);
   const seg = body === "body1" ? state.s2?.body1 : state.s2?.body2;
-  const merged = mergeSlots(slots, seg?.slots);
+  const merged = mergeSlots(seg?.slots, slots);
   const workshop = userBlobForWorkshopBody(state, body);
   const chainSummary = [
     merged.claim,

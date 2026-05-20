@@ -105,15 +105,14 @@ export function postProcessStage2(
   const understanding = parseChainTurnUnderstanding(sanitized, userMessage);
   const chatSlots = buildSlotsFromChat(nextState, body);
   const seg = body === "body1" ? nextState.s2?.body1 : nextState.s2?.body2;
-  let workingSlots = mergeSlots(
-    mergeSlotsWithTurnUnderstanding(
-      chatSlots,
-      understanding,
-      userMessage,
-      body,
-    ),
-    seg?.slots,
+  const latestTurnSlots = mergeSlotsWithTurnUnderstanding(
+    chatSlots,
+    understanding,
+    userMessage,
+    body,
   );
+  // Preserve prior slots as baseline, but let latest turn overwrite stale values.
+  let workingSlots = mergeSlots(seg?.slots, latestTurnSlots);
 
   const proposalFromLlm = chainProposalFromResult(sanitized, body);
   const slotsForSubstance = mergeSlots(workingSlots, proposalFromLlm?.slots);

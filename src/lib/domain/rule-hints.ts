@@ -62,7 +62,11 @@ export function buildRuleHintsBlock(state: SessionState): string {
       lines.push("规则提示：探索轮次已多，应引导左侧定稿提交，勿再追问双方观点含义。");
     }
     if (state.coachContext?.readyForHandoff) {
-      lines.push("规则提示：已达探索完成度，本轮必须引导填写左侧审题定稿。");
+      lines.push("规则提示：已达探索完成度，本轮引导填写左侧审题定稿。");
+    } else if (userTurns === 1) {
+      lines.push(
+        "规则提示：首轮勿说「探索够了」；可肯定并允许再补一句，或提示可填定稿。",
+      );
     }
   }
   if (state.subStep === "S2_2_BODY1" || state.subStep === "S2_3_BODY2") {

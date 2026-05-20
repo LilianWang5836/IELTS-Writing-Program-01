@@ -33,25 +33,26 @@ export function mockLlmResponse(
           msg.includes("规划") ||
           msg.includes("学术") ||
           msg.includes("工作"));
-      const ready =
+      const contentReady =
         rich &&
-        (msg.includes("分开") ||
-          msg.includes("技能") ||
-          msg.includes("学术") ||
-          msg.includes("实操") ||
-          context.userMessage!.length > 60);
-      if (ready) {
+        (msg.includes("技能") || msg.includes("知识")) &&
+        (msg.includes("规划") || msg.includes("取决于") || msg.includes("反之"));
+      const userTurns = (context.userMessage?.match(/./g)?.length ?? 0) > 0 ? 1 : 0;
+      // mock 无完整 history，用长度近似：长回复视为可肯定首轮
+      if (contentReady && context.userMessage!.length > 50) {
         return {
           verdict: "coach",
           advance: false,
-          mirror: "题型、条件立场和两个角度都已清楚。",
-          coachQuestion: "",
+          mirror:
+            "Discuss 题、条件立场，以及就业技能 vs 学术知识两条线，我都听到了。",
+          coachQuestion:
+            "若你认可这两条线，可直接填左侧定稿；若想补充限制条件（如专业/国家），请说一句。",
           userVisibleText:
-            "请改填左侧审题定稿并提交：①题意 ②立场 ③Body1 就业/技能 ④Body2 学术/知识（角度自填）。",
+            "Discuss 题、条件立场，以及就业技能 vs 学术知识两条线，我都听到了。",
           extracted: {
             questionType: "discuss",
             taskUnderstanding: "skills vs knowledge in university education",
-            position: "conditional on student goals; separate tracks",
+            position: "conditional on student career plan",
           },
         };
       }

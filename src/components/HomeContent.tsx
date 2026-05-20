@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { QuestionPicker } from "@/components/QuestionPicker";
-import { SentenceInput } from "@/components/SentenceInput";
 import { StageProgress } from "@/components/StageProgress";
 import { TutorPanel } from "@/components/TutorPanel";
 import { WritingEditor } from "@/components/WritingEditor";
@@ -38,16 +37,13 @@ export function HomeContent() {
       <QuestionPicker />
       <StageProgress />
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-5">
-        <section className="lg:col-span-3 border-r border-panel-border">
+        <section className="flex min-h-0 flex-col border-r border-panel-border lg:col-span-3">
           <WritingEditor />
         </section>
         <section className="flex min-h-0 flex-col lg:col-span-2">
-          <div className="min-h-0 flex-1">
-            <TutorPanel />
-          </div>
+          <TutorPanel />
         </section>
       </div>
-      <SentenceInput />
     </main>
   );
 }

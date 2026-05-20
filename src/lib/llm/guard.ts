@@ -137,7 +137,7 @@ export function formatStage1CoachDisplay(result: LlmTurnResult): string {
     }
   }
 
-  return guardUserVisibleText(parts.join(" "), 4);
+  return guardUserVisibleText(parts.join("\n\n"), 5);
 }
 
 /** Assign 模式保留 keywords；Stage 2 的 logicBreakdown 另段展示 */

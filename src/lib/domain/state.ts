@@ -73,27 +73,20 @@ export function appendChat(
   };
 }
 
-function handoffBlock(h: Stage1Handoff, locked: boolean): string[] {
-  const tag = locked ? "【审题定稿 · 已锁定】" : "【审题定稿 · 编辑中】";
-  return [
-    tag,
-    `① 题意：${h.taskUnderstanding || "—"}`,
-    `② 立场：${h.position || "—"}`,
-    `③ Body1：${h.body1Point || "—"}`,
-    `   角度：${h.body1Angle || "—"}`,
-    `④ Body2：${h.body2Point || "—"}`,
-    `   角度：${h.body2Angle || "—"}`,
-    "",
-  ];
-}
-
 export function buildLeftPanelText(state: SessionState): string {
   const parts: string[] = [];
 
-  if (state.stage === 1 && state.handoff) {
-    parts.push(...handoffBlock(state.handoff, !!state.handoffLocked));
-  } else if (state.handoffLocked && state.handoff) {
-    parts.push(...handoffBlock(state.handoff, true));
+  // Stage 1 定稿只在 HandoffEditor 展示，此处不重复
+  if (state.handoffLocked && state.handoff) {
+    parts.push("【审题定稿 · 摘要】");
+    parts.push(`立场：${state.handoff.position || "—"}`);
+    parts.push(
+      `Body1：${state.handoff.body1Point || "—"}（${state.handoff.body1Angle || "—"}）`,
+    );
+    parts.push(
+      `Body2：${state.handoff.body2Point || "—"}（${state.handoff.body2Angle || "—"}）`,
+    );
+    parts.push("");
   }
 
   if (state.coachContext?.openIssue) {

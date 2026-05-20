@@ -2,12 +2,14 @@ import {
   assessEssaySubstance,
   assessExplorationContent,
   buildHandoffFromChat,
+  explorationSideStatus,
   extractProposedHandoffRule,
   formatProposalCoachMessage,
   isHandoffProposalComplete,
   proposedHandoffFromResult,
   sanitizeHandoffProposal,
   userAnsweredBothSidesInMessage,
+  userMessages,
 } from "./essay-substance";
 import { ANGLE_TEACH_CHAT } from "./constants";
 import type { LlmTurnResult, SessionState, Stage1Handoff } from "./types";
@@ -72,8 +74,15 @@ export function buildExplorationSummary(
   userMessage?: string,
 ): string {
   if (!contentReady) return "";
+  const sides = explorationSideStatus(userMessages(state));
   if (substanceSufficient) {
     return "两侧都够写两段了，我帮你整理一版审题定稿。";
+  }
+  if (sides.academic && !sides.employ) {
+    return "学术侧方向有了，请再补一句就业/技能侧：这段想写什么、为什么。";
+  }
+  if (sides.employ && !sides.academic) {
+    return "就业侧方向有了，请再补一句学术/知识侧：这段想写什么、为什么。";
   }
   if (userAnsweredBothSidesInMessage(userMessage)) {
     return "两侧方向有了，再各用一句话说清 Body1、Body2 各写什么，我就能整理定稿。";
@@ -203,8 +212,7 @@ export function postProcessStage1(
     finalProposal = isHandoffProposalComplete(built) ? built : finalProposal;
   }
   if (finalProposal) {
-    finalProposal =
-      sanitizeHandoffProposal(finalProposal, nextState) ?? finalProposal;
+    finalProposal = sanitizeHandoffProposal(finalProposal, nextState);
   }
 
   const canPropose =

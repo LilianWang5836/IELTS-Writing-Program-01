@@ -198,6 +198,57 @@ function isTaskOrPositionBlob(text: string): boolean {
 
 const GENERIC_ACADEMIC_POINT =
   /^走学术深造路径者应侧重纯粹知识与领域积累$/;
+const GENERIC_EMPLOY_POINT_RE =
+  /^以就业为目标的学生|^想尽快就业的学生应侧重可上岗的工作技能/;
+
+/** 用户是否分别用实质性内容说过就业侧 / 学术侧（立场总述不算） */
+export function explorationSideStatus(msgs: string[]): {
+  employ: boolean;
+  academic: boolean;
+} {
+  let employ = false;
+  let academic = false;
+
+  for (const m of msgs) {
+    if (isExplorationTaskChunk(m)) continue;
+    const { employText, academicText } = accumulateDimensionTexts([m]);
+
+    if (
+      employText.length >= 12 &&
+      scoreTextSubstance(employText) >= 2 &&
+      !isPositionOnlyChunk(m, "employ")
+    ) {
+      employ = true;
+    }
+    if (
+      academicText.length >= 12 &&
+      scoreTextSubstance(academicText) >= 2 &&
+      !isPositionOnlyChunk(m, "academic")
+    ) {
+      academic = true;
+    }
+  }
+
+  return { employ, academic };
+}
+
+/** 仅含「取决于/反之/尽快工作」等立场措辞，没有该侧分论点 substance */
+function isPositionOnlyChunk(message: string, side: "employ" | "academic"): boolean {
+  const m = message.trim();
+  if (m.length > 100) return false;
+  if (side === "employ") {
+    const employish =
+      /尽快工作|工作技能为主|就业导向|应以工作技能/.test(m) &&
+      !/实习|项目|实践|岗位|招聘|雇主|课程|训练|因为.*(?:技能|就业|工作)/.test(m);
+    const hasSubstance =
+      /例如|比如|写什么|一段|论证|积累|提升|竞争力/.test(m);
+    return employish && !hasSubstance && m.length < 85;
+  }
+  const academicish =
+    /学术道路|纯粹|反之亦然/.test(m) &&
+    !/持续|积累|领域|研究|兴趣|因为|体系|医学|理论/.test(m);
+  return academicish && m.length < 40;
+}
 
 export function isValidBodyPoint(
   text: string | undefined,
@@ -209,6 +260,7 @@ export function isValidBodyPoint(
   if (side === "employ") {
     if (dimEmployCount(t) < 1) return false;
     if (/^应该以?工作技能为主[。.]?$/i.test(t)) return false;
+    if (GENERIC_EMPLOY_POINT_RE.test(t)) return false;
   }
   if (side === "academic" && dimAcademicCount(t) < 1) return false;
   if (side === "academic" && GENERIC_ACADEMIC_POINT.test(t)) return false;
@@ -255,9 +307,6 @@ function extractEmployPoint(...sources: string[]): string {
       }
     }
   }
-  if (/尽快工作|工作技能|就业/.test(sources.join(" "))) {
-    return "想尽快就业的学生应侧重可上岗的工作技能";
-  }
   return "";
 }
 
@@ -274,7 +323,8 @@ function extractAcademicPoint(...sources: string[]): string {
     }
     const patterns = [
       /知识(?:本身)?[:：]\s*([^；;\n,，]+)/i,
-      /(?:走)?学术(?:道路)?[^。；,，]{0,40}/,
+      /(?:想)?走学术(?:道路)?[^。；,，]{0,40}/,
+      /持续地?学习[^。；,，]{0,36}/,
       /纯粹(?:的)?知识[^。；,，]{0,36}/,
       /(?:应以|应该|需要)[^。；,，]{0,20}(?:知识|学术|深造)[^。；,，]{0,24}/,
       /(?:侧重|优先)[^。；,，]{0,16}(?:知识|学术|领域)[^。；,，]{0,20}/,
@@ -322,24 +372,31 @@ function firstSentence(text: string, maxLen = 90): string {
   return sent.length > maxLen ? `${sent.slice(0, maxLen)}…` : sent;
 }
 
-/** 从聊天生成六栏（仅 substance 够时调用） */
+/** 从聊天生成六栏（仅两侧均有用户实质内容时调用） */
 export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
   const msgs = userMessages(state);
   const blob = msgs.join("\n");
   const { employText, academicText } = accumulateDimensionTexts(msgs);
+  const sides = explorationSideStatus(msgs);
   const h = state.handoff;
   const lastAcad = lastRichAcademicMessage(msgs);
 
-  let body1 =
-    h?.body1Point?.trim() ||
-    pointFromSideText(employText, "employ") ||
-    extractEmployPoint(blob);
-  body1 = normalizeEmployPoint(body1);
+  let body1 = h?.body1Point?.trim() || "";
+  if (sides.employ) {
+    body1 =
+      body1 ||
+      pointFromSideText(employText, "employ") ||
+      extractEmployPoint(employText);
+    body1 = normalizeEmployPoint(body1);
+  }
 
-  let body2 =
-    h?.body2Point?.trim() ||
-    extractAcademicPoint(lastAcad, academicText, blob) ||
-    pointFromSideText(academicText, "academic");
+  let body2 = h?.body2Point?.trim() || "";
+  if (sides.academic) {
+    body2 =
+      body2 ||
+      extractAcademicPoint(lastAcad, academicText) ||
+      pointFromSideText(academicText, "academic");
+  }
 
   return {
     questionType:
@@ -351,11 +408,11 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
     body1Point: body1,
     body1Angle:
       h?.body1Angle?.trim() ||
-      (body1 && employText.length >= 8 ? "就业市场与职场技能" : ""),
+      (body1 && sides.employ ? "就业市场与职场技能" : ""),
     body2Point: body2,
     body2Angle:
       h?.body2Angle?.trim() ||
-      (body2 && academicText.length >= 8 ? "学术深造与知识体系" : ""),
+      (body2 && sides.academic ? "学术深造与知识体系" : ""),
   };
 }
 
@@ -363,10 +420,15 @@ export function sanitizeHandoffProposal(
   proposal: Stage1Handoff,
   state: SessionState,
 ): Stage1Handoff | null {
+  const msgs = userMessages(state);
+  const sides = explorationSideStatus(msgs);
   const ruleBuilt = buildHandoffFromChat(state);
   const out: Stage1Handoff = { ...proposal };
 
-  if (!isValidBodyPoint(out.body1Point, "employ")) {
+  if (!sides.employ) {
+    out.body1Point = "";
+    out.body1Angle = "";
+  } else if (!isValidBodyPoint(out.body1Point, "employ")) {
     out.body1Point = ruleBuilt.body1Point;
     if (!out.body1Angle?.trim() && ruleBuilt.body1Angle) {
       out.body1Angle = ruleBuilt.body1Angle;
@@ -375,7 +437,10 @@ export function sanitizeHandoffProposal(
     out.body1Point = normalizeEmployPoint(out.body1Point);
   }
 
-  if (
+  if (!sides.academic) {
+    out.body2Point = "";
+    out.body2Angle = "";
+  } else if (
     !isValidBodyPoint(out.body2Point, "academic") ||
     GENERIC_ACADEMIC_POINT.test(out.body2Point.trim())
   ) {
@@ -387,6 +452,7 @@ export function sanitizeHandoffProposal(
     out.body2Point = trimPoint(out.body2Point);
   }
   if (
+    sides.academic &&
     ruleBuilt.body2Point &&
     GENERIC_ACADEMIC_POINT.test(out.body2Point.trim()) &&
     isValidBodyPoint(ruleBuilt.body2Point, "academic")
@@ -449,17 +515,15 @@ export function assessEssaySubstance(state: SessionState): EssaySubstanceAssessm
     };
   }
 
-  const { employText, academicText } = accumulateDimensionTexts(msgs);
-  const employScore = scoreTextSubstance(employText);
-  const academicScore = scoreTextSubstance(academicText);
+  const sides = explorationSideStatus(msgs);
   const gaps: string[] = [];
 
-  if (employScore < 2) {
+  if (!sides.employ) {
     gaps.push(
       "就业/技能一侧：用一句话说清这段想写什么（例如实习、项目、职场能力）",
     );
   }
-  if (academicScore < 2) {
+  if (!sides.academic) {
     gaps.push(
       "学术/知识一侧：用一句话说清这段想写什么（例如长期学习、研究兴趣）",
     );
@@ -471,11 +535,7 @@ export function assessEssaySubstance(state: SessionState): EssaySubstanceAssessm
     gaps.push("题目中的两种观点是否都点到（职场技能 vs 为知识而学）");
   }
 
-  const sufficient =
-    gaps.length === 0 &&
-    employScore >= 2 &&
-    academicScore >= 2 &&
-    bothViewsInTask;
+  const sufficient = gaps.length === 0 && sides.employ && sides.academic;
 
   return {
     sufficient,

@@ -107,6 +107,8 @@ export interface Blueprint {
 export interface CoachContext {
   lastQuestion?: string;
   openIssue?: string;
+  exploreRound?: number;
+  readyForHandoff?: boolean;
 }
 
 export interface SessionState {

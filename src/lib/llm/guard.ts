@@ -112,8 +112,43 @@ function prependMirror(result: LlmTurnResult, coach: string): string {
   return `${head}\n\n${coach}`.trim();
 }
 
+/** Stage 1：mirror + 单问，防重复拼接 */
+export function formatStage1CoachDisplay(result: LlmTurnResult): string {
+  const parts: string[] = [];
+  const mirror = result.mirror?.trim();
+  const question = result.coachQuestion?.trim();
+  const uv = result.userVisibleText?.trim();
+
+  if (mirror) parts.push(mirror);
+  if (question) {
+    const joined = parts.join(" ");
+    if (!joined.includes(question.slice(0, Math.min(12, question.length)))) {
+      parts.push(question);
+    }
+  }
+  if (uv) {
+    const joined = parts.join(" ");
+    if (
+      !mirror?.includes(uv.slice(0, 10)) &&
+      !question?.includes(uv.slice(0, 10)) &&
+      !joined.includes(uv.slice(0, Math.min(12, uv.length)))
+    ) {
+      parts.push(uv);
+    }
+  }
+
+  return guardUserVisibleText(parts.join(" "), 4);
+}
+
 /** Assign 模式保留 keywords；Stage 2 的 logicBreakdown 另段展示 */
-export function formatCoachDisplay(result: LlmTurnResult): string {
+export function formatCoachDisplay(
+  result: LlmTurnResult,
+  opts?: { stage1?: boolean },
+): string {
+  if (opts?.stage1) {
+    return formatStage1CoachDisplay(result);
+  }
+
   const withSupport = appendLanguageSupport(
     result.userVisibleText ?? "",
     result.languageSupport,

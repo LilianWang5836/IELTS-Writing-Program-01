@@ -12,6 +12,7 @@ import type {
   SessionState,
   Stage1Handoff,
 } from "@/lib/domain/types";
+import { postProcessStage1 } from "@/lib/domain/stage1-coach";
 import { formatCoachDisplay } from "@/lib/llm/guard";
 import { callLlm } from "@/lib/llm/client";
 import { buildFullPrompt } from "@/lib/prompts/loader";
@@ -139,26 +140,27 @@ async function processLlmTurn(
   userMessage?: string,
 ): Promise<{ reply: string; state: SessionState; autoContinue: boolean }> {
   const prevSubStep = state.subStep;
-  const result = await runPrompt(
+  let result = await runPrompt(
     state,
     moduleId,
     buildVars(state, userMessage),
     userMessage,
   );
 
-  let reply = formatCoachDisplay(result);
   let nextState = state;
   let autoContinue = false;
 
-  const advance = shouldAdvance(state, prevSubStep, result);
-
   if (prevSubStep === "S1_EVAL") {
-    nextState = mergeS1FromResult(nextState, result);
-    if (!advance) {
-      nextState = appendChat(nextState, "assistant", reply);
-      return { reply, state: nextState, autoContinue: false };
-    }
+    const processed = postProcessStage1(state, result, userMessage);
+    result = processed.result;
+    nextState = mergeS1FromResult(processed.state, result);
+    const reply = formatCoachDisplay(result, { stage1: true });
+    nextState = appendChat(nextState, "assistant", reply);
+    return { reply, state: nextState, autoContinue: false };
   }
+
+  let reply = formatCoachDisplay(result);
+  const advance = shouldAdvance(state, prevSubStep, result);
 
   if (markerWhenAdvance(prevSubStep, result, advance)) {
     const m = markerForSubStep(prevSubStep);

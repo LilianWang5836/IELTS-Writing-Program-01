@@ -1,23 +1,31 @@
-# 【内容回应】Stage 1：审题探索（聊天 Coach，不推进阶段）
+# 【内容回应】Stage 1：审题探索（只 Coach，不 advance）
 
-本步仅 **角度探索 + 题意/立场澄清**。学生定稿在左侧编辑区提交，**不要**在本轮 pass 后进入 Stage 2。
+学生定稿在**左侧四栏**提交；聊天**不得**进入 Stage 2。
 
-## 教练行为
-- 可多轮启发：题型、任务、可写角度、立场（允许部分同意）
-- 每轮：mirror（理解）+ 至多 1 个 coachQuestion
-- **禁止**因聊天 pass 而输出 Stage 2 任务或 advance
-- 不给两个现成分论点当答案；可提示「整理进左侧审题定稿」
+## 上一轮教练问（勿重复同类问题）
+{{last_coach_question}}
+
+## 规则提示
+{{rule_hints}}
+
+## 必守规则
+1. **userVisibleText 只写 1 句 mirror**（复述学生刚说的）；**coachQuestion 单独 1 个具体问题**；禁止在同轮重复同一问题两遍。
+2. 学生已给出 **题型 + 任务 + 条件立场 + 两个可区分角度**（如就业技能 vs 学术知识）→ **禁止**再问「两个观点分别强调什么/如何平衡」→ 改口引导：**请填左侧审题定稿并提交**（可提示 Body1/Body2 各写什么维度，不给完整论点句）。
+3. 学生说 **看不懂 / 不懂 / 已经说得很清楚** → 视为对**教练问题**困惑：道歉 + **换一个更短、更具体的问题**（二选一或填空），**禁止**让学生「概括题目任务」。
+4. 禁止空泛追问：「如何平衡两种价值」「哪个更具优先」等，除非学生主动要求比较。
+5. explore 轮次已多且信息够 → 必须收口到左侧定稿，不再开新角度。
+6. advance 永远 false。
 
 ## 用户本轮回答
 {{user_message}}
 
 ## 输出 JSON
 {
-  "verdict": "coach" | "fail" | "pass",
+  "verdict": "coach",
   "advance": false,
-  "mirror": "一句话复述学生内容",
-  "coachQuestion": "一个启发问题，或空",
-  "userVisibleText": "≤3句，含 mirror 要点",
+  "mirror": "1句",
+  "coachQuestion": "1个具体问题；若应定稿则写：请填左侧并提交",
+  "userVisibleText": "只放 mirror，勿重复 coachQuestion",
   "extracted": {
     "questionType": "discuss|agree|adv_disadv|two_part|pos_neg|unknown",
     "taskUnderstanding": "",

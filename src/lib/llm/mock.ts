@@ -8,15 +8,60 @@ export function mockLlmResponse(
   const hasUserText = (context.userMessage?.trim().length ?? 0) > 8;
 
   switch (moduleId) {
-    case "P1":
-      if (msg.length > 20) {
+    case "P1": {
+      if (
+        /看不懂|不懂|已经说|说得很清楚/.test(context.userMessage ?? "")
+      ) {
         return {
           verdict: "coach",
           advance: false,
-          mirror: "你在尝试界定题型和立场。",
-          coachQuestion: "还能从哪两个不同角度切入这道题？",
+          mirror: "抱歉，我换种更具体的说法。",
+          coachQuestion:
+            "Body1 先写就业/技能，Body2 先写学术/知识——请填左侧审题定稿并提交，可以吗？",
+          userVisibleText: "不是在考你审题，而是帮你定两个分论点方向。",
+          extracted: {
+            questionType: "discuss",
+            taskUnderstanding: "university: job skills vs academic knowledge",
+            position: "depends on student career plan; split pathways",
+          },
+        };
+      }
+      const rich =
+        (msg.includes("discuss") || msg.includes("讨论")) &&
+        (msg.includes("技能") ||
+          msg.includes("知识") ||
+          msg.includes("规划") ||
+          msg.includes("学术") ||
+          msg.includes("工作"));
+      const ready =
+        rich &&
+        (msg.includes("分开") ||
+          msg.includes("技能") ||
+          msg.includes("学术") ||
+          msg.includes("实操") ||
+          context.userMessage!.length > 60);
+      if (ready) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "题型、条件立场和两个角度都已清楚。",
+          coachQuestion: "",
           userVisibleText:
-            "不错。请继续想角度；整理好后再填入左侧审题定稿并提交。",
+            "请改填左侧审题定稿并提交：①题意 ②立场 ③Body1 就业/技能 ④Body2 学术/知识（角度自填）。",
+          extracted: {
+            questionType: "discuss",
+            taskUnderstanding: "skills vs knowledge in university education",
+            position: "conditional on student goals; separate tracks",
+          },
+        };
+      }
+      if (msg.length > 15) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "你正在说题型、立场或两个方向。",
+          coachQuestion: "若已有就业 vs 学术两条线，请直接填左侧定稿并提交。",
+          userVisibleText: "你正在说题型、立场或两个方向。",
           extracted: {
             questionType: "discuss",
             taskUnderstanding: "skills vs knowledge",
@@ -27,10 +72,11 @@ export function mockLlmResponse(
       return {
         verdict: "coach",
         advance: false,
-        userVisibleText:
-          "请先说明：题型 + 题目任务 + 你的总体判断（可部分同意）。",
-        coachQuestion: "题目中的关键词你最想回应哪一个？",
+        mirror: "先从题目要求说起。",
+        coachQuestion: "这题是 discuss 还是 agree/disagree？题目要你比较什么？",
+        userVisibleText: "先从题目要求说起。",
       };
+    }
 
     case "P1H":
       return {

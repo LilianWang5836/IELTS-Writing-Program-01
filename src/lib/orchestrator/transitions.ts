@@ -274,6 +274,10 @@ export function mergeS1FromResult(
         body2Angle: "",
       }),
       questionType: String(ex.questionType ?? state.handoff?.questionType ?? ""),
+      taskUnderstanding:
+        state.handoff?.taskUnderstanding ||
+        String(ex.taskUnderstanding ?? ""),
+      position: state.handoff?.position || String(ex.position ?? ""),
     },
   };
 }

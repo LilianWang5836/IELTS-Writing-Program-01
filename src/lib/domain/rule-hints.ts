@@ -55,6 +55,16 @@ export function bodyDraftTooShort(draft: string): boolean {
 /** 喂给 LLM 的 hints 行 */
 export function buildRuleHintsBlock(state: SessionState): string {
   const lines: string[] = [];
+
+  if (state.subStep === "S1_EVAL" && !state.handoffLocked) {
+    const userTurns = state.chatHistory.filter((m) => m.role === "user").length;
+    if (userTurns >= 4) {
+      lines.push("规则提示：探索轮次已多，应引导左侧定稿提交，勿再追问双方观点含义。");
+    }
+    if (state.coachContext?.readyForHandoff) {
+      lines.push("规则提示：已达探索完成度，本轮必须引导填写左侧审题定稿。");
+    }
+  }
   if (state.subStep === "S2_2_BODY1" || state.subStep === "S2_3_BODY2") {
     const seg =
       state.subStep === "S2_2_BODY1" ? state.s2?.body1 : state.s2?.body2;

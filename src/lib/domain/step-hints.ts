@@ -9,6 +9,9 @@ export function getStepHint(state: SessionState, requiresConfirm: boolean): stri
   switch (state.subStep) {
     case "S1_EVAL":
       if (!state.handoffLocked) {
+        if (state.coachContext?.readyForHandoff) {
+          return "→ 探索已够：请填左侧「审题定稿」四栏并点「提交审题定稿」，不必再在聊天重复。";
+        }
         const { filled, total } = handoffProgress(
           state.handoff ?? {
             taskUnderstanding: "",

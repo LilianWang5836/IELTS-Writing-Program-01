@@ -762,6 +762,48 @@ export function isProposalAffirmation(message: string): boolean {
   );
 }
 
+/** 提交时用聊天记录补强六栏（避免定稿栏过短/泛化） */
+export function enrichHandoffFromChat(
+  handoff: Stage1Handoff,
+  state: SessionState,
+): Stage1Handoff {
+  const built = buildHandoffFromChat(state);
+  const out: Stage1Handoff = { ...handoff };
+
+  if (
+    !isValidBodyPoint(out.body1Point, "employ") &&
+    isValidBodyPoint(built.body1Point, "employ")
+  ) {
+    out.body1Point = built.body1Point;
+  }
+  if (
+    !isValidBodyPoint(out.body2Point, "academic") &&
+    isValidBodyPoint(built.body2Point, "academic")
+  ) {
+    out.body2Point = built.body2Point;
+  }
+  if (
+    out.body2Point &&
+    out.body2Point.length < 22 &&
+    isValidBodyPoint(built.body2Point, "academic")
+  ) {
+    out.body2Point = built.body2Point;
+  }
+  if (!out.body1Angle?.trim() && built.body1Angle) {
+    out.body1Angle = built.body1Angle;
+  }
+  if (!out.body2Angle?.trim() && built.body2Angle) {
+    out.body2Angle = built.body2Angle;
+  }
+  if (!out.taskUnderstanding?.trim() && built.taskUnderstanding) {
+    out.taskUnderstanding = built.taskUnderstanding;
+  }
+  if (!out.position?.trim() && built.position) {
+    out.position = built.position;
+  }
+  return out;
+}
+
 /** 提交审题定稿后、进 Body1 前的短反馈 */
 export function buildStage1SubmitFeedback(h: Stage1Handoff): string {
   const p1 = h.body1Point?.trim();

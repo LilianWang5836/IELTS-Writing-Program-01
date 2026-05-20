@@ -16,7 +16,7 @@ const SLOT_LABEL: Record<Exclude<ChainBuildStep, "ready">, string> = {
   claim: "论点 Claim",
   reason: "原因 Reason",
   example: "举例 Example",
-  link: "扣题 Link",
+  link: "段末收束 Link",
 };
 
 const CONFUSION_RE =
@@ -106,14 +106,63 @@ function isStanceOnlySentence(s: string): boolean {
   return false;
 }
 
+function normalizeCoachSentence(s: string): string {
+  return s
+    .trim()
+    .replace(
+      /^(?:原因|举例|例子|段末收束|扣题|link|reason|example)\s*[:：]\s*/i,
+      "",
+    )
+    .trim();
+}
+
 function isReasonSentence(s: string, body: WorkshopBodyKey): boolean {
-  const t = s.trim();
+  const raw = s.trim();
+  const t = normalizeCoachSentence(s);
   if (t.length < 10 || isStanceOnlySentence(t)) return false;
-  if (!/因为|所以|因此|才能|有助于|使得|由于|才/.test(t)) return false;
+
+  const labeledReason = /^原因\s*[:：]/i.test(raw);
+  const hasCausal =
+    /因为|所以|因此|才能|有助于|使得|由于|才|需要|差异|不同于|无法从/.test(
+      t,
+    );
+
   if (body === "body1") {
-    return /就业|工作|技能|实习|项目|职场|雇主|课本|实操|经验/.test(t);
+    const onTopic =
+      /就业|工作|技能|实习|项目|职场|雇主|课本|实操|实践|经验|面试|实际/.test(
+        t,
+      );
+    if (!onTopic) return false;
+    if (labeledReason) return true;
+    if (/需要.*(?:学习|掌握|积累)|实践.*(?:学习|掌握)|课本/.test(t)) {
+      return true;
+    }
+    return hasCausal;
   }
-  return /学术|知识|研究|领域|积累|学习|深造|理论/.test(t);
+
+  const onTopic = /学术|知识|研究|领域|积累|学习|深造|理论|兴趣/.test(t);
+  if (!onTopic) return false;
+  if (labeledReason) return true;
+  return hasCausal;
+}
+
+function reasonQualityScore(s: string, body: WorkshopBodyKey): number {
+  const t = normalizeCoachSentence(s);
+  if (!isReasonSentence(s, body)) return 0;
+  let score = t.length >= 20 ? 2 : 1;
+  if (/课本|实践|差异|机制|无法从|项目|实习/.test(t)) score += 3;
+  if (/因为|因此/.test(t)) score += 1;
+  return score;
+}
+
+function linkQualityScore(s: string, body: WorkshopBodyKey): number {
+  const t = normalizeCoachSentence(s);
+  if (!isLinkSentence(s, body)) return 0;
+  let score = t.length >= 16 ? 2 : 1;
+  if (/因此|所以/.test(t)) score += 2;
+  if (/面试|找工作|就业|上岗|适应/.test(t)) score += 2;
+  if (/职业方向|对口|针对性|技术栈|项目/.test(t)) score += 1;
+  return score;
 }
 
 function isExampleSentence(s: string, body: WorkshopBodyKey): boolean {
@@ -144,7 +193,7 @@ function isLinkSentence(s: string, body: WorkshopBodyKey): boolean {
 
   if (body === "body1") {
     const employOutcome =
-      /就业|求职|找工作|面试|上岗|招聘|雇主|职场|毕业生|工作中|企业|适应|竞争力|offer/i.test(
+      /就业|求职|找工作|面试|上岗|招聘|雇主|职场|毕业生|工作中|企业|适应|竞争力|offer|职业方向|对口|针对性|找到工作|更快.*工作/i.test(
         t,
       );
     if (linkLead && employOutcome) return true;
@@ -172,21 +221,43 @@ function isLinkSentence(s: string, body: WorkshopBodyKey): boolean {
   );
 }
 
+export function reasonCoachPrompt(
+  body: WorkshopBodyKey,
+  ctx?: ChainBuildContext,
+): string {
+  const angle = ctx?.bodyAngle?.trim() || "";
+  const scope = angle || (body === "body1" ? "就业/职场技能" : "学术深造");
+  if (body === "body1") {
+    return (
+      `请写原因（Reason）：一句说明为什么 ${scope} 下，大学要提供实习/项目/实操（` +
+      `可写课本 vs 实践、技能差异等；可用「因为」或「原因：」开头，勿只写「合理」）。`
+    );
+  }
+  return (
+    `请写原因（Reason）：一句说明为什么 ${scope} 下，系统学习与领域积累是深造基础（勿只写「需要时间」）。`
+  );
+}
+
 /** 段末收束（Link）：按本分论点与切入面生成引导，非重复全文立场 */
 export function linkCoachPrompt(
   body: WorkshopBodyKey,
   ctx?: ChainBuildContext,
+  exampleSnippet?: string,
 ): string {
   const point = ctx?.bodyPoint || "本分论点";
   const angle = ctx?.bodyAngle?.trim() || "";
   const shortPoint =
     point.length > 36 ? `${point.slice(0, 36)}…` : point;
+  const ex =
+    exampleSnippet && exampleSnippet.length > 8
+      ? `（承接刚举的例子：${exampleSnippet.slice(0, 28)}…）`
+      : "";
 
   if (body === "body1") {
     const scope = angle || "就业/职场技能这一侧";
     return (
-      `请写段末收束（Link）：用「因此/所以」一句，把刚才的例子接到「${scope}」，` +
-      `说明它如何支撑「${shortPoint}」（可写求职、面试、上岗、适应工作等；` +
+      `请写段末收束（Link）：用「因此/所以」一句${ex}，接到「${scope}」，` +
+      `说明它如何支撑「${shortPoint}」（可写求职、面试、对口经验、上岗等；` +
       `勿再重复「取决于个人规划」等全文立场）。`
     );
   }
@@ -240,29 +311,70 @@ export function buildSlotsFromChat(
     (m) => m.length >= 10,
   );
 
+  let bestReason = { text: "", score: 0 };
+  let bestLink = { text: "", score: 0 };
+
   for (const msg of msgs) {
-    for (const sent of splitSentences(msg)) {
+    const labeled = msg.trim();
+    const extraSents =
+      /^原因\s*[:：]/i.test(labeled) ? [labeled] : [];
+    const sents = [...extraSents, ...splitSentences(msg)];
+
+    for (const sent of sents) {
       if (body === "body1" && /医学|理论体系|纯粹.*知识|专业理论/.test(sent) && !/就业|实习|工作技能|项目实操/.test(sent)) {
         continue;
       }
       if (body === "body2" && /就业|求职|工作技能/.test(sent) && !/学术|知识|研究|深造/.test(sent)) {
         continue;
       }
-      if (!slots.reason && isReasonSentence(sent, body)) {
-        slots.reason = sent;
+      if (isReasonSentence(sent, body)) {
+        const sc = reasonQualityScore(sent, body);
+        if (sc > bestReason.score) {
+          bestReason = { text: normalizeCoachSentence(sent) || sent.trim(), score: sc };
+        }
         continue;
       }
       if (!slots.example && isExampleSentence(sent, body)) {
         slots.example = sent;
         continue;
       }
-      if (!slots.link && isLinkSentence(sent, body)) {
-        slots.link = sent;
+      if (isLinkSentence(sent, body)) {
+        const sc = linkQualityScore(sent, body);
+        if (sc > bestLink.score) {
+          bestLink = { text: sent.trim(), score: sc };
+        }
       }
     }
   }
 
+  if (bestReason.text) slots.reason = bestReason.text;
+  if (bestLink.text) slots.link = bestLink.text;
+
   return dedupeSlots(slots);
+}
+
+/** 指定环是否已有合格用户内容 */
+export function isChainStepFilled(
+  slots: ParagraphSlots,
+  step: ChainBuildStep,
+  body: WorkshopBodyKey,
+): boolean {
+  if (step === "claim") {
+    return !!(slots.claim?.trim() || slots.elaboration?.trim());
+  }
+  if (step === "reason") {
+    return !!slots.reason?.trim() && isReasonSentence(slots.reason, body);
+  }
+  if (step === "example") {
+    return (
+      !!(slots.example?.trim() || slots.support?.trim()) &&
+      isExampleSentence(slots.example ?? slots.support ?? "", body)
+    );
+  }
+  if (step === "link") {
+    return !!slots.link?.trim() && isLinkSentence(slots.link, body);
+  }
+  return step === "ready";
 }
 
 export function areChainSlotsSemanticallyValid(
@@ -327,14 +439,10 @@ export function getNextChainBuildStep(
     };
   }
 
-  if (!slots.reason?.trim()) {
-    const angleBit = angle ? `（切入面：${angle}）` : "";
+  if (!slots.reason?.trim() || !isReasonSentence(slots.reason, body)) {
     return {
       step: "reason",
-      coachPrompt:
-        body === "body1"
-          ? `审题分论点：「${point}」${angleBit}。请写原因：为什么提供技能/实习/项目，能让学生更快就业？（一句因果，勿只写「合理」）`
-          : `审题分论点：「${point}」${angleBit}。请写原因：为什么持续积累领域知识，是学术深造的基础？`,
+      coachPrompt: reasonCoachPrompt(body, ctx),
     };
   }
 
@@ -355,7 +463,7 @@ export function getNextChainBuildStep(
   if (!link || !isLinkSentence(link, body)) {
     return {
       step: "link",
-      coachPrompt: linkCoachPrompt(body, ctx),
+      coachPrompt: linkCoachPrompt(body, ctx, slots.example?.trim()),
     };
   }
 

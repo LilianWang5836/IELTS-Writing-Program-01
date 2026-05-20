@@ -24,7 +24,10 @@ import {
   isProposalAffirmation,
   postProcessStage1,
 } from "@/lib/domain/stage1-coach";
-import { buildStage1SubmitFeedback } from "@/lib/domain/essay-substance";
+import {
+  buildStage1SubmitFeedback,
+  enrichHandoffFromChat,
+} from "@/lib/domain/essay-substance";
 import {
   applyChainProposalToState,
   postProcessStage2,
@@ -393,9 +396,10 @@ export async function handleSubmitHandoff(
   state: SessionState,
   handoff: Stage1Handoff,
 ): Promise<TurnResponse> {
-  let s = ensureMigrated({ ...state, handoff });
+  const handoffEnriched = enrichHandoffFromChat(handoff, state);
+  let s = ensureMigrated({ ...state, handoff: handoffEnriched });
 
-  const v = validateHandoff(handoff);
+  const v = validateHandoff(handoffEnriched);
   if (!v.ok) {
     return {
       replies: [v.errors.join("；")],
@@ -405,7 +409,7 @@ export async function handleSubmitHandoff(
     };
   }
 
-  const rules = ruleHintsForHandoff(handoff);
+  const rules = ruleHintsForHandoff(handoffEnriched);
   if (rules.blockAdvance) {
     return {
       replies: [
@@ -417,13 +421,13 @@ export async function handleSubmitHandoff(
     };
   }
 
-  s = applyHandoffToState(s, handoff);
+  s = applyHandoffToState(s, handoffEnriched);
 
   let result: LlmTurnResult;
   try {
     result = await runPrompt(s, "P1H", {
       query: s.topic,
-      handoff_json: JSON.stringify(handoff),
+      handoff_json: JSON.stringify(handoffEnriched),
       s1_json: JSON.stringify(s.s1 ?? {}),
       state_summary: stateSummary(s),
     });
@@ -449,11 +453,7 @@ export async function handleSubmitHandoff(
   }
 
   s = applyHandoffAdvance(s);
-  const bridge = buildStage1SubmitFeedback(handoff);
-  const p1h = formatCoachDisplay(result).trim();
-  const reply = [bridge, p1h, bodyTaskAfterHandoff(s)]
-    .filter(Boolean)
-    .join("\n\n");
+  const reply = `${buildStage1SubmitFeedback(handoffEnriched)}\n\n${bodyTaskAfterHandoff(s)}`;
   s = appendChat(s, "assistant", reply);
 
   return {

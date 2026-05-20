@@ -14,6 +14,7 @@ import {
   getChainBuildContext,
   getNextChainBuildStep,
   isBannedCoachQuestion,
+  isChainStepFilled,
   mergeSlots,
   type ChainBuildStep,
 } from "./chain-scaffold";
@@ -246,22 +247,59 @@ export function postProcessStage2(
     };
   }
 
+  const prevStep = (state.coachContext?.chainBuildStep ?? "claim") as ChainBuildStep;
+  const stepLabel = (s: ChainBuildStep) =>
+    s === "ready" ? "" : SLOT_HINT[s];
+
+  const userAdvancedStep =
+    !!userMessage?.trim() &&
+    prevStep !== "ready" &&
+    prevStep !== "claim" &&
+    buildStep !== prevStep &&
+    isChainStepFilled(workingSlots, prevStep, body);
+
   const scaffoldQ = stepPrompt || substance.coachPrompt || "";
   const preferScaffold =
     buildStep === "reason" ||
     buildStep === "example" ||
     buildStep === "link";
-  const coachQ = preferScaffold
-    ? scaffoldQ || pickCoachQuestion(sanitized.coachQuestion ?? "", scaffoldQ)
-    : pickCoachQuestion(sanitized.coachQuestion ?? "", scaffoldQ);
-  const mirror =
-    sanitized.mirror && sanitized.mirror !== userMessage?.trim()
-      ? sanitized.mirror
-      : buildStep === "ready"
-        ? "各环齐了，请看左侧整理。"
-        : buildStep === "claim"
-          ? "我们按链条一环一环来，先不用写整段。"
-          : `好，${SLOT_HINT[buildStep]}这一环有了，继续下一环。`;
+
+  let coachQ: string;
+  if (userAdvancedStep) {
+    coachQ = scaffoldQ;
+  } else if (preferScaffold) {
+    coachQ =
+      scaffoldQ ||
+      pickCoachQuestion(sanitized.coachQuestion ?? "", scaffoldQ);
+  } else {
+    coachQ = pickCoachQuestion(sanitized.coachQuestion ?? "", scaffoldQ);
+  }
+
+  let mirror: string;
+  if (userAdvancedStep && buildStep !== "ready") {
+    mirror =
+      sanitized.mirror && sanitized.mirror !== userMessage?.trim()
+        ? sanitized.mirror
+        : `好，${stepLabel(prevStep)}这一环够了，接下来补${stepLabel(buildStep)}。`;
+  } else if (
+    sanitized.mirror &&
+    sanitized.mirror !== userMessage?.trim()
+  ) {
+    mirror = sanitized.mirror;
+  } else if (buildStep === "ready") {
+    mirror = "各环齐了，请看左侧整理。";
+  } else if (buildStep === "claim") {
+    mirror = "我们按链条一环一环来，先不用写整段。";
+  } else if (
+    userMessage?.trim() &&
+    isChainStepFilled(workingSlots, buildStep, body)
+  ) {
+    mirror = `好，${stepLabel(buildStep)}这一环有了，继续下一环。`;
+  } else {
+    mirror = scaffoldQ
+      ? `这一步还差一句，请参考下面提示补全。`
+      : `好，${stepLabel(buildStep)}这一环有了，继续下一环。`;
+  }
 
   const userVisible = [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n");
 

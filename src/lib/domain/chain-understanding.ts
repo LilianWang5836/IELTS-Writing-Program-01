@@ -154,6 +154,8 @@ function upsertRoleSlot(
     return;
   }
   if (isLinkSentence(text, body)) {
+    const r = slots.reason?.trim();
+    if (r && r === text.trim()) return;
     slots.link = text;
   }
 }

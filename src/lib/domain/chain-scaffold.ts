@@ -229,40 +229,65 @@ export function exampleFollowUpCoachPrompt(
   );
 }
 
+/** 段末须落到就业/深造结果；仅「因此+需要补充/不匹配」的机制句不算 Link */
+function hasOutcomeForward(t: string, body: WorkshopBodyKey): boolean {
+  if (body === "body1") {
+    return (
+      /(?:才能|有助于|更容易|更利|更好|更顺|更快|利于|提升|增强).*(?:就业|求职|上岗|找工作|面试|offer|招聘|竞争力)/.test(
+        t,
+      ) ||
+      /(?:就业|求职|面试|上岗|找工作|招聘|竞争力|offer|对口).*(?:才能|有助于|更容易|更顺|更快)/.test(
+        t,
+      ) ||
+      /(?:找到|获得|赢得).*(?:工作|岗位|offer|面试机会)/.test(t) ||
+      /(?:更快|更好).*(?:就业|上岗|适应职场|找到工作)/.test(t)
+    );
+  }
+  return (
+    /(?:才能|有助于|更容易|从而|支撑).*(?:深造|读研|学术|科研)/.test(t) ||
+    /(?:深造|读研|学术道路).*(?:才能|有助于|基础|积累)/.test(t)
+  );
+}
+
+function looksLikeMechanismNotLink(s: string, body: WorkshopBodyKey): boolean {
+  const t = s.trim();
+  if (hasExampleLead(t)) return false;
+  const mechanism =
+    /因此|因为|所以|由于|才|需要|差异|不匹配|不同于|偏向|补充/.test(t) &&
+    /课本|学术|实践|职场|技能|知识|项目/.test(t);
+  if (!mechanism) return false;
+  return !hasOutcomeForward(t, body);
+}
+
 export function isLinkSentence(s: string, body: WorkshopBodyKey): boolean {
   const t = s.trim();
   if (t.length < 10 || isStanceOnlySentence(t)) return false;
   if (/^因为/.test(t) && !/就业|求职|深造|学术|面试|工作/.test(t)) {
     return false;
   }
+  if (looksLikeMechanismNotLink(s, body)) return false;
+  if (isReasonSentence(s, body) && !hasOutcomeForward(t, body)) return false;
 
   const linkLead =
     /因此|所以|从而|这样一来|换言之|可见|总之|综上|这意味着/.test(t);
 
   if (body === "body1") {
-    const employOutcome =
-      /就业|求职|找工作|面试|上岗|招聘|雇主|职场|毕业生|工作中|企业|适应|竞争力|offer|职业方向|对口|针对性|找到工作|更快.*工作/i.test(
-        t,
-      );
-    if (linkLead && employOutcome) return true;
-    if (
-      employOutcome &&
-      /才能|有助于|更容易|更利|更好|更顺|更快|直接应用/.test(t)
-    ) {
+    if (hasOutcomeForward(t, body)) return true;
+    if (linkLead && /(?:落到|达成|最终实现).*(?:就业|求职|面试|上岗)/.test(t)) {
       return true;
     }
     return (
       /(?:才能|有助于|从而|最终实现|落到|达成).*(?:就业|求职|上岗|找工作|面试)/.test(
         t,
-      ) ||
-      (/(?:就业|求职|尽快就业|找工作|面试)/.test(t) &&
-        /目标|目的|让学生|毕业生/.test(t))
+      ) &&
+      !/不匹配|偏向|补充|差异|需要在.*(?:实践|项目)/.test(t)
     );
   }
 
-  const academicOutcome =
-    /深造|读研|学术|科研|研究|领域|知识|积累|理论|专业基础/.test(t);
-  if (linkLead && academicOutcome) return true;
+  if (hasOutcomeForward(t, body)) return true;
+  if (linkLead && /(?:落到|支撑).*(?:深造|读研|学术|科研)/.test(t)) {
+    return true;
+  }
   return (
     /(?:才能|有助于|从而|支撑).*(?:深造|读研|学术|科研)/.test(t) ||
     (/(?:深造|读研|学术道路)/.test(t) && /知识|积累|系统/.test(t))
@@ -389,8 +414,13 @@ export function buildSlotsFromChat(
       }
       if (isLinkSentence(sent, body)) {
         const sc = linkQualityScore(sent, body);
-        if (sc > bestLink.score) {
-          bestLink = { text: sent.trim(), score: sc };
+        const cand = sent.trim();
+        if (
+          sc > bestLink.score &&
+          cand !== bestReason.text.trim() &&
+          !bestReason.text.trim().includes(cand.slice(0, 20))
+        ) {
+          bestLink = { text: cand, score: sc };
         }
       }
     }
@@ -424,7 +454,13 @@ export function isChainStepFilled(
     );
   }
   if (step === "link") {
-    return !!slots.link?.trim() && isLinkSentence(slots.link, body);
+    const link = slots.link?.trim() ?? "";
+    const reason = slots.reason?.trim() ?? "";
+    return (
+      !!link &&
+      link !== reason &&
+      isLinkSentence(link, body)
+    );
   }
   return step === "ready";
 }
@@ -440,7 +476,9 @@ export function areChainSlotsSemanticallyValid(
   if (!slots.example?.trim() || !isExampleSentence(slots.example, body)) {
     return false;
   }
-  if (!slots.link?.trim() || !isLinkSentence(slots.link, body)) {
+  const link = slots.link?.trim() ?? "";
+  const reason = slots.reason?.trim() ?? "";
+  if (!link || link === reason || !isLinkSentence(link, body)) {
     return false;
   }
   return true;
@@ -458,8 +496,12 @@ export function mergeSlots(
   }
   const nr = out.reason?.trim();
   const ne = out.example?.trim();
+  const nl = out.link?.trim();
   if (nr && ne && nr === ne && prevReason && prevReason !== ne) {
     out.reason = prevReason;
+  }
+  if (nr && nl && nr === nl) {
+    delete out.link;
   }
   return dedupeSlots(out);
 }

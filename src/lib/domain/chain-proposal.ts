@@ -1,21 +1,22 @@
+import { areChainSlotsSemanticallyValid } from "./chain-scaffold";
 import type {
   ChainProposal,
   LogicBreakdown,
   LlmTurnResult,
   ParagraphSlots,
+  WorkshopBodyKey,
 } from "./types";
 
 export type { ChainPhase, ChainProposal } from "./types";
 
-export function isChainProposalComplete(p: ChainProposal | null | undefined): boolean {
+export function isChainProposalComplete(
+  p: ChainProposal | null | undefined,
+  body: WorkshopBodyKey = "body1",
+): boolean {
   if (!p?.chainSummary?.trim()) return false;
   const s = p.slots ?? {};
-  const hasClaim = !!(s.claim?.trim() || s.elaboration?.trim());
-  const hasReason = !!s.reason?.trim();
-  const hasExample = !!(s.example?.trim() || s.support?.trim());
-  const hasLink = !!s.link?.trim();
   const draftOk = (p.draft?.trim().length ?? 0) >= 12;
-  return hasClaim && hasReason && hasExample && hasLink && draftOk;
+  return draftOk && areChainSlotsSemanticallyValid(s, body);
 }
 
 export function chainProposalFromResult(
@@ -49,7 +50,7 @@ export function chainProposalFromResult(
     slots: slots ?? {},
     draft,
   };
-  return isChainProposalComplete(proposal) ? proposal : null;
+  return isChainProposalComplete(proposal, target) ? proposal : null;
 }
 
 export function formatChainProposalCoachMessage(

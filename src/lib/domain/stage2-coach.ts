@@ -165,7 +165,11 @@ export function postProcessStage2(
   if (!finalProposal && substance.sufficient) {
     finalProposal = buildChainProposalFromChat(nextState, body);
   }
-  if (substance.sufficient && finalProposal && !isChainProposalComplete(finalProposal)) {
+  if (
+    substance.sufficient &&
+    finalProposal &&
+    !isChainProposalComplete(finalProposal, body)
+  ) {
     finalProposal = buildChainProposalFromChat(nextState, body);
   }
 
@@ -177,7 +181,7 @@ export function postProcessStage2(
     ringsReady &&
     rulesOk &&
     !!finalProposal &&
-    isChainProposalComplete(finalProposal) &&
+    isChainProposalComplete(finalProposal, body) &&
     areChainSlotsSemanticallyValid(finalProposal.slots, body);
 
   nextState = setBodyChainPhase(

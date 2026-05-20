@@ -1,4 +1,4 @@
-import { areChainSlotsSemanticallyValid } from "./chain-scaffold";
+import { areChainSlotsSemanticallyValid, isLinkSentence } from "./chain-scaffold";
 import { claimReasonRedundant } from "./rule-hints";
 import { userBlobForWorkshopBody } from "./stage2-context";
 import type { ParagraphSlots, SessionState, WorkshopBodyKey } from "./types";
@@ -83,7 +83,12 @@ export function assessParagraphSubstance(
   const hasClaimDir = !!(slots?.claim?.trim() || slots?.elaboration?.trim());
   const hasReasonDir = !!slots?.reason?.trim();
   const hasExample = !!(slots?.example?.trim() || slots?.support?.trim());
-  const hasLink = !!slots?.link?.trim();
+  const linkText = slots?.link?.trim() ?? "";
+  const reasonText = slots?.reason?.trim() ?? "";
+  const hasLink =
+    !!linkText &&
+    linkText !== reasonText &&
+    isLinkSentence(linkText, body);
 
   if (body === "body1" && blob.length >= 15 && !BODY1_EMPLOY_RE.test(blob)) {
     gaps.push("请围绕就业/工作技能写，勿用 Stage1 学术举例（如医学理论）代替本段");
@@ -121,6 +126,9 @@ export function assessParagraphSubstance(
   }
   if (slots?.example?.trim() && STANCE_ONLY_RE.test(slots.example)) {
     gaps.push("举例须是具体场景（实习/项目等），不能用「合理/角度」代替");
+  }
+  if (linkText && reasonText && linkText === reasonText) {
+    gaps.push("段末收束不能与原因同句，请用「因此」写一句落到就业/求职结果");
   }
   if (slots?.link?.trim() && STANCE_ONLY_RE.test(slots.link)) {
     gaps.push("扣题须落到就业或深造目标，不能复述立场句");

@@ -291,12 +291,66 @@ export function singleGapCoachPrompt(
   sides: { employ: boolean; academic: boolean },
 ): string {
   if (!sides.employ) {
-    return "就业侧请填空一句：大学应提供___（如实习/项目/实操技能），帮助学生___（如更快就业）。";
+    return "就业/技能一侧：用一句话说清这段想写什么（例如实习、项目、职场能力）";
   }
   if (!sides.academic) {
-    return "学术侧请填空一句：大学应提供___（如系统课程/领域学习），帮助学生___（如深造/积累知识）。";
+    return "学术/知识一侧：用一句话说清这段想写什么（例如长期学习、研究兴趣）";
   }
   return "";
+}
+
+/** 从教练追问文案判断在问哪一侧 */
+export function gapSideFromCoachQuestion(question: string): "employ" | "academic" | null {
+  const q = question.trim();
+  if (!q) return null;
+  const employ =
+    /就业\/技能|就业技能|就业.*一侧|Body\s*1|body1|实习、项目|职场能力/.test(q);
+  const academic =
+    /学术\/知识|学术知识|学术.*一侧|Body\s*2|body2|长期学习|研究兴趣/.test(q);
+  if (employ && !academic) return "employ";
+  if (academic && !employ) return "academic";
+  if (/就业|技能|实习|实操|职场/.test(q) && !/学术|知识|深造|研究兴趣/.test(q)) {
+    return "employ";
+  }
+  if (/学术|知识|深造|研究|领域/.test(q) && !/就业|技能|实习|职场/.test(q)) {
+    return "academic";
+  }
+  return null;
+}
+
+/** 就业侧与学术侧填空追问交替时，不算重复问 */
+export function isOppositeGapCoachQuestion(prev: string, next: string): boolean {
+  const p = gapSideFromCoachQuestion(prev);
+  const n = gapSideFromCoachQuestion(next);
+  return !!p && !!n && p !== n;
+}
+
+/** 本轮用户是否回答了上一问所对应的一侧 */
+export function userAnsweredExplorationGap(
+  message: string | undefined,
+  side: "employ" | "academic",
+): boolean {
+  if (!message?.trim()) return false;
+  return sideMessageSubstantive(message.trim(), side);
+}
+
+/** 一侧刚确认后，正面承接再追问另一侧 */
+export function buildGapProgressionMirror(
+  completedSide: "employ" | "academic",
+  msgs: string[],
+): string {
+  const { employText, academicText } = accumulateDimensionTexts(msgs);
+  if (completedSide === "employ" && employText.length >= 8) {
+    const hint = employText.slice(0, 40).trim();
+    return `就业/技能一侧记下了：${hint}${employText.length > 40 ? "…" : ""}。接下来补学术侧。`;
+  }
+  if (completedSide === "academic" && academicText.length >= 8) {
+    const hint = academicText.slice(0, 40).trim();
+    return `学术/知识一侧记下了：${hint}${academicText.length > 40 ? "…" : ""}。接下来补就业侧。`;
+  }
+  return completedSide === "employ"
+    ? "就业/技能这一侧够了。"
+    : "学术/知识这一侧够了。";
 }
 
 export function isValidBodyPoint(

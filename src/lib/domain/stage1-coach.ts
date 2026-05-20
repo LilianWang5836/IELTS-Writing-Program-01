@@ -11,8 +11,12 @@ import {
   isHandoffProposalComplete,
   proposedHandoffFromResult,
   sanitizeHandoffProposal,
+  buildGapProgressionMirror,
+  gapSideFromCoachQuestion,
+  isOppositeGapCoachQuestion,
   singleGapCoachPrompt,
   userAnsweredBothSidesInMessage,
+  userAnsweredExplorationGap,
   userMessages,
 } from "./essay-substance";
 import { ANGLE_TEACH_CHAT } from "./constants";
@@ -186,6 +190,7 @@ function normQ(s: string): string {
 
 export function isRepeatedQuestion(prev: string, next: string): boolean {
   if (!prev.trim() || !next.trim()) return false;
+  if (isOppositeGapCoachQuestion(prev, next)) return false;
   const a = normQ(prev);
   const b = normQ(next);
   if (a === b) return true;
@@ -198,7 +203,8 @@ export function isRepeatedQuestion(prev: string, next: string): boolean {
     ["填左侧", "6 栏", "定稿"],
     ["各用一句话", "就业技能一侧", "学术知识一侧"],
     ["两侧", "写实"],
-    ["补一句", "写什么", "为什么"],
+    ["就业/技能一侧", "就业技能一侧", "实习、项目"],
+    ["学术/知识一侧", "学术知识一侧", "长期学习"],
     ["开放", "批判性", "教学机会"],
     ["哪些领域", "教学方法", "学习机会"],
     ["你认为大学", "应该提供哪些"],
@@ -284,14 +290,28 @@ export function postProcessStage1(
     substance.coachPrompt ||
     result.userVisibleText ||
     "";
-  const repeated =
-    isRepeatedQuestion(lastQ, nextQ) ||
-    (substance.sufficient &&
-      /各用一句话|就业技能一侧|学术知识一侧/.test(lastQ) &&
-      userAnsweredBothSidesInMessage(userMessage));
-
   const msgs = userMessages(nextState);
   const sides = explorationSideStatus(msgs);
+  const gapQ = singleGapCoachPrompt(sides);
+  const askedSide = gapSideFromCoachQuestion(lastQ);
+  const nextGapSide = gapSideFromCoachQuestion(gapQ);
+  const gapProgression =
+    contentReady &&
+    !substance.sufficient &&
+    askedSide &&
+    gapQ &&
+    nextGapSide &&
+    askedSide !== nextGapSide &&
+    !!userMessage?.trim() &&
+    userAnsweredExplorationGap(userMessage, askedSide);
+
+  const repeated =
+    !isOppositeGapCoachQuestion(lastQ, nextQ) &&
+    !isOppositeGapCoachQuestion(lastQ, gapQ) &&
+    (isRepeatedQuestion(lastQ, nextQ) ||
+      (substance.sufficient &&
+        /各用一句话|就业技能一侧|学术知识一侧/.test(lastQ) &&
+        userAnsweredBothSidesInMessage(userMessage)));
   const forcePropose = shouldForceStage1Proposal(
     contentReady,
     substance.sufficient,
@@ -310,6 +330,28 @@ export function postProcessStage1(
 
   if (canPropose) {
     return proposalCoachResponse(finalProposal, nextState, result, summary);
+  }
+
+  if (gapProgression) {
+    const mirror = buildGapProgressionMirror(askedSide, msgs);
+    return {
+      result: {
+        ...result,
+        verdict: "coach",
+        advance: false,
+        mirror,
+        coachQuestion: gapQ,
+        userVisibleText: [mirror, gapQ].filter(Boolean).join("\n\n"),
+        essaySubstanceSufficient: false,
+      },
+      state: {
+        ...nextState,
+        coachContext: {
+          ...nextState.coachContext,
+          lastQuestion: gapQ,
+        },
+      },
+    };
   }
 
   if (!canPropose && angleTeach.needed && !angleAlreadyTaught && !forcePropose) {
@@ -345,15 +387,19 @@ export function postProcessStage1(
         ? "若下面整理没问题，点左侧「确认整理并填入」即可。"
         : angleAgain
           ? needsAngleTeaching(baseHandoff, userMessage, contentReady).followUp
-          : singleGapCoachPrompt(sides) ||
+          : gapQ ||
             substance.coachPrompt ||
             "Body1 写就业/技能、Body2 写学术/知识——各用一句话说清你想写什么。";
     const preview = buildRecordedSidesPreview(msgs);
+    const completedSide =
+      askedSide ?? gapSideFromCoachQuestion(lastQ) ?? (sides.employ ? "academic" : "employ");
     const mirror = angleAgain
       ? `抱歉，我说清楚一点。${ANGLE_TEACH_CHAT}`
-      : preview
-        ? `${preview}我换种更具体的问法。`
-        : "抱歉，我换种更具体的说法。";
+      : frustrated
+        ? preview
+          ? `${preview}我换种更具体的问法。`
+          : "抱歉，我换种更具体的说法。"
+        : buildGapProgressionMirror(completedSide, msgs);
     return {
       result: {
         ...result,
@@ -361,7 +407,7 @@ export function postProcessStage1(
         advance: false,
         mirror,
         coachQuestion: coachQ,
-        userVisibleText: mirror,
+        userVisibleText: [mirror, coachQ].filter(Boolean).join("\n\n"),
       },
       state: {
         ...nextState,
@@ -384,10 +430,13 @@ export function postProcessStage1(
   }
 
   if (contentReady && !forcePropose && substance.coachPrompt) {
-    const coachQ = singleGapCoachPrompt(sides) || substance.coachPrompt;
-    const preview = buildRecordedSidesPreview(msgs);
+    const coachQ = gapQ || substance.coachPrompt;
     const mirror =
-      preview ||
+      (askedSide &&
+        userMessage &&
+        userAnsweredExplorationGap(userMessage, askedSide) &&
+        buildGapProgressionMirror(askedSide, msgs)) ||
+      buildRecordedSidesPreview(msgs) ||
       summary ||
       "题型和立场有了；还差一侧各一句，补完我就整理定稿。";
     return {

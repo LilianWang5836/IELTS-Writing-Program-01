@@ -22,6 +22,7 @@ import {
   mergeSlots,
   type ChainBuildStep,
 } from "./chain-scaffold";
+import { isParagraphCoverageComplete } from "./chain-discourse";
 import { resolveChainTurnDecision } from "./chain-turn-decision";
 import {
   detectCoachCounterQuestion,
@@ -131,6 +132,7 @@ export function postProcessStage2(
     prevAskCount,
     sameStepAsPrev: prevStep === expectedStep,
     lastQuestion: lastQ,
+    state: nextState,
   });
 
   const workingSlots = decision.workingSlots;
@@ -165,7 +167,9 @@ export function postProcessStage2(
   const llmOk = sanitized.paragraphSubstanceSufficient === true;
   const rulesOk = substance.sufficient;
   const ringsReady =
-    buildStep === "ready" && areChainSlotsSemanticallyValid(workingSlots, body);
+    buildStep === "ready" &&
+    (areChainSlotsSemanticallyValid(workingSlots, body) ||
+      isParagraphCoverageComplete(decision.coverage));
   const canPropose =
     ringsReady &&
     rulesOk &&

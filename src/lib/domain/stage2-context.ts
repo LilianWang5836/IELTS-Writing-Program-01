@@ -84,6 +84,29 @@ export function detectChainProcessQuestion(message?: string): boolean {
   return CHAIN_PROCESS_RE.test(m);
 }
 
+const CHAIN_CLARIFY_SHORT_RE =
+  /^(所以呢|然后呢|接下来呢?|接下来怎么办|怎么办|啥意思|什么意思)[？?！!。]*$/i;
+
+/** Intent 层：先于句型路由，避免「所以呢」被判成 weak link */
+export type ChainUserIntent = "process" | "clarify" | "content";
+
+export function detectChainUserIntent(message?: string): ChainUserIntent {
+  const m = message?.trim() ?? "";
+  if (!m) return "content";
+  if (m.length <= 28 && CHAIN_CLARIFY_SHORT_RE.test(m)) return "clarify";
+  if (
+    detectChainProcessQuestion(m) ||
+    detectChainMetaQuestion(m) ||
+    detectHandoffHelpQuestion(m)
+  ) {
+    return "process";
+  }
+  if (detectCoachCounterQuestion(m) || detectChainFrustration(m)) {
+    return "clarify";
+  }
+  return "content";
+}
+
 /** 用户对教练流程提出反问/质疑：优先回答，不直接套模板 */
 export function detectCoachCounterQuestion(message?: string): boolean {
   const m = message?.trim() ?? "";

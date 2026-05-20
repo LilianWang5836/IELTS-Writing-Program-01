@@ -527,8 +527,9 @@ export function isChainStepFilled(
     return (
       !!link &&
       link !== reason &&
-      isLinkSentence(link, body, claim) &&
-      !isTooSimilarToClaim(link, claim, body)
+      !isTooSimilarToClaim(link, claim, body) &&
+      (isLinkSentence(link, body, claim) ||
+        isDiscourseClosureLink(link, body, claim))
     );
   }
   return step === "ready";
@@ -548,15 +549,39 @@ export function areChainSlotsSemanticallyValid(
   const link = slots.link?.trim() ?? "";
   const reason = slots.reason?.trim() ?? "";
   const claim = slots.claim?.trim() ?? "";
-  if (
-    !link ||
-    link === reason ||
-    !isLinkSentence(link, body, claim) ||
-    isTooSimilarToClaim(link, claim, body)
-  ) {
+  const linkOk =
+    !!link &&
+    link !== reason &&
+    !isTooSimilarToClaim(link, claim, body) &&
+    (isLinkSentence(link, body, claim) || isDiscourseClosureLink(link, body, claim));
+  if (!linkOk) {
     return false;
   }
   return true;
+}
+
+/** 双层：功能收束句也可作 link 槽（与 chain-discourse 对齐，避免循环依赖） */
+function isDiscourseClosureLink(
+  s: string,
+  body: WorkshopBodyKey,
+  claim?: string,
+): boolean {
+  const t = s.trim();
+  if (t.length < 16 || looksLikeHandoffClaim(t, body)) return false;
+  if (claim && isTooSimilarToClaim(t, claim, body)) return false;
+  if (!/因此|所以|从而|总之|综上/.test(t)) return false;
+  if (body === "body1") {
+    return (
+      /就业|求职|面试|上岗|工作|适应|对口/.test(t) &&
+      /才能|有助于|更|利于|实现|落到|支撑|实践|实习/.test(t)
+    );
+  }
+  return (
+    /学术|深造|研究|长期|知识|领域|积累|读研|专业|理论|路线|道路/.test(t) &&
+    /有必要|很重要|应当|必须|聚焦|打下|基础|才能|有助于|支撑|必要|扎实|聚焦/.test(
+      t,
+    )
+  );
 }
 
 export function mergeSlots(

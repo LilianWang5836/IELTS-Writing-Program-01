@@ -1,3 +1,4 @@
+import { hasFunctionalClosure } from "./chain-discourse";
 import { areChainSlotsSemanticallyValid, isLinkSentence } from "./chain-scaffold";
 import { claimReasonRedundant } from "./rule-hints";
 import { userBlobForWorkshopBody } from "./stage2-context";
@@ -85,10 +86,12 @@ export function assessParagraphSubstance(
   const hasExample = !!(slots?.example?.trim() || slots?.support?.trim());
   const linkText = slots?.link?.trim() ?? "";
   const reasonText = slots?.reason?.trim() ?? "";
+  const claim = slots?.claim?.trim();
   const hasLink =
     !!linkText &&
     linkText !== reasonText &&
-    isLinkSentence(linkText, body);
+    (isLinkSentence(linkText, body, claim) ||
+      hasFunctionalClosure(linkText, body, claim));
 
   if (body === "body1" && blob.length >= 15 && !BODY1_EMPLOY_RE.test(blob)) {
     gaps.push("请围绕就业/工作技能写，勿用 Stage1 学术举例（如医学理论）代替本段");

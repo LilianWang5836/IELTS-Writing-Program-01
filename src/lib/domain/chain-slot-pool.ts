@@ -1,6 +1,7 @@
 /**
  * Phase B：从聊天收集各环候选，再物化为 baseline slots（历史回放不抢写主槽）。
  */
+import { hasFunctionalClosure } from "./chain-discourse";
 import {
   buildSlotsFromChat,
   isExampleSentence,
@@ -46,7 +47,11 @@ export function collectRingCandidates(
     ];
     for (const sent of sents) {
       const key = sent.slice(0, 48);
-      if (isLinkSentence(sent, body, claim) && !seen.link.has(key)) {
+      if (
+        (isLinkSentence(sent, body, claim) ||
+          hasFunctionalClosure(sent, body, claim)) &&
+        !seen.link.has(key)
+      ) {
         seen.link.add(key);
         pool.link.push(sent);
       }
@@ -81,7 +86,8 @@ export function materializeSlotsFromPool(
   const linkPick = pick(pool.link, [reason, example]);
   const link =
     linkPick &&
-    isLinkSentence(linkPick, body, claim) &&
+    (isLinkSentence(linkPick, body, claim) ||
+      hasFunctionalClosure(linkPick, body, claim)) &&
     !isTooSimilarToClaim(linkPick, claim, body)
       ? linkPick
       : "";
@@ -143,7 +149,11 @@ function stripInvalidLink(
   const claim = slots.claim?.trim();
   const link = slots.link?.trim();
   if (!link) return slots;
-  if (!isLinkSentence(link, body, claim) || isTooSimilarToClaim(link, claim, body)) {
+  if (
+    (!isLinkSentence(link, body, claim) &&
+      !hasFunctionalClosure(link, body, claim)) ||
+    isTooSimilarToClaim(link, claim, body)
+  ) {
     const { link: _drop, ...rest } = slots;
     return rest;
   }

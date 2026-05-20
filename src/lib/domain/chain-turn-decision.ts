@@ -26,8 +26,24 @@ import {
   type ChainTurnRole,
   type ChainTurnUnderstanding,
 } from "./chain-understanding";
-import { detectChainProcessQuestion } from "./stage2-context";
+import {
+  appendDiscourseTurn,
+  assessParagraphCoverage,
+  buildDiscourseMemory,
+  coverageToBuildStep,
+  isClosurePrimarySentence,
+  isParagraphCoverageComplete,
+  mergeDiscourseWithRingSlots,
+  projectDiscourseToSlots,
+  type ParagraphCoverage,
+} from "./chain-discourse";
+import {
+  detectChainProcessQuestion,
+  detectChainUserIntent,
+  stage2UserMessages,
+} from "./stage2-context";
 import type { LlmTurnResult, ParagraphSlots, WorkshopBodyKey } from "./types";
+import type { SessionState } from "./types";
 
 export type ChainRing = "reason" | "example" | "link";
 
@@ -38,6 +54,7 @@ export interface ChainTurnDecision {
   quality: ChainTurnQuality;
   understanding: ChainTurnUnderstanding;
   workingSlots: ParagraphSlots;
+  coverage: ParagraphCoverage;
   coach: { mirror: string; ask: string };
 }
 
@@ -169,6 +186,11 @@ export function parseUnderstandingForStep(
   const base = parseChainTurnUnderstanding(result, userMessage);
   const msg = userMessage?.trim() ?? "";
   if (!msg || base.role === "meta") return base;
+
+  const intent = detectChainUserIntent(msg);
+  if (intent === "process" || intent === "clarify") {
+    return { role: "meta", quality: "none", slotText: msg };
+  }
   if (detectChainProcessQuestion(msg)) {
     return { role: "meta", quality: "none", slotText: msg };
   }
@@ -431,9 +453,13 @@ function buildCoachMessage(input: {
   }
 
   if (understanding.quality === "weak" && understanding.role === "link") {
+    const ask =
+      body === "body1"
+        ? "再补一句：面试/上岗/对口工作，三选一即可。"
+        : "再补一句：用「因此」接到分论点，点明对深造/研究基础或长期积累的作用即可。";
     return {
-      mirror: llmMirror || "收束方向对，再明确落到就业/求职结果一句。",
-      ask: "再补一句：面试/上岗/对口工作，三选一即可。",
+      mirror: llmMirror || "收束方向对，再明确落到结果一句。",
+      ask,
     };
   }
 
@@ -503,6 +529,8 @@ export interface ResolveChainTurnInput {
   prevAskCount: number;
   sameStepAsPrev: boolean;
   lastQuestion: string;
+  /** 双层迁移：从 Stage2 聊天重建 discourse（无 state 时仅用 baseline + 本轮） */
+  state?: SessionState;
 }
 
 export function resolveChainTurnDecision(
@@ -514,18 +542,41 @@ export function resolveChainTurnDecision(
     body,
     buildCtx,
     userMessage,
-    prevStep,
     prevAskCount,
     sameStepAsPrev,
     lastQuestion,
+    state,
   } = input;
 
   const msg = userMessage?.trim() ?? "";
+  const claim = baselineSlots.claim?.trim() || buildCtx.bodyPoint?.trim();
+
+  const historyMsgs = state
+    ? stage2UserMessages(state, body)
+    : [
+        baselineSlots.reason,
+        baselineSlots.example,
+        baselineSlots.link,
+      ]
+        .map((s) => s?.trim())
+        .filter((s): s is string => !!s);
+
+  let discourse = buildDiscourseMemory(historyMsgs, body, claim);
+  if (msg && detectChainUserIntent(msg) === "content") {
+    discourse = appendDiscourseTurn(discourse, msg, body);
+  }
+
+  const coverage = assessParagraphCoverage(discourse, body);
+  const coverageStep = coverageToBuildStep(coverage);
+
   let { step: expectedStep } = getNextChainBuildStep(
     baselineSlots,
     body,
     buildCtx,
   );
+  if (coverageStep !== "ready" && expectedStep !== "ready") {
+    expectedStep = coverageStep;
+  }
 
   const understanding = parseUnderstandingForStep(
     result,
@@ -534,7 +585,7 @@ export function resolveChainTurnDecision(
     body,
   );
 
-  let workingSlots = { ...baselineSlots };
+  let ringSlots = { ...baselineSlots };
   const primaryRing =
     understanding.role === "reason" ||
     understanding.role === "example" ||
@@ -548,15 +599,30 @@ export function resolveChainTurnDecision(
     understanding.quality !== "off_topic" &&
     understanding.role !== "meta"
   ) {
-    workingSlots = applyPrimaryRingWrite(
-      workingSlots,
-      primaryRing,
-      understanding.slotText || msg,
-      body,
-    );
+    const writeText = understanding.slotText || msg;
+    const closurePrimary = isClosurePrimarySentence(writeText, body, claim);
+    if (!(primaryRing === "reason" && closurePrimary)) {
+      ringSlots = applyPrimaryRingWrite(ringSlots, primaryRing, writeText, body);
+    }
+    if (closurePrimary) {
+      const projectedClosure = projectDiscourseToSlots(
+        appendDiscourseTurn(
+          buildDiscourseMemory(historyMsgs, body, claim),
+          writeText,
+          body,
+        ),
+        body,
+      );
+      if (projectedClosure.link?.trim()) {
+        ringSlots = { ...ringSlots, link: projectedClosure.link };
+      }
+    }
   }
 
-  let { step: advanceTo, coachPrompt: stepPrompt } = getNextChainBuildStep(
+  const projected = projectDiscourseToSlots(discourse, body);
+  let workingSlots = mergeDiscourseWithRingSlots(ringSlots, projected, body);
+
+  let { step: advanceTo } = getNextChainBuildStep(
     workingSlots,
     body,
     buildCtx,
@@ -574,19 +640,20 @@ export function resolveChainTurnDecision(
     const lenient = getNextChainBuildStepLenient(workingSlots, body, buildCtx);
     if (lenient.step !== expectedStep) {
       advanceTo = lenient.step;
-      stepPrompt = lenient.coachPrompt;
     }
   }
 
-  if (isChainStepFilled(workingSlots, "link", body)) {
+  if (isParagraphCoverageComplete(coverage)) {
     advanceTo = "ready";
-    stepPrompt = "";
+  } else if (isChainStepFilled(workingSlots, "link", body)) {
+    advanceTo = "ready";
   } else if (
     areChainSlotsSemanticallyValid(workingSlots, body) &&
     getNextChainBuildStep(workingSlots, body, buildCtx).step === "ready"
   ) {
     advanceTo = "ready";
-    stepPrompt = "";
+  } else if (coverageStep !== "ready") {
+    advanceTo = coverageStep;
   }
 
   const coach = buildCoachMessage({
@@ -610,6 +677,7 @@ export function resolveChainTurnDecision(
     quality: understanding.quality,
     understanding,
     workingSlots,
+    coverage,
     coach,
   };
 }

@@ -91,9 +91,14 @@ function inferTurnFromMessage(msg: string): Omit<ChainTurnUnderstanding, "slotTe
       !/技术栈|实习|项目|计算机|岗位|公司|医学|课程|实训|编程/.test(msg);
     return { role: "example", quality: weak ? "weak" : "ok" };
   }
-  if (/因此|所以|从而|这样一来/.test(msg)) {
+  if (/^(所以呢|然后呢|接下来|怎么办)[？?]?$/i.test(msg.trim())) {
+    return { role: "none", quality: "none" };
+  }
+  if (/因此|所以|从而|这样一来/.test(msg) && msg.length > 24) {
     const weak =
-      !/就业|求职|面试|工作|深造|学术|知识|对口|职业|适应|找到/.test(msg);
+      !/就业|求职|面试|工作|深造|学术|知识|对口|职业|适应|找到|必要|重要|路线|积累|研究/.test(
+        msg,
+      );
     return { role: "link", quality: weak ? "weak" : "ok" };
   }
   return { role: "none", quality: "none" };

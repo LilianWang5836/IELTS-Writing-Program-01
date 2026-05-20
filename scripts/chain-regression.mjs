@@ -8,6 +8,13 @@ import {
   resolveChainTurnDecision,
 } from "../src/lib/domain/chain-turn-decision.ts";
 import {
+  assessParagraphCoverage,
+  buildDiscourseMemory,
+  hasFunctionalClosure,
+  isParagraphCoverageComplete,
+} from "../src/lib/domain/chain-discourse.ts";
+import { detectChainUserIntent } from "../src/lib/domain/stage2-context.ts";
+import {
   areChainSlotsSemanticallyValid,
   getNextChainBuildStep,
   isChainStepFilled,
@@ -175,6 +182,19 @@ const body2Decision = resolveChainTurnDecision({
   prevAskCount: 1,
   sameStepAsPrev: true,
   lastQuestion: "课程名、研究课题或训练场景",
+  state: {
+    chatHistory: [
+      { role: "assistant", content: "我们一起搭 Body2 论证链" },
+      { role: "user", content: body2Reason },
+      { role: "user", content: body2Example },
+    ],
+    handoffLocked: true,
+    stage: 2,
+    s2: {
+      body2Point: "大学应提供持续学习个人兴趣领域的机会",
+      body2Angle: "纯粹知识、深入探索兴趣领域",
+    },
+  },
 });
 ok(body2Decision.advanceTo === "link", "Body2 医学生例后 advanceTo 为 link");
 ok(
@@ -227,6 +247,94 @@ ok(looksLikeHandoffClaim(b2Claim, "body2"), "Body2 分论点句式不算 Link");
 ok(!isLinkSentence(b2Claim, "body2", b2ClaimNorm), "Body2 分论点不写入 link 槽");
 ok(isLinkSentence(b2Link, "body2", b2ClaimNorm), "真正收束句可作 Link");
 ok(!isTooSimilarToClaim(b2Link, b2ClaimNorm, "body2"), "Link 与 claim 不判同句");
+
+const b2SoftLink =
+  "因此，如果是这些特别需要长期学习的领域，并且已经确定了走学术发展的路线，聚焦于知识本身是非常有必要的";
+ok(
+  hasFunctionalClosure(b2SoftLink, "body2", b2ClaimNorm),
+  "Body2 功能收束：长期学习+学术路线+有必要",
+);
+const b2SoftState = {
+  chatHistory: [
+    { role: "assistant", content: "我们一起搭 Body2 论证链" },
+    { role: "user", content: body2Reason },
+    { role: "user", content: body2Example },
+    { role: "user", content: b2SoftLink },
+  ],
+  handoffLocked: true,
+  stage: 2,
+  s2: {
+    body2Point: "大学应提供持续学习个人兴趣领域的机会",
+    body2Angle: "纯粹知识、深入探索兴趣领域",
+  },
+};
+const b2SoftBaseline = buildChainBaselineSlots(b2SoftState, "body2", {
+  claim: b2ClaimNorm,
+  reason: body2Reason,
+  example: body2Example,
+});
+const b2SoftCov = assessParagraphCoverage(
+  buildDiscourseMemory(
+    b2SoftState.chatHistory.filter((m) => m.role === "user").map((m) => m.content),
+    "body2",
+    b2ClaimNorm,
+  ),
+  "body2",
+);
+ok(isParagraphCoverageComplete(b2SoftCov), "Body2 医学生+软收束 coverage 完整");
+const b2SoftDecision = resolveChainTurnDecision({
+  baselineSlots: b2SoftBaseline,
+  result: {
+    mirror: "你用因此总结了长期学习与学术路线。",
+    chainTurnRole: "link",
+    chainTurnQuality: "weak",
+    coachQuestion: "请更具体说明如何支撑分论点",
+  },
+  body: "body2",
+  buildCtx: {
+    bodyPoint: "大学应提供持续学习个人兴趣领域的机会",
+    bodyAngle: "学术深造与知识体系",
+  },
+  userMessage: b2SoftLink,
+  prevStep: "link",
+  prevAskCount: 1,
+  sameStepAsPrev: true,
+  lastQuestion: "请写段末收束",
+  state: b2SoftState,
+});
+ok(b2SoftDecision.advanceTo === "ready", "Body2 软收束句 coverage 推进 ready");
+ok(!!b2SoftDecision.workingSlots.link?.includes("因此"), "软收束写入 link 槽");
+ok(
+  b2SoftDecision.workingSlots.reason?.includes("系统性") ||
+    b2SoftDecision.workingSlots.reason?.includes("由浅入深"),
+  "reason 不被收束句覆盖",
+);
+
+ok(detectChainUserIntent("所以呢") === "clarify", "所以呢 走 clarify intent");
+const clarifyDecision = resolveChainTurnDecision({
+  baselineSlots: b2SoftBaseline,
+  result: {
+    mirror: "你问所以呢，是在询问下一步",
+    chainTurnRole: "meta",
+    chainTurnQuality: "none",
+  },
+  body: "body2",
+  buildCtx: {
+    bodyPoint: "大学应提供持续学习个人兴趣领域的机会",
+    bodyAngle: "学术深造与知识体系",
+  },
+  userMessage: "所以呢",
+  prevStep: "link",
+  prevAskCount: 2,
+  sameStepAsPrev: true,
+  lastQuestion: "请写段末收束",
+  state: b2SoftState,
+});
+ok(clarifyDecision.understanding.role === "meta", "所以呢 标 meta 不写槽");
+ok(
+  !/课程名|研究课题/.test(clarifyDecision.coach.ask || ""),
+  "所以呢 不触发举例追问",
+);
 
 if (fail) {
   process.exit(1);

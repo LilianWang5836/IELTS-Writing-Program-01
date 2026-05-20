@@ -126,6 +126,8 @@ export interface CoachContext {
   handoffPhase?: HandoffPhase;
   /** 本轮 Stage1 是否已在聊天里教过「切入面」 */
   angleTeachDone?: boolean;
+  /** Stage2 当前搭链环节 */
+  chainBuildStep?: "claim" | "reason" | "example" | "link" | "ready";
 }
 
 export interface SessionState {

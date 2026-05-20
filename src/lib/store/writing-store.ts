@@ -241,7 +241,9 @@ export const useWritingStore = create<WritingStore>()(
           if (!res.ok) throw new Error(data.error ?? "Submit failed");
           set({
             state: data.state,
-            handoffDraft: data.state.handoff ?? handoff,
+            handoffDraft: data.state.handoff
+              ? { ...data.state.handoff }
+              : { ...handoff },
             messages: [
               ...get().messages,
               ...data.replies.map((t: string) => ({

@@ -125,6 +125,7 @@ function buildVars(
       substanceSufficient: substance.sufficient,
       gaps: substance.gaps,
       chainPhase: seg?.chainPhase ?? "coaching",
+      chainBuildStep: state.coachContext?.chainBuildStep ?? "claim",
       bodyPoint: body === "body1" ? state.s2?.body1Point : state.s2?.body2Point,
       bodyAngle: body === "body1" ? state.s2?.body1Angle : state.s2?.body2Angle,
     });
@@ -359,6 +360,7 @@ export async function handleConfirmHandoffProposal(
   const s: SessionState = {
     ...s0,
     handoff: { ...proposal },
+    handoffProposal: undefined,
     coachContext: {
       ...s0.coachContext,
       handoffPhase: "editing",

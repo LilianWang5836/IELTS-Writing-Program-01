@@ -1,7 +1,12 @@
 "use client";
 
+import {
+  formatChainProgress,
+  type ChainBuildStep,
+} from "@/lib/domain/chain-scaffold";
 import { SLOT_LABELS_ORDER, slotLabel } from "@/lib/domain/chain-ui";
 import { formatSlotsBlock } from "@/lib/domain/logic-slots";
+import { HANDOFF_FIELD_LABELS } from "@/lib/domain/constants";
 import type {
   ChainProposal,
   ParagraphSlot,
@@ -9,6 +14,41 @@ import type {
   WorkshopBodyKey,
 } from "@/lib/domain/types";
 import { useWritingStore } from "@/lib/store/writing-store";
+
+function HandoffSummaryBar({ state }: { state: SessionState }) {
+  const h = state.handoff;
+  if (!state.handoffLocked || !h) return null;
+
+  return (
+    <div className="rounded-lg border border-stone-200 bg-stone-50/90 p-3 text-xs text-stone-700">
+      <p className="mb-2 font-semibold text-stone-800">审题定稿（已提交，供本阶段对照）</p>
+      <p>
+        <span className="text-stone-500">{HANDOFF_FIELD_LABELS.taskUnderstanding} </span>
+        {h.taskUnderstanding || "—"}
+      </p>
+      <p>
+        <span className="text-stone-500">{HANDOFF_FIELD_LABELS.position} </span>
+        {h.position || "—"}
+      </p>
+      <p>
+        <span className="text-stone-500">{HANDOFF_FIELD_LABELS.body1Point} </span>
+        {h.body1Point || "—"}
+        <span className="text-stone-400">
+          {" "}
+          · {HANDOFF_FIELD_LABELS.body1Angle} {h.body1Angle || "—"}
+        </span>
+      </p>
+      <p>
+        <span className="text-stone-500">{HANDOFF_FIELD_LABELS.body2Point} </span>
+        {h.body2Point || "—"}
+        <span className="text-stone-400">
+          {" "}
+          · {HANDOFF_FIELD_LABELS.body2Angle} {h.body2Angle || "—"}
+        </span>
+      </p>
+    </div>
+  );
+}
 
 function ChainProposalCard({
   bodyLabel,
@@ -62,6 +102,26 @@ function ChainProposalCard({
   );
 }
 
+function ChainBuildProgress({
+  slots,
+  buildStep,
+}: {
+  slots?: ChainProposal["slots"];
+  buildStep?: ChainBuildStep;
+}) {
+  const step = buildStep ?? "claim";
+  return (
+    <div className="mb-3 rounded-md border border-amber-200/80 bg-amber-50/40 p-2">
+      <p className="mb-1 text-xs font-medium text-amber-900">
+        搭链进度（随右侧聊天更新）
+      </p>
+      <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-stone-800">
+        {formatChainProgress(slots ?? {}, step)}
+      </pre>
+    </div>
+  );
+}
+
 function LockedChain({
   title,
   draft,
@@ -108,6 +168,12 @@ function BodySection({
   const point = isB1 ? s2.body1Point : s2.body2Point;
   const angle = isB1 ? s2.body1Angle : s2.body2Angle;
   const seg = isB1 ? s2.body1 : s2.body2;
+  const pointLabel = isB1
+    ? HANDOFF_FIELD_LABELS.body1Point
+    : HANDOFF_FIELD_LABELS.body2Point;
+  const angleLabel = isB1
+    ? HANDOFF_FIELD_LABELS.body1Angle
+    : HANDOFF_FIELD_LABELS.body2Angle;
 
   return (
     <section
@@ -115,11 +181,16 @@ function BodySection({
         active ? "border-amber-400 bg-amber-50/30" : "border-stone-200 bg-white/60"
       }`}
     >
-      <p className="mb-1 text-xs font-medium text-stone-500">审题锚点</p>
-      <p className="mb-1 text-sm font-medium text-stone-800">{point || "—"}</p>
-      <p className="mb-3 text-xs text-stone-600">
-        切入面：{angle || "—"}
-        <span className="text-stone-400">（讨论范围/视角）</span>
+      <p className="mb-2 text-xs font-medium text-stone-500">
+        {label} · 已定稿分论点（只读，来自审题）
+      </p>
+      <p className="mb-1 text-sm text-stone-800">
+        <span className="text-xs text-stone-500">{pointLabel} </span>
+        {point || "—"}
+      </p>
+      <p className="mb-3 text-sm text-stone-700">
+        <span className="text-xs text-stone-500">{angleLabel} </span>
+        {angle || "—"}
       </p>
 
       {seg.chainPhase === "proposed" && seg.chainProposal && active && (
@@ -142,13 +213,22 @@ function BodySection({
         />
       ) : (
         <div>
-          <p className="mb-1 text-xs font-medium text-stone-500">论证草稿（聊天累积）</p>
-          <p className="whitespace-pre-wrap text-sm text-stone-700">
-            {seg.draft?.trim() || "（在右侧写出本段论证）"}
+          {active && seg.chainPhase === "coaching" && (
+            <ChainBuildProgress
+              slots={seg.slots}
+              buildStep={state.coachContext?.chainBuildStep}
+            />
+          )}
+          <p className="mb-1 text-xs font-medium text-stone-500">
+            本段论证（在右侧聊天写出，会自动出现在这里）
+          </p>
+          <p className="whitespace-pre-wrap rounded-md border border-dashed border-stone-300 bg-white/80 p-2 text-sm text-stone-700">
+            {seg.draft?.trim() ||
+              "尚未输入。请在右侧用中文写出本段论证（可乱序），勿与上方分论点栏混淆。"}
           </p>
           {active && seg.chainPhase !== "proposed" && (
             <p className="mt-2 text-xs text-amber-800/90">
-              聊清后教练会整理链条，在此确认后再进入下一段。
+              教练会按 Claim→Reason→Example→Link 逐环引导；够齐后请点「确认链条并填入」。
             </p>
           )}
         </div>
@@ -166,6 +246,7 @@ export function ArgumentChainEditor() {
 
   return (
     <div className="flex flex-col gap-4">
+      <HandoffSummaryBar state={state} />
       <BodySection
         state={state}
         body="body1"

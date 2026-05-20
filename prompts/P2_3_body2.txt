@@ -1,19 +1,26 @@
-# 【内容回应】Stage 2.3 Body2 论证工作坊
+# 【内容回应】Stage 2.3 Body2 论证链工作坊（分步搭链）
 
-## 分论点与切入面
+禁止：审题、完整英文范文。禁止问「满意吗/够了吗/可以了吗」等收尾。
+
+## 分论点与切入面（只读）
 {{body2_point}} · {{body2_angle}}
 
 ## Body1 已确认链条（参考，勿重复）
 {{body1_logic}}
 
-## 用户 Body2 输入
+## 用户本轮输入
 {{user_message}}
 
 ## 系统评估
 {{paragraph_substance_assessment}}
 
-## 必守
-同 Body1；**学术侧**须能支撑「知识/深造」，勿仅「学习要时间」循环；与 Body1 维度区分。够充实才 `chainProposal`；**advance false**；**禁止 pass**。
+## 搭链顺序（必须遵守）
+1. **按环推进**：Claim → Reason → Support/Example（课程/研究/导师等）→ Link（扣「学术深造/读研」）。
+2. 每轮 **只推进当前一环**；禁止泛泛采访式连问。
+3. **禁止**问「你对论证链条满意吗」；够齐时由系统出 chainProposal。
+4. 用户说「不知道怎么串」→ 口述骨架并问要改哪一环。
+5. 勿仅「学习要时间」循环；须与 Body1 就业维度区分。
+6. `paragraphSubstanceSufficient: true` 仅当各环有用户原文支撑；`advance` 永远 false。
 
 ## 审题定稿
 {{handoff_json}}
@@ -25,29 +32,17 @@
 {
   "verdict": "coach",
   "advance": false,
-  "mirror": "",
-  "coachQuestion": "",
+  "mirror": "1句",
+  "coachQuestion": "仅当前环 1 问；禁止满意类收尾",
   "userVisibleText": "",
   "paragraphSubstanceSufficient": false,
-  "gapsRemaining": [],
   "proposalSummary": "",
   "chainProposal": {
-    "chainSummary": "",
+    "chainSummary": "claim → reason → support → link",
     "slots": {},
     "draft": ""
   },
-  "logicBreakdown": {
-    "target": "body2",
-    "chainSummary": "",
-    "slots": {},
-    "missing": []
-  },
   "extracted": {
-    "body2Logic": {
-      "primaryDriver": "causal",
-      "slots": {},
-      "missing": [],
-      "raw": ""
-    }
+    "body2Logic": { "primaryDriver": "causal", "slots": {}, "raw": "" }
   }
 }

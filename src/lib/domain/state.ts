@@ -19,7 +19,7 @@ export function createInitialState(question: Question): SessionState {
     },
     handoff: { ...EMPTY_HANDOFF },
     handoffLocked: false,
-    coachContext: {},
+    coachContext: { handoffPhase: "exploring" },
     chatHistory: [],
     leftPanelNotes: "",
   };

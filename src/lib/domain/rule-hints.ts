@@ -80,8 +80,13 @@ export function buildRuleHintsBlock(state: SessionState): string {
       );
     } else {
       lines.push(
-        "规则提示：paragraphSubstanceSufficient 为 true 才可 chainProposal；advance 永远 false。",
+        "规则提示：按 Claim→Reason→Example→Link 逐环推进；禁止问「满意吗」；advance 永远 false。",
       );
+      if (state.coachContext?.chainBuildStep) {
+        lines.push(
+          `规则提示：当前搭链环节：${state.coachContext.chainBuildStep}。`,
+        );
+      }
     }
     if (seg?.draft && bodyDraftTooShort(seg.draft)) {
       lines.push("规则提示：本段输入过短，尚不足以评估整体论证。");

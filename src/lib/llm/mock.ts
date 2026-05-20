@@ -162,60 +162,102 @@ export function mockLlmResponse(
 
     case "P2_2": {
       const raw = context.userMessage ?? "";
-      const substanceReady =
-        raw.length >= 55 &&
-        (/因为|所以|才能|有助于/.test(raw) || /because|therefore/.test(msg)) &&
-        (/实习|项目|技能|就业|招聘|雇主/.test(raw) ||
-          /intern|project|employ|skill/.test(msg));
-
-      if (!hasUserText || raw.length < 25) {
+      if (/不知道怎么串|不会串|怎么连/.test(raw)) {
         return {
           verdict: "coach",
           advance: false,
-          mirror: "先从 Body1 分论点说起。",
-          coachQuestion: "大学提供工作技能，如何帮助学生尽快就业？用几句话说明。",
-          userVisibleText: "先从 Body1 分论点说起。",
+          mirror: "没关系，我根据你已说的先搭一版骨架。",
+          coachQuestion:
+            "这条线是否顺？要改请说哪一环（论点/原因/例子/扣题）。",
+          userVisibleText: "",
           paragraphSubstanceSufficient: false,
         };
       }
 
-      if (!substanceReady) {
+      if (/满意|够了吗/.test(raw)) {
         return {
           verdict: "coach",
           advance: false,
-          mirror: "方向有了，还可以再具体一点。",
+          mirror: "我们继续按链条补环，不用急着收尾。",
+          coachQuestion: "还缺哪一环？你可以补例子或扣题到「尽快就业」。",
+          userVisibleText: "",
+          paragraphSubstanceSufficient: false,
+        };
+      }
+
+      const hasExample = /项目|实习|coding|编程|实践|工程师/.test(raw);
+      const hasReason = /因为|所以|才能|直接|更容易|有助于/.test(raw);
+      const hasLink = /就业|求职|竞争|找工作|上岗/.test(raw);
+      const substanceReady =
+        hasExample && hasReason && hasLink && raw.length >= 40;
+
+      if (!hasUserText || raw.length < 15) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "我们按链条一环一环来。",
           coachQuestion:
-            "请补：为什么技能/实习能提升竞争力？举一个具体例子（项目或实习）。",
-          userVisibleText: "方向有了，还可以再具体一点。",
+            "先补原因：为什么提供工作技能，能帮助学生更快就业？",
+          userVisibleText: "",
+          paragraphSubstanceSufficient: false,
+        };
+      }
+
+      if (!hasExample) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "论点/原因方向有了。",
+          coachQuestion:
+            "给一个具体例子：学校可提供什么实践或项目？（如 coding 项目、实习）",
+          userVisibleText: "",
+          paragraphSubstanceSufficient: false,
+        };
+      }
+
+      if (!hasReason) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "例子很具体。",
+          coachQuestion:
+            "补一层因果：这些技能/项目如何让学生更快找到工作？",
+          userVisibleText: "",
+          paragraphSubstanceSufficient: false,
+        };
+      }
+
+      if (!hasLink || !substanceReady) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "例子和原因都有了。",
+          coachQuestion:
+            "扣题到审题：这些能力如何落到「帮助学生尽快就业」？（一句话）",
+          userVisibleText: "",
           paragraphSubstanceSufficient: false,
         };
       }
 
       const proposal = {
-        chainSummary: "技能与实习积累 → 求职更有竞争力",
+        chainSummary: "提供工作技能 → 项目/实习练技能 → 更易就业",
         slots: {
-          claim: "大学应提供可上岗的工作技能",
-          reason: "雇主看重即战力和项目经历",
-          example: raw.includes("实习") ? "实习与项目经验" : "实践项目",
-          link: "在求职中获得竞争优势",
+          claim: "大学提供工作技能",
+          reason: "代码/项目规划等可直接用于工作，项目经验助找实习",
+          example: "与工种相关的实践项目（如工程师自己 coding 做项目）",
+          link: "在求职中获得竞争优势、更快就业",
         },
         draft: raw,
       };
       return {
         verdict: "coach",
         advance: false,
-        mirror: "就业侧论证够了，我帮你整理成链条。",
+        mirror: "",
         coachQuestion: "",
-        userVisibleText: "就业侧论证够了，我帮你整理成链条。",
+        userVisibleText: "",
         paragraphSubstanceSufficient: true,
-        proposalSummary: "你写了技能/实习如何带来求职优势，可以定稿这段链条。",
+        proposalSummary: "四环齐了，请看左侧「确认链条并填入」。",
         chainProposal: proposal,
-        logicBreakdown: {
-          target: "body1",
-          chainSummary: proposal.chainSummary,
-          slots: proposal.slots,
-          missing: [],
-        },
         extracted: {
           body1Logic: {
             primaryDriver: "causal",
@@ -228,31 +270,85 @@ export function mockLlmResponse(
 
     case "P2_3": {
       const raw = context.userMessage ?? "";
-      const weakAcademic =
-        raw.length < 50 ||
-        (!/研究|论文|导师|课程|领域|深造|知识|学术/.test(raw) &&
-          /时间|学习/.test(raw));
 
-      if (!hasUserText || raw.length < 20) {
+      if (/不知道怎么串|不会串|怎么连/.test(raw)) {
         return {
           verdict: "coach",
           advance: false,
-          mirror: "来说说 Body2 学术侧。",
+          mirror: "没关系，我根据你已说的先搭一版学术侧骨架。",
           coachQuestion:
-            "走学术道路时，「纯粹知识」如何支撑深造？别只说学习要时间。",
-          userVisibleText: "来说说 Body2 学术侧。",
+            "这条线是否顺？要改请说哪一环（论点/原因/支撑/扣题）。",
+          userVisibleText: "",
           paragraphSubstanceSufficient: false,
         };
       }
 
-      if (weakAcademic) {
+      if (/满意|够了吗/.test(raw)) {
         return {
           verdict: "coach",
           advance: false,
-          mirror: "学术方向有了，但还偏薄。",
+          mirror: "我们继续按链条补环。",
           coachQuestion:
-            "请补：知识/课程/研究兴趣如何支撑读研或科研，而不是只说「需要时间」。",
-          userVisibleText: "学术方向有了，但还偏薄。",
+            "请补：知识/课程/研究如何支撑深造，而不是只说「需要时间」。",
+          userVisibleText: "",
+          paragraphSubstanceSufficient: false,
+        };
+      }
+
+      const hasAcademic =
+        /研究|论文|导师|课程|领域|深造|知识|学术|科研|读研/.test(raw);
+      const hasReason = /因为|所以|才能|有助于|基础|积累/.test(raw);
+      const hasSupport = /课程|研究|导师|项目|兴趣|训练/.test(raw);
+      const hasLink = /深造|读研|学术|科研|博士|研究生/.test(raw);
+      const weakAcademic =
+        raw.length < 40 || (!hasAcademic && /时间|学习/.test(raw));
+      const substanceReady =
+        hasAcademic && hasReason && hasSupport && hasLink && raw.length >= 45;
+
+      if (!hasUserText || raw.length < 15) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "我们按学术侧链条一环一环来。",
+          coachQuestion:
+            "先说明：走学术道路时，持续学领域知识想达到什么结果？（一句话）",
+          userVisibleText: "",
+          paragraphSubstanceSufficient: false,
+        };
+      }
+
+      if (!hasReason && !weakAcademic) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "学术方向有了。",
+          coachQuestion:
+            "补因果：为什么系统积累领域知识，是学术深造的基础？",
+          userVisibleText: "",
+          paragraphSubstanceSufficient: false,
+        };
+      }
+
+      if (!hasSupport) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "原因方向有了。",
+          coachQuestion:
+            "给一个具体支撑：课程/研究兴趣/导师指导等如何体现？",
+          userVisibleText: "",
+          paragraphSubstanceSufficient: false,
+        };
+      }
+
+      if (weakAcademic || !hasLink || !substanceReady) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "支撑有了，还可以更贴学术路径。",
+          coachQuestion:
+            "扣题：这些积累如何落到「学术深造/读研」？别只说学习要时间。",
+          userVisibleText: "",
           paragraphSubstanceSufficient: false,
         };
       }
@@ -270,19 +366,12 @@ export function mockLlmResponse(
       return {
         verdict: "coach",
         advance: false,
-        mirror: "学术侧论证可以整理了。",
+        mirror: "",
         coachQuestion: "",
-        userVisibleText: "学术侧论证可以整理了。",
+        userVisibleText: "",
         paragraphSubstanceSufficient: true,
-        proposalSummary:
-          "你说明了知识积累与学术路径的关系，与 Body1 就业维度不同。",
+        proposalSummary: "四环齐了，请看左侧「确认链条并填入」。",
         chainProposal: proposal,
-        logicBreakdown: {
-          target: "body2",
-          chainSummary: proposal.chainSummary,
-          slots: proposal.slots,
-          missing: [],
-        },
         extracted: {
           body2Logic: {
             primaryDriver: "causal",

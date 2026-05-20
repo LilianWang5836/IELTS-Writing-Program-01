@@ -112,23 +112,34 @@ export function isRepeatedQuestion(prev: string, next: string): boolean {
   return false;
 }
 
+/** 探索阶段只合并题意/立场，避免 Body 栏被 LLM 占位导致左侧误亮「可提交」 */
 function mergeExtractedToHandoff(
   handoff: Stage1Handoff,
   extracted?: Record<string, unknown>,
+  explorationOnly = true,
 ): Stage1Handoff {
   const ex = extracted as Record<string, string> | undefined;
   if (!ex) return handoff;
-  return {
+  const base = {
     ...handoff,
     questionType: ex.questionType || handoff.questionType,
     taskUnderstanding:
       handoff.taskUnderstanding || ex.taskUnderstanding || "",
     position: handoff.position || ex.position || "",
+  };
+  if (explorationOnly) return base;
+  return {
+    ...base,
     body1Point: handoff.body1Point || ex.body1Point || "",
     body1Angle: handoff.body1Angle || ex.body1Angle || "",
     body2Point: handoff.body2Point || ex.body2Point || "",
     body2Angle: handoff.body2Angle || ex.body2Angle || "",
   };
+}
+
+function isExplorationHandoffMerge(state: SessionState): boolean {
+  const phase = state.coachContext?.handoffPhase;
+  return !state.handoffLocked && phase !== "editing" && phase !== "locked";
 }
 
 function llmSaysSubstanceOk(result: LlmTurnResult): boolean {
@@ -151,6 +162,7 @@ export function postProcessStage1(
       body2Angle: "",
     },
     result.extracted,
+    isExplorationHandoffMerge(state),
   );
 
   let nextState: SessionState = {
@@ -289,7 +301,9 @@ export function postProcessStage1(
 
   if (contentReady && !rulesOk && substance.coachPrompt) {
     const coachQ = substance.coachPrompt;
-    const mirror = summary || coachQ;
+    const mirror =
+      summary ||
+      "题型和立场有了；定稿要等两侧都写实后，我会在左侧给出整理。";
     return {
       result: {
         ...result,

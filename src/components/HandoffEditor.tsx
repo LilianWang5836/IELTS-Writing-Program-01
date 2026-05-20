@@ -1,9 +1,9 @@
 "use client";
 
 import {
+  canSubmitStage1Handoff,
   EMPTY_HANDOFF,
   handoffProgress,
-  isHandoffComplete,
 } from "@/lib/domain/handoff";
 import {
   HANDOFF_ANGLE_HELP,
@@ -85,7 +85,7 @@ export function HandoffEditor() {
 
   const draft = handoffDraft ?? state?.handoff ?? EMPTY_HANDOFF;
   const { filled, total } = handoffProgress(draft);
-  const complete = isHandoffComplete(draft);
+  const maySubmit = state ? canSubmitStage1Handoff(state, draft) : false;
   const showProposal =
     !!state?.handoffProposal &&
     state.coachContext?.handoffPhase === "proposed";
@@ -115,7 +115,9 @@ export function HandoffEditor() {
         <p className="mb-2 text-xs text-amber-900/80">
           {showProposal
             ? "确认上方整理后会填入此处，可微调后提交。"
-            : "右侧聊天探索；教练整理后在此确认。也可选中文字点「使用」填入。"}
+            : maySubmit
+              ? "检查各栏后点下方「提交审题定稿」。"
+              : "右侧先聊审题；教练整理后点「确认整理并填入」，再提交。勿在两侧未写实时提交。"}
         </p>
         {!showProposal && (
           <p className="mb-3 text-xs text-stone-600">{HANDOFF_ANGLE_HELP}</p>
@@ -152,7 +154,7 @@ export function HandoffEditor() {
       </div>
       <button
         type="button"
-        disabled={!complete || loading}
+        disabled={!maySubmit || loading}
         onClick={() => void submitHandoff()}
         className="w-full shrink-0 rounded-lg bg-amber-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-800 disabled:opacity-40"
       >

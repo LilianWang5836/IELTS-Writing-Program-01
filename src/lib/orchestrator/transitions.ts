@@ -40,11 +40,13 @@ function nextBody(body: BodyKey): BodyKey | null {
 }
 
 const BODY1_TASK =
-  "请把 Body1 的论证写出来（可中文、可乱序）；我会帮你拆链条并指出缺口。";
+  "我们一起搭 Body1 论证链（论点→原因→例子→扣题），请按教练当前环节在右侧补充；齐了之后左侧确认链条。";
 const BODY2_TASK =
-  "请把 Body2 的论证写出来；注意与 Body1 不同角度。";
+  "我们一起搭 Body2 论证链；注意与 Body1 不同角度，按教练环节逐环补充。";
 
 export function applyHandoffAdvance(state: SessionState): SessionState {
+  const h = state.handoff!;
+  const prev = state.s2;
   return {
     ...state,
     stage: 2,
@@ -54,13 +56,15 @@ export function applyHandoffAdvance(state: SessionState): SessionState {
       stage1Pass: true,
       subPointsPass: true,
     },
-    s2: state.s2 ?? {
-      body1Point: state.handoff!.body1Point,
-      body2Point: state.handoff!.body2Point,
-      body1Angle: state.handoff!.body1Angle,
-      body2Angle: state.handoff!.body2Angle,
-      body1: defaultBodySegment(),
-      body2: defaultBodySegment(),
+    s2: {
+      body1Point: h.body1Point,
+      body2Point: h.body2Point,
+      body1Angle: h.body1Angle,
+      body2Angle: h.body2Angle,
+      body1:
+        prev?.body1?.chainPhase === "locked" ? prev.body1 : defaultBodySegment(),
+      body2:
+        prev?.body2?.chainPhase === "locked" ? prev.body2 : defaultBodySegment(),
     },
   };
 }
@@ -282,6 +286,15 @@ export function mergeS1FromResult(
   };
 }
 
+function appendDraft(prev: string, userMessage?: string): string {
+  const next = userMessage?.trim() ?? "";
+  if (!next) return prev.trim();
+  const p = prev.trim();
+  if (!p) return next;
+  if (p.includes(next) || next.includes(p)) return p.length >= next.length ? p : next;
+  return `${p}\n${next}`;
+}
+
 export function applyBodyCoachUpdate(
   state: SessionState,
   body: "body1" | "body2",
@@ -297,7 +310,7 @@ export function applyBodyCoachUpdate(
   const updated: BodySegment = {
     ...seg,
     status: "coaching",
-    draft: userMessage ?? seg.draft,
+    draft: appendDraft(seg.draft, userMessage),
     chainSummary: result.logicBreakdown?.chainSummary ?? seg.chainSummary,
     slots: result.logicBreakdown?.slots ?? seg.slots,
     openIssues: openIssue ? [String(openIssue)] : seg.openIssues,

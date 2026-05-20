@@ -27,6 +27,17 @@ export function isHandoffComplete(h: Stage1Handoff): boolean {
   return handoffProgress(h).filled === handoffProgress(h).total;
 }
 
+/** 探索中六栏可逐步显示，但不可提交；仅确认整理后或已锁定可提交 */
+export function canSubmitStage1Handoff(
+  state: SessionState,
+  draft: Stage1Handoff,
+): boolean {
+  if (!isHandoffComplete(draft)) return false;
+  if (state.handoffLocked) return true;
+  const phase = state.coachContext?.handoffPhase;
+  return phase === "editing" || phase === "locked";
+}
+
 /** 角度文本相似（P3 规则 hint） */
 export function anglesTooSimilar(a: string, b: string): boolean {
   const na = normalize(a);
@@ -98,10 +109,16 @@ export function applyHandoffToState(
   state: SessionState,
   h: Stage1Handoff,
 ): SessionState {
+  const prev = state.s2;
   return {
     ...state,
-    handoff: h,
+    handoff: { ...h },
     handoffLocked: true,
+    handoffProposal: undefined,
+    coachContext: {
+      ...state.coachContext,
+      handoffPhase: "locked",
+    },
     s1: {
       questionType: h.questionType ?? state.s1?.questionType ?? "",
       taskUnderstanding: h.taskUnderstanding,
@@ -112,8 +129,10 @@ export function applyHandoffToState(
       body2Point: h.body2Point,
       body1Angle: h.body1Angle,
       body2Angle: h.body2Angle,
-      body1: defaultBodySegment(),
-      body2: defaultBodySegment(),
+      body1:
+        prev?.body1?.chainPhase === "locked" ? prev.body1 : defaultBodySegment(),
+      body2:
+        prev?.body2?.chainPhase === "locked" ? prev.body2 : defaultBodySegment(),
     },
   };
 }

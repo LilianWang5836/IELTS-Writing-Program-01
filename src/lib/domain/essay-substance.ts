@@ -138,19 +138,11 @@ function firstSentence(text: string, maxLen = 90): string {
   return sent.length > maxLen ? `${sent.slice(0, maxLen)}…` : sent;
 }
 
-function defaultBody1Point(employText: string): string {
-  const s = firstSentence(employText);
-  if (s) return s;
-  return "以就业为导向应积累工作技能与实习经历以提升求职竞争力";
+function pointFromSideText(text: string): string {
+  return firstSentence(text);
 }
 
-function defaultBody2Point(academicText: string): string {
-  const s = firstSentence(academicText);
-  if (s) return s;
-  return "走学术道路需持续学习领域知识，系统性积累支撑深造";
-}
-
-/** 从全文聊天规则生成六栏提案（充实度够但 LLM 未返回时） */
+/** 从聊天生成六栏（仅充实度够时调用；不用空泛默认值填坑） */
 export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
   const msgs = userMessages(state);
   const blob = msgs.join("\n");
@@ -164,14 +156,14 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
     taskUnderstanding:
       h?.taskUnderstanding?.trim() || inferTask(blob),
     position: h?.position?.trim() || inferPosition(blob),
-    body1Point: h?.body1Point?.trim() || defaultBody1Point(employText),
+    body1Point: h?.body1Point?.trim() || pointFromSideText(employText),
     body1Angle:
       h?.body1Angle?.trim() ||
-      (employText ? "就业市场与职场技能" : "就业与技能培养"),
-    body2Point: h?.body2Point?.trim() || defaultBody2Point(academicText),
+      (employText.length >= 12 ? "就业市场与职场技能" : ""),
+    body2Point: h?.body2Point?.trim() || pointFromSideText(academicText),
     body2Angle:
       h?.body2Angle?.trim() ||
-      (academicText ? "学术深造与知识体系" : "学术与知识积累"),
+      (academicText.length >= 12 ? "学术深造与知识体系" : ""),
   };
 }
 
@@ -300,14 +292,9 @@ export function proposedHandoffFromResult(
 export function extractProposedHandoffRule(
   state: SessionState,
 ): Stage1Handoff | null {
-  const fromChat = buildHandoffFromChat(state);
-  if (isHandoffProposalComplete(fromChat)) return fromChat;
-
   const substance = assessEssaySubstance(state);
-  if (substance.sufficient && isHandoffProposalComplete(fromChat)) {
-    return fromChat;
-  }
-
+  if (!substance.sufficient) return null;
+  const fromChat = buildHandoffFromChat(state);
   return isHandoffProposalComplete(fromChat) ? fromChat : null;
 }
 

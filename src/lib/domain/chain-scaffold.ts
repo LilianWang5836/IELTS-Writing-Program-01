@@ -110,6 +110,7 @@ export function isReasonSentence(s: string, body: WorkshopBodyKey): boolean {
   if (t.length < 10 || isStanceOnlySentence(t)) return false;
 
   const labeledReason = /^原因\s*[:：]/i.test(raw);
+  if (hasExampleLead(raw) && !labeledReason) return false;
   const hasCausal =
     /因为|所以|因此|才能|有助于|使得|由于|需要|差异|不同于|无法从|所以才|只有.*才/.test(
       t,
@@ -153,7 +154,7 @@ function linkQualityScore(s: string, body: WorkshopBodyKey): number {
   return score;
 }
 
-function hasExampleLead(s: string): boolean {
+export function hasExampleLead(s: string): boolean {
   return /例如|比如|举例\s*[:：]|比方说/.test(s.trim());
 }
 
@@ -449,10 +450,16 @@ export function mergeSlots(
   a?: ParagraphSlots,
   b?: ParagraphSlots,
 ): ParagraphSlots {
+  const prevReason = a?.reason?.trim();
   const out: ParagraphSlots = { ...a };
   for (const k of ["claim", "reason", "elaboration", "support", "example", "link"] as ParagraphSlot[]) {
     const v = b?.[k]?.trim();
     if (v) out[k] = v;
+  }
+  const nr = out.reason?.trim();
+  const ne = out.example?.trim();
+  if (nr && ne && nr === ne && prevReason && prevReason !== ne) {
+    out.reason = prevReason;
   }
   return dedupeSlots(out);
 }

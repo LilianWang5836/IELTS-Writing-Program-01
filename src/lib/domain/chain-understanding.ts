@@ -1,6 +1,7 @@
 import {
   buildSlotsFromChat,
   exampleFollowUpCoachPrompt,
+  hasExampleLead,
   isChainStepFilled,
   isExampleSentence,
   isLinkSentence,
@@ -133,7 +134,12 @@ function upsertRoleSlot(
   body: WorkshopBodyKey,
 ): void {
   if (role === "reason") {
-    if (isReasonSentence(text, body)) slots.reason = text;
+    const raw = text.trim();
+    if (hasExampleLead(raw) && !/^原因\s*[:：]/i.test(raw)) return;
+    if (!isReasonSentence(text, body)) return;
+    const ex = slots.example?.trim();
+    if (ex && ex === raw) return;
+    slots.reason = text;
     return;
   }
   if (role === "example") {

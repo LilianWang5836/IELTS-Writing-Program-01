@@ -119,20 +119,6 @@ export function assessParagraphSubstance(
   if (claimReasonRedundant(slots)) {
     gaps.push("论点与原因像在重复，请补不同功能的一层");
   }
-  if (
-    slots?.reason?.trim() &&
-    slots?.example?.trim() &&
-    textsTooSimilar(slots.reason, slots.example)
-  ) {
-    gaps.push("原因与例子不宜同一句，请各写一层");
-  }
-  if (
-    slots?.example?.trim() &&
-    slots?.link?.trim() &&
-    textsTooSimilar(slots.example, slots.link)
-  ) {
-    gaps.push("举例与扣题不宜同一句，请各写一层");
-  }
   if (slots?.example?.trim() && STANCE_ONLY_RE.test(slots.example)) {
     gaps.push("举例须是具体场景（实习/项目等），不能用「合理/角度」代替");
   }

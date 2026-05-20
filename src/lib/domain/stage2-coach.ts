@@ -142,7 +142,7 @@ export function postProcessStage2(
   const progressBlock = formatChainProgress(workingSlots, buildStep);
 
   const proposalFromLlm = chainProposalFromResult(sanitized, body);
-  const slotsForSubstance = mergeSlots(workingSlots, proposalFromLlm?.slots);
+  const slotsForSubstance = mergeSlots(workingSlots, proposalFromLlm?.slots, body);
   const substance = assessParagraphSubstance(
     nextState,
     body,

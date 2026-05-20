@@ -243,7 +243,7 @@ export function applyPrimaryRingWrite(
     out.example = t;
     return out;
   }
-  if (isLinkSentence(t, body)) {
+  if (isLinkSentence(t, body, out.claim?.trim())) {
     out.link = t;
   }
   return out;

@@ -57,8 +57,22 @@ export function body1TaskMessage(body1Point?: string, body1Angle?: string): stri
 
 const BODY1_TASK =
   "我们一起搭 Body1 论证链：论点已来自审题，请按环节补原因→举例→扣题；齐了之后左侧确认链条。";
+export function body2TaskMessage(body2Point?: string, body2Angle?: string): string {
+  const p = body2Point?.trim();
+  const a = body2Angle?.trim();
+  const anchor = p
+    ? `审题分论点：「${p}」${a ? `（${a}）` : ""}。`
+    : "";
+  return [
+    anchor,
+    "我们一起搭 Body2 论证链：论点已来自审题，请按环节补原因→举例→扣题；齐了之后左侧确认链条。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 const BODY2_TASK =
-  "我们一起搭 Body2 论证链；注意与 Body1 不同角度，按教练环节逐环补充。";
+  "我们一起搭 Body2 论证链：论点已来自审题，请按环节补原因→举例→扣题；齐了之后左侧确认链条。";
 
 export function applyHandoffAdvance(state: SessionState): SessionState {
   const h = state.handoff!;
@@ -270,7 +284,10 @@ export function bodyTaskAfterHandoff(state?: SessionState): string {
   return BODY1_TASK;
 }
 
-export function bodyTaskAfterBody1(): string {
+export function bodyTaskAfterBody1(state?: SessionState): string {
+  const p = state?.s2?.body2Point ?? state?.handoff?.body2Point;
+  const a = state?.s2?.body2Angle ?? state?.handoff?.body2Angle;
+  if (p?.trim()) return body2TaskMessage(p, a);
   return BODY2_TASK;
 }
 

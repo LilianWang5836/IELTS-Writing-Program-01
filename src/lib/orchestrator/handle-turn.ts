@@ -328,7 +328,7 @@ export async function handleConfirmChainProposal(
 
   if (body === "body1") {
     s = applyStage2Body1Advance(s, synthetic, proposal.draft);
-    const reply = `Body1 论证链已确认。${bodyTaskAfterBody1()}`;
+    const reply = `Body1 论证链已确认。${bodyTaskAfterBody1(s)}`;
     replies.push(reply);
     s = appendChat(s, "assistant", reply);
     return {

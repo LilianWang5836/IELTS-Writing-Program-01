@@ -13,7 +13,9 @@ import {
   isChainStepFilled,
   isLinkSentence,
   isReasonSentence,
+  isTooSimilarToClaim,
   isWeakExampleSentence,
+  looksLikeHandoffClaim,
 } from "../src/lib/domain/chain-scaffold.ts";
 import {
   buildChainBaselineSlots,
@@ -214,6 +216,17 @@ ok(
   /分论点|审题|Claim|原因|举例|收束/.test(metaDecision.coach.mirror || ""),
   "meta 镜像说明定稿/环节",
 );
+
+const b2Claim =
+  "大学应为走学术道路的学生提供持续学习感兴趣领域并系统积累知识的机会";
+const b2ClaimNorm = "走学术道路者应持续学习感兴趣领域并积累系统知识";
+const b2Link =
+  "因此，系统打好专业基础才能为长期深造与领域研究提供支撑";
+
+ok(looksLikeHandoffClaim(b2Claim, "body2"), "Body2 分论点句式不算 Link");
+ok(!isLinkSentence(b2Claim, "body2", b2ClaimNorm), "Body2 分论点不写入 link 槽");
+ok(isLinkSentence(b2Link, "body2", b2ClaimNorm), "真正收束句可作 Link");
+ok(!isTooSimilarToClaim(b2Link, b2ClaimNorm, "body2"), "Link 与 claim 不判同句");
 
 if (fail) {
   process.exit(1);

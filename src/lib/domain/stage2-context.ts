@@ -16,16 +16,28 @@ const COACH_COUNTER_QUESTION_RE =
   /为什么.*(还|要)|我不是.*(已经|都)|我这不是已经|还需要解释什么|什么意思|这是什么意思|你为什么这么问|为什么要我再|已经回答了|已经解释了/i;
 
 const STAGE2_ENTRY_RE =
-  /搭\s*Body1|论证链|工作技能为主|S2_2|一起搭/i;
+  /搭\s*Body1|搭\s*Body2|论证链|工作技能为主|S2_2|S2_3|一起搭/i;
 
-/** Stage 2 起算点之后的用户消息（不含 Stage 1 审题探索） */
-export function stage2UserMessages(state: SessionState): string[] {
+const BODY1_ENTRY_RE = /搭\s*Body1|S2_2/i;
+const BODY2_ENTRY_RE = /搭\s*Body2|S2_3/i;
+
+/** Stage 2 起算点之后的用户消息（按 Body 工作坊入口切，不含更早阶段） */
+export function stage2UserMessages(
+  state: SessionState,
+  body?: WorkshopBodyKey,
+): string[] {
   const history = state.chatHistory;
   let startIdx = 0;
   if (state.handoffLocked || state.stage >= 2) {
+    const entryRe =
+      body === "body2"
+        ? BODY2_ENTRY_RE
+        : body === "body1"
+          ? BODY1_ENTRY_RE
+          : STAGE2_ENTRY_RE;
     for (let i = 0; i < history.length; i++) {
       const m = history[i];
-      if (m.role === "assistant" && STAGE2_ENTRY_RE.test(m.content)) {
+      if (m.role === "assistant" && entryRe.test(m.content)) {
         startIdx = i + 1;
       }
     }
@@ -108,7 +120,7 @@ export function userBlobForWorkshopBody(
   body: WorkshopBodyKey,
 ): string {
   const seg = body === "body1" ? state.s2?.body1 : state.s2?.body2;
-  const msgs = stage2UserMessages(state).filter((m) =>
+  const msgs = stage2UserMessages(state, body).filter((m) =>
     isMessageRelevantToBody(m, body),
   );
   return [seg?.draft?.trim() ?? "", ...msgs].filter(Boolean).join("\n");

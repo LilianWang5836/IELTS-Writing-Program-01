@@ -258,6 +258,59 @@ function hasOutcomeForward(t: string, body: WorkshopBodyKey): boolean {
   );
 }
 
+/** 审题分论点句式（无因此/所以 收束），不得当作 Link */
+export function looksLikeHandoffClaim(s: string, body: WorkshopBodyKey): boolean {
+  const t = s.trim().replace(/^分论点\s*[:：]\s*/i, "");
+  if (!t) return false;
+  if (hasExampleLead(t)) return false;
+  if (/因此|所以|从而|这样一来|换言之|可见|总之|综上/.test(t)) {
+    return false;
+  }
+  if (body === "body2") {
+    return (
+      /^走学术道路者应/.test(t) ||
+      /^大学应|^高校应|^应以|^应该.{0,8}(提供|侧重|鼓励)/.test(t)
+    );
+  }
+  return /^大学应|^应以|^应该.{0,8}(提供|侧重|让学生)/.test(t);
+}
+
+function slotTextsTooSimilar(a: string, b: string): boolean {
+  const na = a.toLowerCase().replace(/\s+/g, "").replace(/^分论点[:：]/, "");
+  const nb = b.toLowerCase().replace(/\s+/g, "").replace(/^分论点[:：]/, "");
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (na.length > 14 && nb.length > 14 && (na.includes(nb) || nb.includes(na))) {
+    return true;
+  }
+  return false;
+}
+
+function normSlotCompare(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/^分论点[:：]?/i, "");
+}
+
+export function isTooSimilarToClaim(
+  text: string,
+  claim: string | undefined,
+  body: WorkshopBodyKey,
+): boolean {
+  const t = text?.trim() ?? "";
+  const c = claim?.trim() ?? "";
+  if (!t || !c) return false;
+  if (looksLikeHandoffClaim(t, body)) return true;
+  const nt = normSlotCompare(t);
+  const nc = normSlotCompare(c);
+  if (nt === nc) return true;
+  if (nt.length > 12 && nc.length > 12 && (nt.includes(nc) || nc.includes(nt))) {
+    return true;
+  }
+  return false;
+}
+
 function looksLikeMechanismNotLink(s: string, body: WorkshopBodyKey): boolean {
   const t = s.trim();
   if (hasExampleLead(t)) return false;
@@ -268,9 +321,16 @@ function looksLikeMechanismNotLink(s: string, body: WorkshopBodyKey): boolean {
   return !hasOutcomeForward(t, body);
 }
 
-export function isLinkSentence(s: string, body: WorkshopBodyKey): boolean {
-  const t = s.trim();
+export function isLinkSentence(
+  s: string,
+  body: WorkshopBodyKey,
+  claim?: string,
+): boolean {
+  const t = s.trim().replace(/^分论点\s*[:：]\s*/i, "");
   if (t.length < 10 || isStanceOnlySentence(t)) return false;
+  if (/^分论点\s*[:：]/i.test(s.trim())) return false;
+  if (looksLikeHandoffClaim(t, body)) return false;
+  if (claim && isTooSimilarToClaim(t, claim, body)) return false;
   if (/^因为/.test(t) && !/就业|求职|深造|学术|面试|工作/.test(t)) {
     return false;
   }
@@ -293,14 +353,12 @@ export function isLinkSentence(s: string, body: WorkshopBodyKey): boolean {
     );
   }
 
+  if (!linkLead) return false;
   if (hasOutcomeForward(t, body)) return true;
-  if (linkLead && /(?:落到|支撑).*(?:深造|读研|学术|科研)/.test(t)) {
+  if (/(?:落到|支撑|才能|有助于).*(?:深造|读研|学术|科研|理论体系|专业基础)/.test(t)) {
     return true;
   }
-  return (
-    /(?:才能|有助于|从而|支撑).*(?:深造|读研|学术|科研)/.test(t) ||
-    (/(?:深造|读研|学术道路)/.test(t) && /知识|积累|系统/.test(t))
-  );
+  return /(?:才能|有助于|从而|支撑).*(?:深造|读研|学术|科研)/.test(t);
 }
 
 export function reasonCoachPrompt(
@@ -377,7 +435,7 @@ export function buildSlotsFromChat(
     slots.claim = normalizeHandoffClaimForChain(point, body);
   }
 
-  const msgs = stage2UserMessages(state).filter(
+  const msgs = stage2UserMessages(state, body).filter(
     (m) => m.length >= 10,
   );
 
@@ -421,7 +479,7 @@ export function buildSlotsFromChat(
           bestExample = { text: sent.trim(), score: sc };
         }
       }
-      if (isLinkSentence(sent, body)) {
+      if (isLinkSentence(sent, body, slots.claim ?? undefined)) {
         const sc = linkQualityScore(sent, body);
         const cand = sent.trim();
         if (
@@ -465,10 +523,12 @@ export function isChainStepFilled(
   if (step === "link") {
     const link = slots.link?.trim() ?? "";
     const reason = slots.reason?.trim() ?? "";
+    const claim = slots.claim?.trim() ?? "";
     return (
       !!link &&
       link !== reason &&
-      isLinkSentence(link, body)
+      isLinkSentence(link, body, claim) &&
+      !isTooSimilarToClaim(link, claim, body)
     );
   }
   return step === "ready";
@@ -487,7 +547,13 @@ export function areChainSlotsSemanticallyValid(
   }
   const link = slots.link?.trim() ?? "";
   const reason = slots.reason?.trim() ?? "";
-  if (!link || link === reason || !isLinkSentence(link, body)) {
+  const claim = slots.claim?.trim() ?? "";
+  if (
+    !link ||
+    link === reason ||
+    !isLinkSentence(link, body, claim) ||
+    isTooSimilarToClaim(link, claim, body)
+  ) {
     return false;
   }
   return true;
@@ -496,12 +562,23 @@ export function areChainSlotsSemanticallyValid(
 export function mergeSlots(
   a?: ParagraphSlots,
   b?: ParagraphSlots,
+  body: WorkshopBodyKey = "body1",
 ): ParagraphSlots {
   const prevReason = a?.reason?.trim();
   const out: ParagraphSlots = { ...a };
+  const claim = out.claim?.trim();
   for (const k of ["claim", "reason", "elaboration", "support", "example", "link"] as ParagraphSlot[]) {
     const v = b?.[k]?.trim();
-    if (v) out[k] = v;
+    if (!v) continue;
+    if (k === "link") {
+      if (
+        !isLinkSentence(v, body, claim) ||
+        isTooSimilarToClaim(v, claim, body)
+      ) {
+        continue;
+      }
+    }
+    out[k] = v;
   }
   const nr = out.reason?.trim();
   const ne = out.example?.trim();
@@ -608,6 +685,19 @@ export function getNextChainBuildStepLenient(
   return { step: "ready", coachPrompt: "" };
 }
 
+function clipProgressVal(text: string, max = 88): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const slice = t.slice(0, max);
+  const punct = Math.max(
+    slice.lastIndexOf("。"),
+    slice.lastIndexOf("，"),
+    slice.lastIndexOf("；"),
+  );
+  if (punct >= 24) return `${slice.slice(0, punct + 1)}…`;
+  return `${slice}…`;
+}
+
 export function formatChainProgress(
   slots: ParagraphSlots,
   currentStep: ChainBuildStep,
@@ -622,7 +712,7 @@ export function formatChainProgress(
       step === currentStep ? "→" : val?.trim() ? "✓" : "○";
     const suffix = step === "claim" && val ? "（来自审题）" : "";
     lines.push(
-      `${mark} ${label}：${val?.trim() ? val.trim().slice(0, 60) : "待补"}${suffix}`,
+      `${mark} ${label}：${val?.trim() ? clipProgressVal(val) : "待补"}${suffix}`,
     );
   }
   return lines.join("\n");
@@ -653,7 +743,7 @@ export function buildChainProposalFromChat(
 ): ChainProposal {
   const slots = buildSlotsFromChat(state, body);
   const seg = body === "body1" ? state.s2?.body1 : state.s2?.body2;
-  const merged = mergeSlots(seg?.slots, slots);
+  const merged = mergeSlots(seg?.slots, slots, body);
   const workshop = userBlobForWorkshopBody(state, body);
   const chainSummary = [
     merged.claim,

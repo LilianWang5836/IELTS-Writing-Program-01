@@ -12,6 +12,11 @@ export function shouldAdvance(
   // Stage 1 聊天探索：永不因 LLM 自动推进（仅 submit_handoff）
   if (prevSubStep === "S1_EVAL") return false;
 
+  // Stage 2：仅 confirm_chain_proposal 推进，LLM pass 不自动切步
+  if (prevSubStep === "S2_2_BODY1" || prevSubStep === "S2_3_BODY2") {
+    return false;
+  }
+
   // Stage 3.2：句子 pass 不直接跳 module（需确认写入）
   if (prevSubStep === "S3_2_MODULE" && result.verdict === "pass") {
     return false;
@@ -32,5 +37,8 @@ export function markerWhenAdvance(
   result: LlmTurnResult,
   advance: boolean,
 ): boolean {
+  if (prevSubStep === "S2_2_BODY1" || prevSubStep === "S2_3_BODY2") {
+    return false;
+  }
   return advance && (result.verdict === "pass" || result.advance === true);
 }

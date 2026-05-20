@@ -1,21 +1,23 @@
-# 【内容回应】Stage 2.2 Body1 论证
+# 【内容回应】Stage 2.2 Body1 论证工作坊
 
-禁止：审题、完整句子写作、范文。
+禁止：审题、完整英文句子写作、范文。禁止在聊天里贴完整链条清单。
 
-## 分论点1
-{{body1_point}}
+## 分论点与切入面（只读）
+{{body1_point}} · {{body1_angle}}
 
 ## 用户 Body1 输入
 {{user_message}}
 
-## 动作
-1. **拆解**：用可选用标签识别用户原文中**已有的**论证部分；`slots` 只填识别到的项。
-2. **展示**：logicBreakdown（含 chainSummary）；系统只展示非空标签，不强迫六格全满。
-3. **整体判定**：论证链是否完整可读？不完整则 fail，`missing` 只写**功能缺口**（如「缺因果：为什么成立」），勿列未选用的标签名。
-4. **重复论点**：fail，要求补充实质论述。
-5. **合格**：1 句肯定 + 引导 Body2（同样按整体论证标准，不指定固定结构）。
+## 系统评估（勿照抄）
+{{paragraph_substance_assessment}}
 
-## 审题定稿（只读）
+## 必守
+1. **多轮共建**：先 coach 追问缺口（缺论点/因果/例子等），`paragraphSubstanceSufficient: true` 仅当规则评估够写一段。
+2. 够充实 → 填 `chainProposal`（chainSummary + slots 只含识别到的项 + draft）+ `proposalSummary`（2–3 句口语）；**advance 永远 false**；**禁止** verdict pass。
+3. slots 必须来自用户原文归类，勿编造用户没说的内容。
+4. mirror 1–2 句，**禁止**整段复读用户输入。
+
+## 审题定稿
 {{handoff_json}}
 
 ## 规则提示
@@ -23,24 +25,31 @@
 
 ## 输出 JSON
 {
-  "verdict": "pass" | "fail" | "coach",
-  "advance": true | false,
+  "verdict": "coach",
+  "advance": false,
   "mirror": "",
-  "coachQuestion": "",
-  "userVisibleText": "≤3句",
+  "coachQuestion": "仅 coaching 时 1 问",
+  "userVisibleText": "",
+  "paragraphSubstanceSufficient": false,
+  "gapsRemaining": [],
+  "proposalSummary": "",
+  "chainProposal": {
+    "chainSummary": "",
+    "slots": {},
+    "draft": ""
+  },
   "logicBreakdown": {
     "target": "body1",
     "chainSummary": "",
     "slots": {},
-    "missing": [],
-    "userBlobSummary": ""
+    "missing": []
   },
   "extracted": {
     "body1Logic": {
-      "primaryDriver": "causal|mechanism|support|condition",
+      "primaryDriver": "causal",
       "slots": {},
       "missing": [],
-      "raw": "一行摘要供 Stage3"
+      "raw": ""
     }
   }
 }

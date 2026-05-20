@@ -1,5 +1,6 @@
 "use client";
 
+import { ArgumentChainEditor } from "@/components/ArgumentChainEditor";
 import { HandoffEditor } from "@/components/HandoffEditor";
 import { useWritingStore } from "@/lib/store/writing-store";
 
@@ -14,7 +15,10 @@ export function WritingEditor() {
   const question = questions.find((q) => q.id === selectedQuestionId);
 
   const isStage1 = state?.stage === 1;
-  const showNotes = state && state.stage >= 2;
+  const isStage2 =
+    state?.stage === 2 &&
+    (state.subStep === "S2_2_BODY1" || state.subStep === "S2_3_BODY2");
+  const showNotes = state && state.stage >= 2 && !isStage2;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-panel-left">
@@ -43,6 +47,12 @@ export function WritingEditor() {
       {isStage1 && (
         <section className="min-h-0 flex-1 overflow-y-auto px-4 py-3 scrollbar-thin">
           <HandoffEditor />
+        </section>
+      )}
+
+      {isStage2 && (
+        <section className="min-h-0 flex-1 overflow-y-auto px-4 py-3 scrollbar-thin">
+          <ArgumentChainEditor />
         </section>
       )}
 

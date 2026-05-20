@@ -123,5 +123,6 @@ export function defaultBodySegment() {
     status: "coaching" as const,
     draft: "",
     openIssues: [] as string[],
+    chainPhase: "coaching" as const,
   };
 }

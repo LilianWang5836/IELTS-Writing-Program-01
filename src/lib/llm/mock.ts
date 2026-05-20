@@ -149,64 +149,137 @@ export function mockLlmResponse(
       };
 
     case "P2_2": {
-      const messy = hasUserText && context.userMessage!.length > 40;
-      if (messy && !msg.includes("because") && !msg.includes("因为")) {
+      const raw = context.userMessage ?? "";
+      const substanceReady =
+        raw.length >= 55 &&
+        (/因为|所以|才能|有助于/.test(raw) || /because|therefore/.test(msg)) &&
+        (/实习|项目|技能|就业|招聘|雇主/.test(raw) ||
+          /intern|project|employ|skill/.test(msg));
+
+      if (!hasUserText || raw.length < 25) {
         return {
           verdict: "coach",
           advance: false,
-          mirror: "你已给出分论点方向。",
-          coachQuestion: "为什么这个观点成立？请补一层因果。",
-          userVisibleText: "论点有了，还缺「为什么成立」。",
-          logicBreakdown: {
-            target: "body1",
-            chainSummary: "仅有观点，链条未闭环",
-            slots: { claim: "（已从原文提取）" },
-            missing: ["reason"],
-          },
+          mirror: "先从 Body1 分论点说起。",
+          coachQuestion: "大学提供工作技能，如何帮助学生尽快就业？用几句话说明。",
+          userVisibleText: "先从 Body1 分论点说起。",
+          paragraphSubstanceSufficient: false,
         };
       }
+
+      if (!substanceReady) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "方向有了，还可以再具体一点。",
+          coachQuestion:
+            "请补：为什么技能/实习能提升竞争力？举一个具体例子（项目或实习）。",
+          userVisibleText: "方向有了，还可以再具体一点。",
+          paragraphSubstanceSufficient: false,
+        };
+      }
+
+      const proposal = {
+        chainSummary: "技能与实习积累 → 求职更有竞争力",
+        slots: {
+          claim: "大学应提供可上岗的工作技能",
+          reason: "雇主看重即战力和项目经历",
+          example: raw.includes("实习") ? "实习与项目经验" : "实践项目",
+          link: "在求职中获得竞争优势",
+        },
+        draft: raw,
+      };
       return {
-        verdict: "pass",
-        advance: true,
-        userVisibleText: "Body1 论证链已可读。",
+        verdict: "coach",
+        advance: false,
+        mirror: "就业侧论证够了，我帮你整理成链条。",
+        coachQuestion: "",
+        userVisibleText: "就业侧论证够了，我帮你整理成链条。",
+        paragraphSubstanceSufficient: true,
+        proposalSummary: "你写了技能/实习如何带来求职优势，可以定稿这段链条。",
+        chainProposal: proposal,
         logicBreakdown: {
           target: "body1",
-          chainSummary: "观点→原因→例证，完整",
-          slots: {
-            claim: "workplace skills matter",
-            reason: "employers need ready graduates",
-            example: "internship projects",
-          },
+          chainSummary: proposal.chainSummary,
+          slots: proposal.slots,
           missing: [],
         },
         extracted: {
           body1Logic: {
             primaryDriver: "causal",
-            raw: context.userMessage,
+            slots: proposal.slots,
+            raw,
           },
         },
       };
     }
 
-    case "P2_3":
+    case "P2_3": {
+      const raw = context.userMessage ?? "";
+      const weakAcademic =
+        raw.length < 50 ||
+        (!/研究|论文|导师|课程|领域|深造|知识|学术/.test(raw) &&
+          /时间|学习/.test(raw));
+
+      if (!hasUserText || raw.length < 20) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "来说说 Body2 学术侧。",
+          coachQuestion:
+            "走学术道路时，「纯粹知识」如何支撑深造？别只说学习要时间。",
+          userVisibleText: "来说说 Body2 学术侧。",
+          paragraphSubstanceSufficient: false,
+        };
+      }
+
+      if (weakAcademic) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "学术方向有了，但还偏薄。",
+          coachQuestion:
+            "请补：知识/课程/研究兴趣如何支撑读研或科研，而不是只说「需要时间」。",
+          userVisibleText: "学术方向有了，但还偏薄。",
+          paragraphSubstanceSufficient: false,
+        };
+      }
+
+      const proposal = {
+        chainSummary: "持续深耕领域知识 → 才能进入学术深造路径",
+        slots: {
+          claim: "走学术道路需持续学习感兴趣领域",
+          reason: "系统知识积累是研究训练的基础",
+          support: "与就业导向的技能培养形成不同路径",
+          link: "支撑长期学术深造",
+        },
+        draft: raw,
+      };
       return {
-        verdict: "pass",
-        advance: true,
-        userVisibleText: "两段论证链均完整，进入逐句写作。",
+        verdict: "coach",
+        advance: false,
+        mirror: "学术侧论证可以整理了。",
+        coachQuestion: "",
+        userVisibleText: "学术侧论证可以整理了。",
+        paragraphSubstanceSufficient: true,
+        proposalSummary:
+          "你说明了知识积累与学术路径的关系，与 Body1 就业维度不同。",
+        chainProposal: proposal,
         logicBreakdown: {
           target: "body2",
-          chainSummary: "与 Body1 维度区分清晰",
-          slots: {
-            claim: "academic path",
-            reason: "research depth",
-            support: "contrast employability focus",
-          },
+          chainSummary: proposal.chainSummary,
+          slots: proposal.slots,
           missing: [],
         },
         extracted: {
-          body2Logic: { primaryDriver: "causal", raw: context.userMessage },
+          body2Logic: {
+            primaryDriver: "causal",
+            slots: proposal.slots,
+            raw,
+          },
         },
       };
+    }
 
     case "P3_1":
       return {

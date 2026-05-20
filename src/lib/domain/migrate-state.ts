@@ -25,22 +25,30 @@ export function migrateSessionState(raw: SessionState): SessionState {
   }
 
   if (s.s2) {
+    const b1 = s.s2.body1 ?? {
+      ...defaultBodySegment(),
+      draft: s.s2.body1Logic?.raw ?? "",
+      slots: s.s2.body1Logic?.slots,
+      status: s.markers.subBody1Pass ? "ready" : "coaching",
+    };
+    const b2 = s.s2.body2 ?? {
+      ...defaultBodySegment(),
+      draft: s.s2.body2Logic?.raw ?? "",
+      slots: s.s2.body2Logic?.slots,
+      status: s.markers.stage2Pass ? "ready" : "coaching",
+    };
+    if (!b1.chainPhase) {
+      b1.chainPhase = b1.status === "ready" ? "locked" : "coaching";
+    }
+    if (!b2.chainPhase) {
+      b2.chainPhase = b2.status === "ready" ? "locked" : "coaching";
+    }
     s.s2 = {
       ...s.s2,
       body1Angle: s.s2.body1Angle ?? "",
       body2Angle: s.s2.body2Angle ?? "",
-      body1: s.s2.body1 ?? {
-        ...defaultBodySegment(),
-        draft: s.s2.body1Logic?.raw ?? "",
-        slots: s.s2.body1Logic?.slots,
-        status: s.markers.subBody1Pass ? "ready" : "coaching",
-      },
-      body2: s.s2.body2 ?? {
-        ...defaultBodySegment(),
-        draft: s.s2.body2Logic?.raw ?? "",
-        slots: s.s2.body2Logic?.slots,
-        status: s.markers.stage2Pass ? "ready" : "coaching",
-      },
+      body1: b1,
+      body2: b2,
     };
   }
 

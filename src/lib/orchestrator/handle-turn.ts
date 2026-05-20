@@ -1,4 +1,4 @@
-import { STAGE1_OPENING, MARKERS, MODULE_LABELS } from "@/lib/domain/constants";
+import { STAGE1_OPENING, MODULE_LABELS } from "@/lib/domain/constants";
 import { applyHandoffToState, validateHandoff } from "@/lib/domain/handoff";
 import { getCurrentModule } from "@/lib/domain/module-compiler";
 import { buildRuleHintsBlock, ruleHintsForHandoff } from "@/lib/domain/rule-hints";
@@ -12,8 +12,15 @@ import type {
   SessionState,
   Stage1Handoff,
 } from "@/lib/domain/types";
+import { logicBreakdownFromProposal } from "@/lib/domain/chain-proposal";
 import { assessEssaySubstance } from "@/lib/domain/essay-substance";
+import { assessParagraphSubstance } from "@/lib/domain/paragraph-substance";
 import { assessExplorationContent, postProcessStage1 } from "@/lib/domain/stage1-coach";
+import {
+  applyChainProposalToState,
+  postProcessStage2,
+} from "@/lib/domain/stage2-coach";
+import type { BodyKey, WorkshopBodyKey } from "@/lib/domain/types";
 import { formatCoachDisplay } from "@/lib/llm/guard";
 import { callLlm } from "@/lib/llm/client";
 import { buildFullPrompt } from "@/lib/prompts/loader";
@@ -110,6 +117,18 @@ function buildVars(
       handoffPhase: state.coachContext?.handoffPhase ?? "exploring",
     });
   }
+  if (state.subStep === "S2_2_BODY1" || state.subStep === "S2_3_BODY2") {
+    const body: WorkshopBodyKey = state.subStep === "S2_2_BODY1" ? "body1" : "body2";
+    const substance = assessParagraphSubstance(state, body, userMessage);
+    const seg = body === "body1" ? state.s2?.body1 : state.s2?.body2;
+    base.paragraph_substance_assessment = JSON.stringify({
+      substanceSufficient: substance.sufficient,
+      gaps: substance.gaps,
+      chainPhase: seg?.chainPhase ?? "coaching",
+      bodyPoint: body === "body1" ? state.s2?.body1Point : state.s2?.body2Point,
+      bodyAngle: body === "body1" ? state.s2?.body1Angle : state.s2?.body2Angle,
+    });
+  }
 
   if (state.s3) {
     const body = state.s3.currentBody;
@@ -170,6 +189,16 @@ async function processLlmTurn(
     return { reply, state: nextState, autoContinue: false };
   }
 
+  if (prevSubStep === "S2_2_BODY1" || prevSubStep === "S2_3_BODY2") {
+    const body: BodyKey = prevSubStep === "S2_2_BODY1" ? "body1" : "body2";
+    const processed = postProcessStage2(state, result, body, userMessage);
+    result = processed.result;
+    nextState = applyBodyCoachUpdate(processed.state, body, result, userMessage);
+    const reply = formatCoachDisplay(result, { stage2: true });
+    nextState = appendChat(nextState, "assistant", reply);
+    return { reply, state: nextState, autoContinue: false };
+  }
+
   let reply = formatCoachDisplay(result);
   const advance = shouldAdvance(state, prevSubStep, result);
 
@@ -178,21 +207,7 @@ async function processLlmTurn(
     if (m) reply = appendMarker(reply, m);
   }
 
-  if (prevSubStep === "S2_2_BODY1") {
-    if (advance) {
-      nextState = applyStage2Body1Advance(nextState, result, userMessage);
-      reply = `${reply}\n\n${bodyTaskAfterBody1()}`;
-    } else {
-      nextState = applyBodyCoachUpdate(nextState, "body1", result, userMessage);
-    }
-  } else if (prevSubStep === "S2_3_BODY2") {
-    if (advance) {
-      nextState = applyStage2Body2Advance(nextState, result, userMessage);
-      autoContinue = true;
-    } else {
-      nextState = applyBodyCoachUpdate(nextState, "body2", result, userMessage);
-    }
-  } else if (prevSubStep === "S3_1_BLUEPRINT" && advance) {
+  if (prevSubStep === "S3_1_BLUEPRINT" && advance) {
     nextState = applyBlueprint(nextState, result);
     autoContinue = true;
   } else if (prevSubStep === "S3_2_MODULE" && nextState.s3) {
@@ -252,6 +267,78 @@ export async function handleInit(state: SessionState): Promise<TurnResponse> {
     state: s,
     requiresConfirm: false,
     canSubmit: true,
+  };
+}
+
+export async function handleConfirmChainProposal(
+  state: SessionState,
+  body: WorkshopBodyKey,
+): Promise<TurnResponse> {
+  const s0 = ensureMigrated(state);
+  const seg = body === "body1" ? s0.s2?.body1 : s0.s2?.body2;
+  const proposal = seg?.chainProposal;
+
+  if (!proposal || seg?.chainPhase !== "proposed") {
+    return {
+      replies: ["请先与教练聊清论证，待左侧出现「教练整理链条」后再确认。"],
+      state: s0,
+      requiresConfirm: false,
+      canSubmit: true,
+    };
+  }
+
+  let s = applyChainProposalToState(s0, body, proposal);
+  const logicKey = body === "body1" ? "body1Logic" : "body2Logic";
+  const synthetic: LlmTurnResult = {
+    verdict: "pass",
+    advance: true,
+    userVisibleText: "",
+    logicBreakdown: logicBreakdownFromProposal(proposal, body),
+    extracted: {
+      [logicKey]: {
+        primaryDriver: "causal",
+        slots: proposal.slots,
+        missing: [],
+        raw: proposal.draft,
+      },
+    },
+  };
+
+  const replies: string[] = [];
+
+  if (body === "body1") {
+    s = applyStage2Body1Advance(s, synthetic, proposal.draft);
+    const reply = `Body1 论证链已确认。${bodyTaskAfterBody1()}`;
+    replies.push(reply);
+    s = appendChat(s, "assistant", reply);
+    return {
+      replies,
+      state: s,
+      requiresConfirm: false,
+      canSubmit: true,
+    };
+  }
+
+  s = applyStage2Body2Advance(s, synthetic, proposal.draft);
+  let reply = "Body2 论证链已确认，正在准备逐句写作…";
+  replies.push(reply);
+  s = appendChat(s, "assistant", reply);
+
+  const bp = await processLlmTurn(s, "P3_1");
+  replies.push(bp.reply);
+  s = bp.state;
+
+  if (bp.autoContinue && s.subStep === "S3_2_MODULE") {
+    const next = await processLlmTurn(s, "P3_2");
+    replies.push(next.reply);
+    s = next.state;
+  }
+
+  return {
+    replies,
+    state: s,
+    requiresConfirm: false,
+    canSubmit: s.subStep !== "COMPLETED",
   };
 }
 
@@ -348,9 +435,7 @@ export async function handleSubmitHandoff(
   }
 
   s = applyHandoffAdvance(s);
-  let reply = formatCoachDisplay(result);
-  reply = appendMarker(reply, MARKERS.STAGE_1_PASS);
-  reply = `${reply}\n\n${bodyTaskAfterHandoff()}`;
+  const reply = `${formatCoachDisplay(result)}\n\n${bodyTaskAfterHandoff()}`;
   s = appendChat(s, "assistant", reply);
 
   return {

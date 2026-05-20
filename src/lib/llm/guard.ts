@@ -140,13 +140,44 @@ export function formatStage1CoachDisplay(result: LlmTurnResult): string {
   return guardUserVisibleText(parts.join("\n\n"), 5);
 }
 
-/** Assign 模式保留 keywords；Stage 2 的 logicBreakdown 另段展示 */
+/** Stage 2：口语反馈，链条不进聊天 */
+export function formatStage2CoachDisplay(result: LlmTurnResult): string {
+  const parts: string[] = [];
+  const mirror = result.mirror?.trim();
+  const question = result.coachQuestion?.trim();
+  const uv = result.userVisibleText?.trim();
+
+  if (mirror) parts.push(mirror);
+  if (question) {
+    const joined = parts.join(" ");
+    if (!joined.includes(question.slice(0, Math.min(12, question.length)))) {
+      parts.push(question);
+    }
+  }
+  if (uv) {
+    const joined = parts.join(" ");
+    if (
+      !mirror?.includes(uv.slice(0, 10)) &&
+      !question?.includes(uv.slice(0, 10)) &&
+      !joined.includes(uv.slice(0, Math.min(12, uv.length)))
+    ) {
+      parts.push(uv);
+    }
+  }
+
+  return guardUserVisibleText(parts.join("\n\n"), 5);
+}
+
+/** Assign 模式保留 keywords；Stage 2 链条在左侧展示 */
 export function formatCoachDisplay(
   result: LlmTurnResult,
-  opts?: { stage1?: boolean },
+  opts?: { stage1?: boolean; stage2?: boolean },
 ): string {
   if (opts?.stage1) {
     return formatStage1CoachDisplay(result);
+  }
+  if (opts?.stage2) {
+    return formatStage2CoachDisplay(result);
   }
 
   const withSupport = appendLanguageSupport(
@@ -164,9 +195,6 @@ export function formatCoachDisplay(
     coach = `${coach}\n💡 ${result.syntaxHint.trim()}`;
   }
 
-  if (result.logicBreakdown?.slots) {
-    return `${coach}\n\n${formatLogicBreakdown(result.logicBreakdown)}`;
-  }
   return coach;
 }
 

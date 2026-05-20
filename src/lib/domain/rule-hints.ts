@@ -74,10 +74,19 @@ export function buildRuleHintsBlock(state: SessionState): string {
   if (state.subStep === "S2_2_BODY1" || state.subStep === "S2_3_BODY2") {
     const seg =
       state.subStep === "S2_2_BODY1" ? state.s2?.body1 : state.s2?.body2;
+    if (seg?.chainPhase === "proposed") {
+      lines.push(
+        "规则提示：已输出链条提案，引导学生点左侧「确认链条并填入」；禁止 verdict pass。",
+      );
+    } else {
+      lines.push(
+        "规则提示：paragraphSubstanceSufficient 为 true 才可 chainProposal；advance 永远 false。",
+      );
+    }
     if (seg?.draft && bodyDraftTooShort(seg.draft)) {
       lines.push("规则提示：本段输入过短，尚不足以评估整体论证。");
     }
-    const slots = seg?.slots;
+    const slots = seg?.slots ?? seg?.chainProposal?.slots;
     if (claimReasonRedundant(slots)) {
       lines.push("规则提示：论点与「原因」表述可能同义重复。");
     }

@@ -29,6 +29,8 @@ export type ModuleId =
 
 export type BodyKey = "body1" | "body2" | "conclusion";
 
+export type WorkshopBodyKey = "body1" | "body2";
+
 export type ParagraphSlot =
   | "claim"
   | "reason"
@@ -72,12 +74,22 @@ export interface Stage1Handoff {
   questionType?: string;
 }
 
+export type ChainPhase = "coaching" | "proposed" | "locked";
+
+export interface ChainProposal {
+  chainSummary: string;
+  slots: ParagraphSlots;
+  draft: string;
+}
+
 export interface BodySegment {
   status: SegmentStatus;
   draft: string;
   chainSummary?: string;
   slots?: ParagraphSlots;
   openIssues?: string[];
+  chainPhase?: ChainPhase;
+  chainProposal?: ChainProposal;
 }
 
 export interface Stage1Data {
@@ -206,6 +218,8 @@ export interface LlmTurnResult {
   gapsRemaining?: string[];
   proposedHandoff?: Stage1Handoff;
   proposalSummary?: string;
+  paragraphSubstanceSufficient?: boolean;
+  chainProposal?: ChainProposal;
   blueprint?: Blueprint;
   modulePlan?: Record<BodyKey, ModuleId[]>;
   moduleComplete?: boolean;

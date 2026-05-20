@@ -5,6 +5,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { EMPTY_HANDOFF } from "@/lib/domain/handoff";
 import { defaultHandoffTarget } from "@/lib/domain/router";
 import type {
+  WorkshopBodyKey,
   HandoffFieldTarget,
   Question,
   SessionState,
@@ -31,6 +32,7 @@ interface WritingStore {
   confirmSentence: () => Promise<void>;
   submitHandoff: () => Promise<void>;
   confirmHandoffProposal: () => Promise<void>;
+  confirmChainProposal: (body: WorkshopBodyKey) => Promise<void>;
   setHandoffField: (key: HandoffFieldTarget, value: string) => void;
   setInsertTarget: (key: HandoffFieldTarget) => void;
   applySelectionToHandoff: (text: string) => void;
@@ -142,6 +144,44 @@ export const useWritingStore = create<WritingStore>()(
         if (!trimmed) return;
         const { insertTarget } = get();
         get().setHandoffField(insertTarget, trimmed);
+      },
+
+      confirmChainProposal: async (body: WorkshopBodyKey) => {
+        const { state } = get();
+        if (!state) return;
+        set({ loading: true, error: null });
+        try {
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "confirm_chain_proposal",
+              state,
+              body,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error ?? "Confirm failed");
+          set({
+            state: data.state,
+            messages: [
+              ...get().messages,
+              ...data.replies.map((t: string) => ({
+                role: "assistant" as const,
+                text: t,
+              })),
+            ],
+            leftPanel: data.leftPanel ?? "",
+            requiresConfirm: data.requiresConfirm,
+            canSubmit: data.canSubmit,
+            loading: false,
+          });
+        } catch (e) {
+          set({
+            loading: false,
+            error: e instanceof Error ? e.message : "确认链条失败",
+          });
+        }
       },
 
       confirmHandoffProposal: async () => {

@@ -10,6 +10,7 @@ import type { Question, SessionState, Stage1Handoff } from "@/lib/domain/types";
 import {
   handleConfirm,
   handleInit,
+  handleConfirmChainProposal,
   handleConfirmHandoffProposal,
   handleSubmitHandoff,
   handleTurn,
@@ -32,7 +33,9 @@ const bodySchema = z.object({
     "confirm",
     "submit_handoff",
     "confirm_handoff_proposal",
+    "confirm_chain_proposal",
   ]),
+  body: z.enum(["body1", "body2"]).optional(),
   questionId: z.string().optional(),
   message: z.string().optional(),
   handoff: handoffSchema.optional(),
@@ -66,7 +69,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { action, questionId, message, state, handoff } = parsed.data;
+    const { action, questionId, message, state, handoff, body } = parsed.data;
 
     if (action === "init") {
       if (!questionId) {
@@ -89,6 +92,14 @@ export async function POST(req: NextRequest) {
 
     if (action === "confirm_handoff_proposal") {
       const result = await handleConfirmHandoffProposal(migrated);
+      return respond(result);
+    }
+
+    if (action === "confirm_chain_proposal") {
+      if (!body) {
+        return NextResponse.json({ error: "body required" }, { status: 400 });
+      }
+      const result = await handleConfirmChainProposal(migrated, body);
       return respond(result);
     }
 

@@ -81,18 +81,6 @@ export function normalizeHandoffClaimForChain(
   return trimClaim(first);
 }
 
-function normSnippet(s: string): string {
-  return s.toLowerCase().replace(/\s+/g, "").slice(0, 80);
-}
-
-function snippetsTooSimilar(a: string, b: string): boolean {
-  const na = normSnippet(a);
-  const nb = normSnippet(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  return na.length > 14 && nb.length > 14 && (na.includes(nb) || nb.includes(na));
-}
-
 function isStanceOnlySentence(s: string): boolean {
   const t = s.trim();
   if (t.length < 10) return false;
@@ -336,21 +324,9 @@ function splitSentences(text: string): string[] {
     .filter((s) => s.length > 8);
 }
 
+/** 保留 reason/example/link 并行；不因相似就跨功能删槽 */
 function dedupeSlots(slots: ParagraphSlots): ParagraphSlots {
-  const out = { ...slots };
-  const pairs: Array<[ParagraphSlot, ParagraphSlot]> = [
-    ["reason", "example"],
-    ["reason", "link"],
-    ["example", "link"],
-  ];
-  for (const [a, b] of pairs) {
-    const va = out[a]?.trim();
-    const vb = out[b]?.trim();
-    if (va && vb && snippetsTooSimilar(va, vb)) {
-      delete out[b];
-    }
-  }
-  return out;
+  return { ...slots };
 }
 
 /** 从 Stage2 用户话按环严格填充（Claim 仅来自审题分论点） */
@@ -403,14 +379,12 @@ export function buildSlotsFromChat(
             score: sc,
           };
         }
-        continue;
       }
       if (isExampleSentence(sent, body)) {
         const sc = exampleQualityScore(sent, body);
         if (sc > bestExample.score) {
           bestExample = { text: sent.trim(), score: sc };
         }
-        continue;
       }
       if (isLinkSentence(sent, body)) {
         const sc = linkQualityScore(sent, body);

@@ -182,7 +182,7 @@ export function mergeSlotsWithTurnUnderstanding(
     upsertRoleSlot(slots, r, text, body);
   }
 
-  return mergeSlots(slots, {});
+  return slots;
 }
 
 export function isSameCoachPrompt(a: string, b: string): boolean {

@@ -29,6 +29,7 @@ import {
 import {
   buildStage1SubmitFeedback,
   enrichHandoffFromChat,
+  sanitizeHandoffProposal,
 } from "@/lib/domain/essay-substance";
 import {
   applyChainProposalToState,
@@ -365,8 +366,8 @@ export async function handleConfirmHandoffProposal(
   state: SessionState,
 ): Promise<TurnResponse> {
   const s0 = ensureMigrated(state);
-  const proposal = s0.handoffProposal;
-  if (!proposal) {
+  const raw = s0.handoffProposal;
+  if (!raw) {
     return {
       replies: ["还没有可确认的整理，请继续在右侧聊审题。"],
       state: s0,
@@ -374,6 +375,9 @@ export async function handleConfirmHandoffProposal(
       canSubmit: true,
     };
   }
+
+  const proposal =
+    sanitizeHandoffProposal(enrichHandoffFromChat(raw, s0), s0) ?? raw;
 
   const s: SessionState = {
     ...s0,

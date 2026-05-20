@@ -50,6 +50,17 @@ export function detectChainMetaQuestion(message?: string): boolean {
   return META_QUESTION_RE.test(m);
 }
 
+/** Stage1 已整理/锁定后问「要做什么、改哪一栏」 */
+export function detectHandoffHelpQuestion(message?: string): boolean {
+  const m = message?.trim() ?? "";
+  if (!m || m.length > 80) return false;
+  return (
+    /要做什么|干什么|接下来|补充.*body|改.*body|body\s*2|第六栏|⑤|分论点.*(不完整|补充)/i.test(
+      m,
+    ) || /我现在要|还需要.*(补|写)/.test(m)
+  );
+}
+
 export function detectChainProcessQuestion(message?: string): boolean {
   const m = message?.trim() ?? "";
   if (!m) return false;

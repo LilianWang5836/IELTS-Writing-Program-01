@@ -11,7 +11,7 @@ const ACADEMIC_SECTION_RE =
 const TASK_BLOB_RE =
   /discuss\s+both|讨论|双方|大学教育|这题|题目|取决于学生|个人规划|我认为/i;
 
-const MAX_BODY_POINT_CHARS = 52;
+const MAX_BODY_POINT_CHARS = 72;
 
 export interface EssaySubstanceAssessment {
   sufficient: boolean;
@@ -194,7 +194,53 @@ export function userAnsweredBothSidesInMessage(message?: string): boolean {
 function trimPoint(text: string): string {
   const t = text.trim().replace(/^[,，、\s]+|[,，、\s]+$/g, "");
   if (t.length <= MAX_BODY_POINT_CHARS) return t;
-  return `${t.slice(0, MAX_BODY_POINT_CHARS)}…`;
+  const slice = t.slice(0, MAX_BODY_POINT_CHARS);
+  const punct = Math.max(
+    slice.lastIndexOf("。"),
+    slice.lastIndexOf("；"),
+    slice.lastIndexOf("，"),
+    slice.lastIndexOf("、"),
+  );
+  if (punct >= 20) return slice.slice(0, punct).trim();
+  return `${slice.trim()}…`;
+}
+
+/** 分论点在句中被截断（如「及长期」结尾） */
+export function isIncompleteBodyPoint(
+  text: string | undefined,
+  _side: "employ" | "academic",
+): boolean {
+  const t = text?.trim() ?? "";
+  if (t.length < 10) return true;
+  if (/[，,、]$/.test(t)) return true;
+  if (
+    /(及长期|及体系|及学生|及职场|及就业|学术兴趣及长期|兴趣及长期)$/.test(t)
+  ) {
+    return true;
+  }
+  if (!/[。！？]$/.test(t) && /(及|的|在|为|以|及长)$/.test(t) && t.length < 32) {
+    return true;
+  }
+  return false;
+}
+
+function preferBodyPoint(
+  primary: string | undefined,
+  fallback: string | undefined,
+  side: "employ" | "academic",
+): string {
+  const p = primary?.trim() ?? "";
+  const f = fallback?.trim() ?? "";
+  if (!f) return p;
+  if (!p) return f;
+  if (isIncompleteBodyPoint(p, side)) return f;
+  if (
+    isValidBodyPoint(f, side) &&
+    (!isValidBodyPoint(p, side) || f.length > p.length + 6)
+  ) {
+    return f;
+  }
+  return p;
 }
 
 function isTaskOrPositionBlob(text: string): boolean {
@@ -400,7 +446,8 @@ export function isValidBodyPoint(
   side: "employ" | "academic",
 ): boolean {
   const t = text?.trim() ?? "";
-  if (t.length < 8 || t.length > MAX_BODY_POINT_CHARS + 4) return false;
+  if (t.length < 8 || t.length > MAX_BODY_POINT_CHARS + 8) return false;
+  if (isIncompleteBodyPoint(t, side)) return false;
   if (isTaskOrPositionBlob(t)) return false;
   if (side === "employ") {
     if (dimEmployCount(t) < 1) return false;
@@ -472,9 +519,24 @@ function extractEmployPoint(...sources: string[]): string {
   return "";
 }
 
+function synthesizeAcademicPoint(text: string): string {
+  const t = text.trim();
+  if (!t) return "";
+  if (
+    /学术道路|感兴趣|持续.*学习|知识本身需要时间|纯粹.*知识/.test(t)
+  ) {
+    return trimPoint(
+      "大学应为走学术道路的学生提供持续学习感兴趣领域并系统积累知识的机会",
+    );
+  }
+  return "";
+}
+
 function extractAcademicPoint(...sources: string[]): string {
   for (const text of sources) {
     if (!text.trim()) continue;
+    const synth = synthesizeAcademicPoint(text);
+    if (synth) return synth;
     if (/医学|专业理论|理论知识/.test(text) && /体系化|循序渐进|底子|花时间/.test(text)) {
       return trimPoint(
         "非就业导向学生需掌握体系化专业理论（如医学基础），打底后才能深入",
@@ -627,33 +689,35 @@ export function sanitizeHandoffProposal(
   if (!sides.employ) {
     out.body1Point = "";
     out.body1Angle = "";
-  } else if (!isValidBodyPoint(out.body1Point, "employ")) {
-    out.body1Point = ruleBuilt.body1Point;
+  } else {
+    out.body1Point = preferBodyPoint(
+      normalizeBody1PointForHandoff(out.body1Point),
+      ruleBuilt.body1Point,
+      "employ",
+    );
     if (!out.body1Angle?.trim() && ruleBuilt.body1Angle) {
       out.body1Angle = ruleBuilt.body1Angle;
     }
-  } else {
-    out.body1Point = normalizeBody1PointForHandoff(out.body1Point);
   }
 
   if (!sides.academic) {
     out.body2Point = "";
     out.body2Angle = "";
-  } else if (
-    !isValidBodyPoint(out.body2Point, "academic") ||
-    GENERIC_ACADEMIC_POINT.test(out.body2Point.trim())
-  ) {
-    out.body2Point = ruleBuilt.body2Point;
+  } else {
+    out.body2Point = preferBodyPoint(
+      trimPoint(out.body2Point),
+      ruleBuilt.body2Point,
+      "academic",
+    );
     if (!out.body2Angle?.trim() && ruleBuilt.body2Angle) {
       out.body2Angle = ruleBuilt.body2Angle;
     }
-  } else {
-    out.body2Point = trimPoint(out.body2Point);
   }
   if (
     sides.academic &&
     ruleBuilt.body2Point &&
-    GENERIC_ACADEMIC_POINT.test(out.body2Point.trim()) &&
+    (GENERIC_ACADEMIC_POINT.test(out.body2Point.trim()) ||
+      isIncompleteBodyPoint(out.body2Point, "academic")) &&
     isValidBodyPoint(ruleBuilt.body2Point, "academic")
   ) {
     out.body2Point = ruleBuilt.body2Point;
@@ -845,25 +909,8 @@ export function enrichHandoffFromChat(
   const built = buildHandoffFromChat(state);
   const out: Stage1Handoff = { ...handoff };
 
-  if (
-    !isValidBodyPoint(out.body1Point, "employ") &&
-    isValidBodyPoint(built.body1Point, "employ")
-  ) {
-    out.body1Point = built.body1Point;
-  }
-  if (
-    !isValidBodyPoint(out.body2Point, "academic") &&
-    isValidBodyPoint(built.body2Point, "academic")
-  ) {
-    out.body2Point = built.body2Point;
-  }
-  if (
-    out.body2Point &&
-    out.body2Point.length < 22 &&
-    isValidBodyPoint(built.body2Point, "academic")
-  ) {
-    out.body2Point = built.body2Point;
-  }
+  out.body1Point = preferBodyPoint(out.body1Point, built.body1Point, "employ");
+  out.body2Point = preferBodyPoint(out.body2Point, built.body2Point, "academic");
   if (!out.body1Angle?.trim() && built.body1Angle) {
     out.body1Angle = built.body1Angle;
   }

@@ -12,6 +12,7 @@ import {
   gapSideFromCoachQuestion,
   isDivergentCoachQuestion,
   isHandoffProposalComplete,
+  isIncompleteBodyPoint,
   isProposalAffirmation,
   isRepeatedQuestion,
   needsAngleTeaching,
@@ -22,6 +23,7 @@ import {
   userAnsweredExplorationGap,
   userMessages,
 } from "./essay-substance";
+import { detectHandoffHelpQuestion } from "./stage2-context";
 import { ANGLE_TEACH_CHAT } from "./constants";
 import type { LlmTurnResult, SessionState, Stage1Handoff } from "./types";
 
@@ -40,7 +42,7 @@ export interface HandoffTurnDecision {
   shouldPropose: boolean;
   proposal: Stage1Handoff | null;
   coach: { mirror: string; ask: string };
-  handoffPhase: "exploring" | "proposed";
+  handoffPhase: "exploring" | "proposed" | "editing" | "locked";
   proposalSummary?: string;
   setAngleTeachDone?: boolean;
   essaySubstanceSufficient?: boolean;
@@ -89,23 +91,117 @@ export interface ResolveHandoffTurnInput {
   userMessage?: string;
 }
 
+function repairProposalFromChat(state: SessionState): Stage1Handoff | null {
+  const built = buildHandoffFromChat(state);
+  return sanitizeHandoffProposal(built, state);
+}
+
 export function resolveHandoffTurnDecision(
   input: ResolveHandoffTurnInput,
 ): HandoffTurnDecision {
   const { state, result, userMessage } = input;
+  const phase = state.coachContext?.handoffPhase ?? "exploring";
 
+  if (userMessage?.trim() && detectHandoffHelpQuestion(userMessage)) {
+    const h = state.handoff ?? state.handoffProposal;
+    const body2Bad = isIncompleteBodyPoint(h?.body2Point, "academic");
+    if (state.handoffLocked || phase === "editing") {
+      return {
+        gap: "none",
+        sides: explorationSideStatus(userMessages(state)),
+        shouldPropose: false,
+        proposal: state.handoffProposal ?? null,
+        coach: {
+          mirror: body2Bad
+            ? "⑤ Body2 分论点在左侧被截断了，请直接改那一栏补全整句（学术侧：持续学习、领域积累），保存后再点「提交审题定稿」。"
+            : "审题定稿已在左侧；请核对六栏，无误后点「提交审题定稿」，再进入 Body1 搭链。",
+          ask: body2Bad
+            ? "改好后无需在右侧重聊，左侧保存即可。"
+            : "若只改某一栏，在左侧编辑后提交。",
+        },
+        handoffPhase: state.handoffLocked ? "locked" : "editing",
+      };
+    }
+    if (phase === "proposed" && state.handoffProposal) {
+      return {
+        gap: "none",
+        sides: explorationSideStatus(userMessages(state)),
+        shouldPropose: false,
+        proposal: state.handoffProposal,
+        coach: { mirror: "", ask: PROPOSAL_NUDGE },
+        handoffPhase: "proposed",
+      };
+    }
+  }
+
+  if (phase === "editing" || state.handoffLocked) {
+    const h = state.handoff;
+    if (h && userMessage?.trim()) {
+      const llmMirror =
+        result.mirror?.trim() && result.mirror !== userMessage.trim()
+          ? result.mirror
+          : "";
+      const bad = isIncompleteBodyPoint(h.body2Point, "academic");
+      return {
+        gap: "none",
+        sides: explorationSideStatus(userMessages(state)),
+        shouldPropose: false,
+        proposal: null,
+        coach: {
+          mirror:
+            llmMirror ||
+            (bad
+              ? "左侧 Body2 分论点不完整，请补全后再提交定稿。"
+              : "定稿在左侧；确认无误后点「提交审题定稿」。"),
+          ask: bad
+            ? "在左侧 ⑤ 栏补全学术侧分论点一句即可。"
+            : "无误后点「提交审题定稿」。",
+        },
+        handoffPhase: "editing",
+      };
+    }
+  }
+
+  const existingProposal = state.handoffProposal;
   if (
-    state.handoffProposal &&
-    isHandoffProposalComplete(state.handoffProposal)
+    existingProposal &&
+    isHandoffProposalComplete(existingProposal) &&
+    phase === "proposed"
   ) {
     return {
       gap: "none",
       sides: explorationSideStatus(userMessages(state)),
       shouldPropose: false,
-      proposal: state.handoffProposal,
+      proposal: existingProposal,
       coach: { mirror: "", ask: PROPOSAL_NUDGE },
       handoffPhase: "proposed",
     };
+  }
+
+  if (
+    existingProposal &&
+    (!isHandoffProposalComplete(existingProposal) ||
+      isIncompleteBodyPoint(existingProposal.body2Point, "academic") ||
+      isIncompleteBodyPoint(existingProposal.body1Point, "employ"))
+  ) {
+    const repaired = repairProposalFromChat(state);
+    if (repaired && isHandoffProposalComplete(repaired)) {
+      return {
+        gap: "ready",
+        sides: explorationSideStatus(userMessages(state)),
+        shouldPropose: true,
+        proposal: repaired,
+        coach: {
+          mirror: "",
+          ask: formatProposalCoachMessage(
+            repaired,
+            "已按你的聊天补全六栏（含 Body2），请核对左侧整理稿。",
+          ),
+        },
+        handoffPhase: "proposed",
+        essaySubstanceSufficient: true,
+      };
+    }
   }
 
   if (userMessage && isProposalAffirmation(userMessage)) {
@@ -151,9 +247,17 @@ export function resolveHandoffTurnDecision(
       : "";
 
   if (shouldPropose && proposal) {
+    const repaired =
+      sanitizeHandoffProposal(proposal, state) ??
+      repairProposalFromChat(state) ??
+      proposal;
     const intro =
-      result.proposalSummary?.trim() ||
-      "两侧都够写两段了，六栏整理在左侧，请核对。";
+      isIncompleteBodyPoint(repaired.body2Point, "academic") ||
+      isIncompleteBodyPoint(repaired.body1Point, "employ")
+        ? "六栏已整理，但分论点需你核对补全（尤其 Body2）。"
+        : result.proposalSummary?.trim() ||
+          "两侧都够写两段了，六栏整理在左侧，请核对。";
+    proposal = repaired;
     return {
       gap: "ready",
       sides,
@@ -234,6 +338,32 @@ export function resolveHandoffTurnDecision(
   }
 
   const nextQ = result.coachQuestion?.trim() || substance.coachPrompt || "";
+  if (
+    nextQ &&
+    /body\s*2|论点.*不完整|补充完整|描述不完整/i.test(nextQ) &&
+    sides.employ &&
+    sides.academic
+  ) {
+    const repaired = repairProposalFromChat(state);
+    if (repaired && isHandoffProposalComplete(repaired)) {
+      return {
+        gap: "ready",
+        sides,
+        shouldPropose: true,
+        proposal: repaired,
+        coach: {
+          mirror: "",
+          ask: formatProposalCoachMessage(
+            repaired,
+            "已按你的聊天补全六栏（含 Body2 分论点），请核对左侧整理稿。",
+          ),
+        },
+        handoffPhase: "proposed",
+        essaySubstanceSufficient: true,
+      };
+    }
+  }
+
   if (
     isDivergentCoachQuestion(nextQ) &&
     sides.employ &&

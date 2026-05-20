@@ -169,17 +169,30 @@ function hasExampleLead(s: string): boolean {
   return /例如|比如|举例\s*[:：]|比方说/.test(s.trim());
 }
 
+/** 因果/机制句（无例如标记）不应算作 Example，即使出现「项目」等词 */
+function looksLikeMechanismNotExample(s: string): boolean {
+  const t = s.trim();
+  if (hasExampleLead(t)) return false;
+  return (
+    /因此|因为|所以|由于|才|需要|差异|不匹配|不同于|无法从|偏向/.test(t) &&
+    /课本|学术|实践|职场|技能|知识/.test(t)
+  );
+}
+
 export function isExampleSentence(s: string, body: WorkshopBodyKey): boolean {
   const t = s.trim();
   if (t.length < 10 || isStanceOnlySentence(t)) return false;
   if (/^因为/.test(t) && !hasExampleLead(t)) return false;
+  if (looksLikeMechanismNotExample(t)) return false;
   if (hasExampleLead(t)) return true;
 
   if (body === "body1") {
     return (
-      /实习|实操|项目|岗位实训|coding|编程|技术栈|计算机|工程师|工作坊|校企|在公司|公司学习/.test(
+      /实习|实操|项目经验|岗位实训|coding|编程|技术栈|计算机|工程师|工作坊|校企|在公司|公司学习/.test(
         t,
-      ) && !/^从就业角度/.test(t)
+      ) &&
+      !/^从就业角度/.test(t) &&
+      !/因此|因为|所以|课本.*(?:技能|知识)|不匹配/.test(t)
     );
   }
   return /医学|课程|研究|导师|论文|实验|领域训练|临床/.test(t);
@@ -382,16 +395,6 @@ export function buildSlotsFromChat(
       if (body === "body2" && /就业|求职|工作技能/.test(sent) && !/学术|知识|研究|深造/.test(sent)) {
         continue;
       }
-      if (isExampleSentence(sent, body)) {
-        const sc = exampleQualityScore(sent, body);
-        if (sc > bestExample.score) {
-          bestExample = { text: sent.trim(), score: sc };
-        }
-        continue;
-      }
-      if (hasExampleLead(sent)) {
-        continue;
-      }
       if (isReasonSentence(sent, body)) {
         const sc = reasonQualityScore(sent, body);
         if (sc > bestReason.score) {
@@ -399,6 +402,13 @@ export function buildSlotsFromChat(
             text: normalizeCoachSentence(sent) || sent.trim(),
             score: sc,
           };
+        }
+        continue;
+      }
+      if (isExampleSentence(sent, body)) {
+        const sc = exampleQualityScore(sent, body);
+        if (sc > bestExample.score) {
+          bestExample = { text: sent.trim(), score: sc };
         }
         continue;
       }

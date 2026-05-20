@@ -67,7 +67,12 @@ export function parseChainTurnUnderstanding(
 
 /** 规则兜底：话轮标记 + 整句功能 */
 function inferTurnFromMessage(msg: string): Omit<ChainTurnUnderstanding, "slotText"> {
-  if (/^原因\s*[:：]|^因为/.test(msg) && !/比如|例如|举例/.test(msg)) {
+  if (
+    (/^原因\s*[:：]|^因为/.test(msg) ||
+      (/因此|因为|所以/.test(msg) &&
+        /课本|学术|实践|职场|不匹配|差异/.test(msg))) &&
+    !/比如|例如|举例/.test(msg)
+  ) {
     const weak =
       msg.length < 18 ||
       (!/课本|实践|项目|差异|实习|技能|工作/.test(msg) && !/因为|因此/.test(msg));
@@ -136,8 +141,12 @@ export function mergeSlotsWithTurnUnderstanding(
     return slots;
   }
 
-  if (role === "reason" && isReasonSentence(text, body)) {
-    slots.reason = text;
+  if (role === "reason") {
+    if (isReasonSentence(text, body)) {
+      slots.reason = text;
+    } else if (isReasonSentence(msg, body)) {
+      slots.reason = bestSentenceForRole(msg, "reason", body);
+    }
   } else if (role === "example" && isExampleSentence(text, body)) {
     if (
       !slots.example ||
@@ -221,13 +230,20 @@ export function resolveHybridCoachTurn(
     (understanding.role === "reason" ||
       understanding.role === "example" ||
       understanding.role === "link") &&
-    isChainStepFilled(workingSlots, understanding.role, body) &&
-    buildStep !== understanding.role
+    isChainStepFilled(workingSlots, understanding.role, body)
   ) {
-    return {
-      mirror: llmMirror || `好，${STEP_HINT[understanding.role]}这一环够了。`,
-      coachQ: stepPrompt,
-    };
+    if (buildStep !== understanding.role) {
+      return {
+        mirror: llmMirror || `好，${STEP_HINT[understanding.role]}这一环够了。`,
+        coachQ: stepPrompt,
+      };
+    }
+    if (llmMirror && /够了|听到了|原因|例子|收束/.test(llmMirror)) {
+      return {
+        mirror: llmMirror,
+        coachQ: stepPrompt,
+      };
+    }
   }
 
   if (understanding.quality === "weak" && understanding.role === "example") {

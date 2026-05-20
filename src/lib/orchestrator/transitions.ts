@@ -39,8 +39,22 @@ function nextBody(body: BodyKey): BodyKey | null {
   return null;
 }
 
+export function body1TaskMessage(body1Point?: string, body1Angle?: string): string {
+  const p = body1Point?.trim();
+  const a = body1Angle?.trim();
+  const anchor = p
+    ? `审题分论点：「${p}」${a ? `（${a}）` : ""}。`
+    : "";
+  return [
+    anchor,
+    "我们一起搭 Body1 论证链：论点已来自审题，请按环节补原因→举例→扣题；齐了之后左侧确认链条。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 const BODY1_TASK =
-  "我们一起搭 Body1 论证链（论点→原因→例子→扣题），请按教练当前环节在右侧补充；齐了之后左侧确认链条。";
+  "我们一起搭 Body1 论证链：论点已来自审题，请按环节补原因→举例→扣题；齐了之后左侧确认链条。";
 const BODY2_TASK =
   "我们一起搭 Body2 论证链；注意与 Body1 不同角度，按教练环节逐环补充。";
 
@@ -245,7 +259,12 @@ export function integrateBodySentences(state: SessionState, body: BodyKey): stri
   return parts.join(" ");
 }
 
-export function bodyTaskAfterHandoff(): string {
+export function bodyTaskAfterHandoff(state?: SessionState): string {
+  const p = state?.s2?.body1Point ?? state?.handoff?.body1Point;
+  const a = state?.s2?.body1Angle ?? state?.handoff?.body1Angle;
+  if (p?.trim()) {
+    return body1TaskMessage(p, a);
+  }
   return BODY1_TASK;
 }
 

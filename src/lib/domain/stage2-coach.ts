@@ -4,12 +4,14 @@ import {
   isChainProposalComplete,
 } from "./chain-proposal";
 import {
+  areChainSlotsSemanticallyValid,
   buildChainProposalFromChat,
   buildSlotsFromChat,
   detectChainConfusion,
   detectChainMetaQuestion,
   formatChainProgress,
   formatChainSkeleton,
+  getChainBuildContext,
   getNextChainBuildStep,
   isBannedCoachQuestion,
   mergeSlots,
@@ -110,8 +112,9 @@ export function postProcessStage2(
     slotsForSubstance,
   );
 
+  const buildCtx = getChainBuildContext(nextState, body);
   const { step: buildStep, coachPrompt: stepPrompt } =
-    getNextChainBuildStep(workingSlots, body);
+    getNextChainBuildStep(workingSlots, body, buildCtx);
   const progressBlock = formatChainProgress(workingSlots, buildStep);
 
   let finalProposal = proposalFromLlm;
@@ -124,12 +127,14 @@ export function postProcessStage2(
 
   const llmOk = sanitized.paragraphSubstanceSufficient === true;
   const rulesOk = substance.sufficient;
-  const ringsReady = buildStep === "ready";
+  const ringsReady =
+    buildStep === "ready" && areChainSlotsSemanticallyValid(workingSlots, body);
   const canPropose =
     ringsReady &&
-    (rulesOk || (llmOk && !!proposalFromLlm)) &&
+    rulesOk &&
     !!finalProposal &&
-    isChainProposalComplete(finalProposal);
+    isChainProposalComplete(finalProposal) &&
+    areChainSlotsSemanticallyValid(finalProposal.slots, body);
 
   nextState = setBodyChainPhase(
     nextState,
@@ -242,7 +247,13 @@ export function postProcessStage2(
   }
 
   const scaffoldQ = stepPrompt || substance.coachPrompt || "";
-  const coachQ = pickCoachQuestion(sanitized.coachQuestion ?? "", scaffoldQ);
+  const preferScaffold =
+    buildStep === "reason" ||
+    buildStep === "example" ||
+    buildStep === "link";
+  const coachQ = preferScaffold
+    ? scaffoldQ || pickCoachQuestion(sanitized.coachQuestion ?? "", scaffoldQ)
+    : pickCoachQuestion(sanitized.coachQuestion ?? "", scaffoldQ);
   const mirror =
     sanitized.mirror && sanitized.mirror !== userMessage?.trim()
       ? sanitized.mirror

@@ -1,3 +1,4 @@
+import { areChainSlotsSemanticallyValid } from "./chain-scaffold";
 import { claimReasonRedundant } from "./rule-hints";
 import { userBlobForWorkshopBody } from "./stage2-context";
 import type { ParagraphSlots, SessionState, WorkshopBodyKey } from "./types";
@@ -48,14 +49,8 @@ function textsTooSimilar(a: string, b: string): boolean {
   return false;
 }
 
-function slotsHaveFourRings(slots?: ParagraphSlots): boolean {
-  if (!slots) return false;
-  const hasClaim = !!(slots.claim?.trim() || slots.elaboration?.trim());
-  const hasReason = !!slots.reason?.trim();
-  const hasExample = !!(slots.example?.trim() || slots.support?.trim());
-  const hasLink = !!slots.link?.trim();
-  return hasClaim && hasReason && hasExample && hasLink;
-}
+const STANCE_ONLY_RE =
+  /^(?:从|就).*(?:角度|方面)|有其合理性|是合理的|学习工作技能.*合理/i;
 
 export function assessParagraphSubstance(
   state: SessionState,
@@ -85,9 +80,7 @@ export function assessParagraphSubstance(
   }
 
   const score = scoreBlob(blob);
-  const hasClaimDir =
-    !!(slots?.claim?.trim() || slots?.elaboration?.trim()) ||
-    (!!point?.trim() && blob.length >= 8);
+  const hasClaimDir = !!(slots?.claim?.trim() || slots?.elaboration?.trim());
   const hasReasonDir = !!slots?.reason?.trim();
   const hasExample = !!(slots?.example?.trim() || slots?.support?.trim());
   const hasLink = !!slots?.link?.trim();
@@ -133,6 +126,36 @@ export function assessParagraphSubstance(
   ) {
     gaps.push("原因与例子不宜同一句，请各写一层");
   }
+  if (
+    slots?.example?.trim() &&
+    slots?.link?.trim() &&
+    textsTooSimilar(slots.example, slots.link)
+  ) {
+    gaps.push("举例与扣题不宜同一句，请各写一层");
+  }
+  if (slots?.example?.trim() && STANCE_ONLY_RE.test(slots.example)) {
+    gaps.push("举例须是具体场景（实习/项目等），不能用「合理/角度」代替");
+  }
+  if (slots?.link?.trim() && STANCE_ONLY_RE.test(slots.link)) {
+    gaps.push("扣题须落到就业或深造目标，不能复述立场句");
+  }
+  if (slots && !areChainSlotsSemanticallyValid(slots, body)) {
+    if (hasReasonDir && !hasExample) {
+      gaps.push(
+        body === "body1"
+          ? "缺具体例子：校企实习、coding 项目、岗位实训等（需新写一句）"
+          : "缺具体例子：课程、研究、领域训练等",
+      );
+    } else if (hasExample && !hasLink) {
+      gaps.push(
+        body === "body1"
+          ? "缺扣题：写一句如何落到「尽快就业」（勿重复原因）"
+          : "缺扣题：写一句如何落到「学术深造」",
+      );
+    } else if (!hasReasonDir) {
+      gaps.push("缺因果：用「因为…所以…」写清机制（勿只写合理）");
+    }
+  }
 
   if (body === "body2") {
     const b1slots = state.s2?.body1.slots;
@@ -145,7 +168,7 @@ export function assessParagraphSubstance(
   const sufficient =
     gaps.length === 0 &&
     score >= 2 &&
-    slotsHaveFourRings(slots);
+    areChainSlotsSemanticallyValid(slots, body);
 
   return {
     sufficient,

@@ -419,7 +419,7 @@ export async function handleSubmitHandoff(
     result = {
       verdict: "pass",
       advance: true,
-      userVisibleText: `审题定稿已收到。${bodyTaskAfterHandoff()}`,
+      userVisibleText: `审题定稿已收到。${bodyTaskAfterHandoff(s)}`,
     };
   }
 
@@ -437,7 +437,7 @@ export async function handleSubmitHandoff(
   }
 
   s = applyHandoffAdvance(s);
-  const reply = `${formatCoachDisplay(result)}\n\n${bodyTaskAfterHandoff()}`;
+  const reply = `${formatCoachDisplay(result)}\n\n${bodyTaskAfterHandoff(s)}`;
   s = appendChat(s, "assistant", reply);
 
   return {

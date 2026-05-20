@@ -282,11 +282,25 @@ function lastRichAcademicMessage(msgs: string[]): string {
 }
 
 function normalizeEmployPoint(text: string): string {
-  const t = text.trim();
-  if (/^应该以?工作技能为主[。.]?$/i.test(t)) {
-    return "以就业为目标的学生，大学应侧重可上岗的工作技能与实务训练";
+  return normalizeBody1PointForHandoff(text);
+}
+
+/** 合并拼接的 Body1 分论点为一句 */
+export function normalizeBody1PointForHandoff(text: string): string {
+  const t = text.trim().replace(/\s+/g, " ");
+  if (!t) return "";
+  if (
+    /应该以?工作技能为主/.test(t) &&
+    /提前积累|项目|实习/.test(t)
+  ) {
+    return trimPoint(
+      "大学应让学生提前积累工作技能、项目与实习经验",
+    );
   }
-  return trimPoint(t);
+  if (/^应该以?工作技能为主[。.]?$/i.test(t)) {
+    return trimPoint("以就业为目标的学生，大学应侧重可上岗的工作技能");
+  }
+  return trimPoint(t.split(/(?=提前积累|另外)/)[0] ?? t);
 }
 
 function extractEmployPoint(...sources: string[]): string {
@@ -387,7 +401,7 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
       body1 ||
       pointFromSideText(employText, "employ") ||
       extractEmployPoint(employText);
-    body1 = normalizeEmployPoint(body1);
+    body1 = normalizeBody1PointForHandoff(body1);
   }
 
   let body2 = h?.body2Point?.trim() || "";
@@ -434,7 +448,7 @@ export function sanitizeHandoffProposal(
       out.body1Angle = ruleBuilt.body1Angle;
     }
   } else {
-    out.body1Point = normalizeEmployPoint(out.body1Point);
+    out.body1Point = normalizeBody1PointForHandoff(out.body1Point);
   }
 
   if (!sides.academic) {

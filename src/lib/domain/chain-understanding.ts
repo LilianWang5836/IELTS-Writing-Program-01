@@ -110,6 +110,48 @@ function bestSentenceForRole(
   return msg.trim();
 }
 
+function inferAdditionalRoles(
+  msg: string,
+  body: WorkshopBodyKey,
+  primary: ChainTurnRole,
+): Array<"reason" | "example" | "link"> {
+  const out: Array<"reason" | "example" | "link"> = [];
+  const add = (r: "reason" | "example" | "link") => {
+    if (primary === r) return;
+    if (!out.includes(r)) out.push(r);
+  };
+  if (isReasonSentence(msg, body)) add("reason");
+  if (isExampleSentence(msg, body)) add("example");
+  if (isLinkSentence(msg, body)) add("link");
+  return out;
+}
+
+function upsertRoleSlot(
+  slots: ParagraphSlots,
+  role: "reason" | "example" | "link",
+  text: string,
+  body: WorkshopBodyKey,
+): void {
+  if (role === "reason") {
+    if (isReasonSentence(text, body)) slots.reason = text;
+    return;
+  }
+  if (role === "example") {
+    if (!isExampleSentence(text, body)) return;
+    if (
+      !slots.example ||
+      isWeakExampleSentence(slots.example, body) ||
+      !isWeakExampleSentence(text, body)
+    ) {
+      slots.example = text;
+    }
+    return;
+  }
+  if (isLinkSentence(text, body)) {
+    slots.link = text;
+  }
+}
+
 /**
  * 理解轨提议 + 规则守门：只有通过规则校验的 slot 才写入
  */
@@ -131,32 +173,13 @@ export function mergeSlotsWithTurnUnderstanding(
     return slots;
   }
 
-  const text = bestSentenceForRole(msg, role, body);
-  if (understanding.quality === "weak") {
-    if (role === "example" && isExampleSentence(text, body)) {
-      if (!slots.example || isWeakExampleSentence(slots.example, body)) {
-        slots.example = text;
-      }
-    }
-    return slots;
-  }
-
-  if (role === "reason") {
-    if (isReasonSentence(text, body)) {
-      slots.reason = text;
-    } else if (isReasonSentence(msg, body)) {
-      slots.reason = bestSentenceForRole(msg, "reason", body);
-    }
-  } else if (role === "example" && isExampleSentence(text, body)) {
-    if (
-      !slots.example ||
-      isWeakExampleSentence(slots.example, body) ||
-      !isWeakExampleSentence(text, body)
-    ) {
-      slots.example = text;
-    }
-  } else if (role === "link" && isLinkSentence(text, body)) {
-    slots.link = text;
+  const roles: Array<"reason" | "example" | "link"> = [
+    role,
+    ...inferAdditionalRoles(msg, body, role),
+  ] as Array<"reason" | "example" | "link">;
+  for (const r of roles) {
+    const text = bestSentenceForRole(msg, r, body);
+    upsertRoleSlot(slots, r, text, body);
   }
 
   return mergeSlots(slots, {});
@@ -288,9 +311,30 @@ export function resolveHybridCoachTurn(
         coachQ: exampleFollowUpCoachPrompt(workingSlots.example, body),
       };
     }
+    if (buildStep === "reason" && workingSlots.reason?.trim()) {
+      return {
+        mirror: llmMirror || "你这句原因方向是对的，我换个更短问法。",
+        coachQ: "请再补一个机制词：为什么这会直接提升就业竞争力？（一句）",
+      };
+    }
+    if (buildStep === "link" && workingSlots.link?.trim()) {
+      return {
+        mirror: llmMirror || "你的段末收束方向是对的，我换个更短问法。",
+        coachQ: "再补8-15字结果：更快就业/更多面试/更快上岗（三选一即可）。",
+      };
+    }
     if (llmQ && !isSameCoachPrompt(llmQ, lastQuestion)) {
       return { mirror: llmMirror || "我换种问法。", coachQ: llmQ };
     }
+    return {
+      mirror: llmMirror || "我不重复上句模板了，换个更具体的补法。",
+      coachQ:
+        buildStep === "example"
+          ? "补1个具体细节：公司/岗位/技术栈名称（三选一）。"
+          : buildStep === "link"
+            ? "补1句结果：如何落到就业/求职收益。"
+            : "补1句机制：为什么这一步能成立。",
+    };
   }
 
   return {

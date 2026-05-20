@@ -1,39 +1,50 @@
-# 【内容回应】Stage 2.3 Body2 论证审核
+# 【内容回应】Stage 2.3 Body2 论证
 
 ## 分论点2
 {{body2_point}}
 
-## Body1 论证摘要
+## Body1 已识别链条（参考）
 {{body1_logic}}
 
 ## Stage1 立场
 {{s1_position}}
 
-## 用户 Body2 内容
+## 用户 Body2 输入
 {{user_message}}
 
 ## 动作
-审核 Body 2 是否：
-- 论点成立
-- 论证信息完整（原因 / 机制 / 支撑 / 条件）
-- 与整体立场一致
-- **论点≠论证**（同 2.2）
-- **与 Body1 区分**：不得与 Body1 同义重复维度
+同 2.2：**按需标签拆解 → 整体论证是否完整 → missing 只写功能缺口**。
 
-- 如果不合格：
-  → 1句话指出问题 + 要求修正
+额外：与 Body1 区分维度；不得同义重复。
 
-- 如果合格：
-  → 1句话总结整体论证完成
+Pass 后 1 句总结，进入 Stage 3（见【流程规划】）。
 
-## Stage 2 PASS 后（见【流程规划】）
-自动进入 Stage 3，不等待用户。
+## 审题定稿
+{{handoff_json}}
+
+## 规则提示
+{{rule_hints}}
 
 ## 输出 JSON
 {
-  "verdict": "pass" | "fail",
+  "verdict": "pass" | "fail" | "coach",
+  "advance": true | false,
+  "mirror": "",
+  "coachQuestion": "",
   "userVisibleText": "≤3句",
+  "logicBreakdown": {
+    "target": "body2",
+    "chainSummary": "",
+    "slots": {},
+    "missing": [],
+    "userBlobSummary": ""
+  },
   "extracted": {
-    "body2Logic": { "primaryDriver": "causal|mechanism|support|condition", "raw": "" }
+    "body2Logic": {
+      "primaryDriver": "causal|mechanism|support|condition",
+      "slots": {},
+      "missing": [],
+      "raw": ""
+    }
   }
 }

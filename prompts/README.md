@@ -19,7 +19,8 @@ P{1|2|3}_*.txt   ← 当前子步骤的内容判定与 JSON schema
 | `P0_flow.txt` | Stage 触发、暗号、无缝切流、3.1→3.2 自动、Module 流水线 |
 | `P0_content.txt` | Role、Target Topic、Core Rules 1–9 |
 | `P1_stage1.txt` | Stage 1 审题判定 |
-| `P2_1` ~ `P2_3` | Stage 2 子步骤 2.1–2.3 |
+| `P1H` | Stage 1 审题定稿校验 |
+| `P2_2` ~ `P2_3` | Stage 2 Body1/Body2 论证工作坊 |
 | `P3_1` ~ `P3_3` | Stage 3 Blueprint / 逐句 / Body Check |
 
 ## 暗号

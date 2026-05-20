@@ -4,7 +4,7 @@ import type { PromptModuleId } from "@/lib/domain/types";
 
 const PROMPT_FILES: Record<Exclude<PromptModuleId, never>, string> = {
   P1: "P1_stage1.txt",
-  P2_1: "P2_1_subpoints.txt",
+  P1H: "P1H_handoff.txt",
   P2_2: "P2_2_body1.txt",
   P2_3: "P2_3_body2.txt",
   P3_1: "P3_1_blueprint.txt",
@@ -29,7 +29,11 @@ export function loadPromptBase(): string {
 }
 
 export function loadPromptModule(id: PromptModuleId): string {
-  return loadFile(PROMPT_FILES[id]);
+  const task = loadFile(PROMPT_FILES[id]);
+  if (id.startsWith("P2_")) {
+    return `${loadFile("P2_0_paragraph_frame.txt")}\n\n---\n\n${task}`;
+  }
+  return task;
 }
 
 export function interpolate(

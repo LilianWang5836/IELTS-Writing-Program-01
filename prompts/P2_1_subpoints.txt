@@ -1,40 +1,28 @@
-# 【内容回应】Stage 2.1 分论点审核与结构匹配
+# 【内容回应】Stage 2.1 分论点审核
 
 Stage 1 已完结。禁止再审题。
 
 ## Stage1 立场
 {{s1_position}}
 
-## 用户给出的 Body1/Body2 分论点
+## 用户输入
 {{user_message}}
 
 ## 动作
-审核用户给出的两个分论点是否清晰、可论证、且与题目要求一致。
-
-- 如果不合格：
-  → 1句话指出问题 + 追问用户重新给出更清晰的两个分论点
-
-- 如果合格：
-  → 首句肯定分论点有效
-  → 然后不提供固定结构模板，而是将每个论点拆解为「必需论证信息缺口」，引导用户填空完成逻辑
-
-论证拆解维度（只选1-2个主驱动，不强制全覆盖）：
-- 主因果（Why this is true）
-- 运行机制（How it works in reality）
-- 现实支撑（What proves it in real world）
-- 条件边界（When it is true）
-
-每个论点必须识别一个「主论证驱动」（primary logic driver），其他信息只能作为补充，不得平权处理。
-
-引导方式用「填空提示链」，例如：
-「你的这个观点成立，是因为______，它之所以会产生影响，是因为______，可以用______来支持。」
+1. 若用户一次塞入大段：用 logicBreakdown 尽量拆出 **Body1 / Body2 两个 claim（分论点）**；论证细节标「留待 2.2/2.3」，本步只审分论点是否合格。
+2. 若只给两个分论点：检查清晰、可论证、与立场一致、互不重复。
+3. **合格**：肯定 + 提示下一步在 2.2 用「你已有的材料」补全 Body1 论证链（不指定必须包含哪些标签）。
+4. **不合格**：说明问题；`missing` 只写分论点层面缺什么（如「第二个分论点不清」）。
 
 ## 输出 JSON
 {
   "verdict": "pass" | "fail",
   "userVisibleText": "≤3句",
-  "extracted": {
-    "body1Point": "",
-    "body2Point": ""
-  }
+  "logicBreakdown": {
+    "target": "subpoints",
+    "chainSummary": "",
+    "slots": { "claim": "Body1 概括" },
+    "missing": []
+  },
+  "extracted": { "body1Point": "", "body2Point": "" }
 }

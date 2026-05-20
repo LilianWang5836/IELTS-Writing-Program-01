@@ -1,3 +1,5 @@
+import { buildBlueprintFromStage2 } from "@/lib/domain/blueprint-from-s2";
+import { defaultBodySegment } from "@/lib/domain/handoff";
 import { MARKERS } from "@/lib/domain/constants";
 import {
   compileModulePlan,
@@ -7,11 +9,29 @@ import {
 import type {
   BodyKey,
   Blueprint,
+  BodySegment,
+  LogicFill,
   LlmTurnResult,
   ModuleId,
   QuestionType,
   SessionState,
 } from "@/lib/domain/types";
+
+function readBodyLogic(
+  result: LlmTurnResult,
+  key: "body1Logic" | "body2Logic",
+  fallbackRaw: string,
+): LogicFill {
+  const fromExtract =
+    (result.extracted as Record<string, LogicFill | undefined>)?.[key];
+  const fromBreakdown = result.logicBreakdown?.slots;
+  return {
+    primaryDriver: fromExtract?.primaryDriver ?? "causal",
+    slots: fromExtract?.slots ?? fromBreakdown,
+    missing: fromExtract?.missing ?? result.logicBreakdown?.missing,
+    raw: fromExtract?.raw?.trim() || fallbackRaw,
+  };
+}
 
 function nextBody(body: BodyKey): BodyKey | null {
   if (body === "body1") return "body2";
@@ -19,76 +39,81 @@ function nextBody(body: BodyKey): BodyKey | null {
   return null;
 }
 
-export function applyStage1Pass(
-  state: SessionState,
-  result: LlmTurnResult,
-): SessionState {
-  const ex = result.extracted as Record<string, string> | undefined;
+const BODY1_TASK =
+  "请把 Body1 的论证写出来（可中文、可乱序）；我会帮你拆链条并指出缺口。";
+const BODY2_TASK =
+  "请把 Body2 的论证写出来；注意与 Body1 不同角度。";
+
+export function applyHandoffAdvance(state: SessionState): SessionState {
   return {
     ...state,
     stage: 2,
-    subStep: "S2_1_SUBPOINTS",
-    markers: { ...state.markers, stage1Pass: true },
-    s1: ex
-      ? {
-          questionType: String(ex.questionType ?? ""),
-          taskUnderstanding: String(ex.taskUnderstanding ?? ""),
-          position: String(ex.position ?? ""),
-        }
-      : state.s1,
-  };
-}
-
-export function applyStage2_1Pass(
-  state: SessionState,
-  result: LlmTurnResult,
-): SessionState {
-  const ex = result.extracted as { body1Point?: string; body2Point?: string };
-  return {
-    ...state,
     subStep: "S2_2_BODY1",
-    markers: { ...state.markers, subPointsPass: true },
-    s2: {
-      body1Point: String(ex?.body1Point ?? ""),
-      body2Point: String(ex?.body2Point ?? ""),
-      ...state.s2,
+    markers: {
+      ...state.markers,
+      stage1Pass: true,
+      subPointsPass: true,
+    },
+    s2: state.s2 ?? {
+      body1Point: state.handoff!.body1Point,
+      body2Point: state.handoff!.body2Point,
+      body1Angle: state.handoff!.body1Angle,
+      body2Angle: state.handoff!.body2Angle,
+      body1: defaultBodySegment(),
+      body2: defaultBodySegment(),
     },
   };
 }
 
-export function applyStage2_2Pass(
+export function applyStage2Body1Advance(
   state: SessionState,
   result: LlmTurnResult,
+  userMessage?: string,
 ): SessionState {
-  const raw =
-    (result.extracted as { body1Logic?: { raw?: string } })?.body1Logic?.raw ??
-    "";
+  const logic = readBodyLogic(result, "body1Logic", userMessage ?? "");
+  const body1: BodySegment = {
+    status: "ready",
+    draft: state.s2?.body1.draft ?? userMessage ?? "",
+    chainSummary: result.logicBreakdown?.chainSummary,
+    slots: logic.slots,
+    openIssues: [],
+  };
   return {
     ...state,
     subStep: "S2_3_BODY2",
     markers: { ...state.markers, subBody1Pass: true },
+    coachContext: {},
     s2: {
       ...state.s2!,
-      body1Logic: { raw, primaryDriver: "causal" },
+      body1,
+      body1Logic: logic,
     },
   };
 }
 
-export function applyStage2_3Pass(
+export function applyStage2Body2Advance(
   state: SessionState,
   result: LlmTurnResult,
+  userMessage?: string,
 ): SessionState {
-  const raw =
-    (result.extracted as { body2Logic?: { raw?: string } })?.body2Logic?.raw ??
-    "";
+  const logic = readBodyLogic(result, "body2Logic", userMessage ?? "");
+  const body2: BodySegment = {
+    status: "ready",
+    draft: state.s2?.body2.draft ?? userMessage ?? "",
+    chainSummary: result.logicBreakdown?.chainSummary,
+    slots: logic.slots,
+    openIssues: [],
+  };
   return {
     ...state,
     stage: 3,
     subStep: "S3_1_BLUEPRINT",
     markers: { ...state.markers, stage2Pass: true },
+    coachContext: {},
     s2: {
       ...state.s2!,
-      body2Logic: { raw, primaryDriver: "causal" },
+      body2,
+      body2Logic: logic,
     },
   };
 }
@@ -97,7 +122,9 @@ export function applyBlueprint(
   state: SessionState,
   result: LlmTurnResult,
 ): SessionState {
-  const blueprint = result.blueprint as Blueprint | undefined;
+  const blueprint =
+    (result.blueprint as Blueprint | undefined) ??
+    buildBlueprintFromStage2(state);
   const planFromLlm = result.modulePlan;
   const qType = (state.s1?.questionType ?? "unknown") as QuestionType;
   const modulePlan = planFromLlm ?? compileModulePlan(qType);
@@ -124,14 +151,10 @@ export function appendMarker(reply: string, marker: string): string {
 
 export function markerForSubStep(
   subStep: SessionState["subStep"],
-  verdict: string,
 ): string | null {
-  if (verdict !== "pass") return null;
   switch (subStep) {
     case "S1_EVAL":
       return MARKERS.STAGE_1_PASS;
-    case "S2_1_SUBPOINTS":
-      return MARKERS.SUB_POINTS_PASS;
     case "S2_2_BODY1":
       return MARKERS.SUB_BODY_1_PASS;
     case "S2_3_BODY2":
@@ -216,4 +239,74 @@ export function integrateBodySentences(state: SessionState, body: BodyKey): stri
     if (lines?.length) parts.push(lines.join(" "));
   }
   return parts.join(" ");
+}
+
+export function bodyTaskAfterHandoff(): string {
+  return BODY1_TASK;
+}
+
+export function bodyTaskAfterBody1(): string {
+  return BODY2_TASK;
+}
+
+export function mergeS1FromResult(
+  state: SessionState,
+  result: LlmTurnResult,
+): SessionState {
+  const ex = result.extracted as Record<string, string> | undefined;
+  if (!ex) return state;
+  return {
+    ...state,
+    s1: {
+      questionType: String(ex.questionType ?? state.s1?.questionType ?? ""),
+      taskUnderstanding: String(
+        ex.taskUnderstanding ?? state.s1?.taskUnderstanding ?? "",
+      ),
+      position: String(ex.position ?? state.s1?.position ?? ""),
+    },
+    handoff: {
+      ...(state.handoff ?? {
+        taskUnderstanding: "",
+        position: "",
+        body1Point: "",
+        body1Angle: "",
+        body2Point: "",
+        body2Angle: "",
+      }),
+      questionType: String(ex.questionType ?? state.handoff?.questionType ?? ""),
+    },
+  };
+}
+
+export function applyBodyCoachUpdate(
+  state: SessionState,
+  body: "body1" | "body2",
+  result: LlmTurnResult,
+  userMessage?: string,
+): SessionState {
+  if (!state.s2) return state;
+  const seg = body === "body1" ? state.s2.body1 : state.s2.body2;
+  const openIssue =
+    result.logicBreakdown?.missing?.[0] ??
+    result.coachQuestion ??
+    result.userVisibleText;
+  const updated: BodySegment = {
+    ...seg,
+    status: "coaching",
+    draft: userMessage ?? seg.draft,
+    chainSummary: result.logicBreakdown?.chainSummary ?? seg.chainSummary,
+    slots: result.logicBreakdown?.slots ?? seg.slots,
+    openIssues: openIssue ? [String(openIssue)] : seg.openIssues,
+  };
+  return {
+    ...state,
+    coachContext: {
+      lastQuestion: result.coachQuestion,
+      openIssue: typeof openIssue === "string" ? openIssue : undefined,
+    },
+    s2: {
+      ...state.s2,
+      ...(body === "body1" ? { body1: updated } : { body2: updated }),
+    },
+  };
 }

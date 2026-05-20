@@ -9,57 +9,91 @@ export function mockLlmResponse(
 
   switch (moduleId) {
     case "P1":
-      if (
-        msg.includes("agree") ||
-        msg.includes("disagree") ||
-        msg.includes("discuss") ||
-        msg.includes("同意") ||
-        msg.includes("不同意") ||
-        msg.includes("讨论") ||
-        msg.length > 30
-      ) {
+      if (msg.length > 20) {
         return {
-          verdict: "pass",
+          verdict: "coach",
+          advance: false,
+          mirror: "你在尝试界定题型和立场。",
+          coachQuestion: "还能从哪两个不同角度切入这道题？",
           userVisibleText:
-            "审题完全正确！现在我们进入【Stage 2】。请直接告诉我：Body 1 和 Body 2 分别用哪两个分论点支撑你的总立场？",
+            "不错。请继续想角度；整理好后再填入左侧审题定稿并提交。",
           extracted: {
             questionType: "discuss",
-            taskUnderstanding: "workplace skills vs knowledge for its own sake",
-            position: "depends on student career plan",
+            taskUnderstanding: "skills vs knowledge",
+            position: "depends on career path",
           },
         };
       }
       return {
-        verdict: "fail",
+        verdict: "coach",
+        advance: false,
         userVisibleText:
-          "你还没明确题型和题目核心任务。请补充：题型名称 + 题目要你讨论什么 + 你的总体判断（允许部分同意）。",
+          "请先说明：题型 + 题目任务 + 你的总体判断（可部分同意）。",
+        coachQuestion: "题目中的关键词你最想回应哪一个？",
       };
 
-    case "P2_1":
+    case "P1H":
       return {
         verdict: "pass",
-        userVisibleText:
-          "两个分论点清晰。请补全 Body1：观点成立，是因为______，产生影响是因为______，可用______支持。",
-        extracted: {
-          body1Point: "workplace skills and experience",
-          body2Point: "academic knowledge for research path",
-        },
+        advance: true,
+        userVisibleText: "审题定稿清晰，两角度可区分。",
       };
 
-    case "P2_2":
+    case "P2_2": {
+      const messy = hasUserText && context.userMessage!.length > 40;
+      if (messy && !msg.includes("because") && !msg.includes("因为")) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "你已给出分论点方向。",
+          coachQuestion: "为什么这个观点成立？请补一层因果。",
+          userVisibleText: "论点有了，还缺「为什么成立」。",
+          logicBreakdown: {
+            target: "body1",
+            chainSummary: "仅有观点，链条未闭环",
+            slots: { claim: "（已从原文提取）" },
+            missing: ["reason"],
+          },
+        };
+      }
       return {
         verdict: "pass",
-        userVisibleText:
-          "Body1 论证信息齐全。请用同样方式补全 Body2 的因果链（原因+机制/支撑）。",
+        advance: true,
+        userVisibleText: "Body1 论证链已可读。",
+        logicBreakdown: {
+          target: "body1",
+          chainSummary: "观点→原因→例证，完整",
+          slots: {
+            claim: "workplace skills matter",
+            reason: "employers need ready graduates",
+            example: "internship projects",
+          },
+          missing: [],
+        },
         extracted: {
-          body1Logic: { primaryDriver: "causal", raw: context.userMessage },
+          body1Logic: {
+            primaryDriver: "causal",
+            raw: context.userMessage,
+          },
         },
       };
+    }
 
     case "P2_3":
       return {
         verdict: "pass",
-        userVisibleText: "两段论证骨架完成，进入逐句写作训练。",
+        advance: true,
+        userVisibleText: "两段论证链均完整，进入逐句写作。",
+        logicBreakdown: {
+          target: "body2",
+          chainSummary: "与 Body1 维度区分清晰",
+          slots: {
+            claim: "academic path",
+            reason: "research depth",
+            support: "contrast employability focus",
+          },
+          missing: [],
+        },
         extracted: {
           body2Logic: { primaryDriver: "causal", raw: context.userMessage },
         },
@@ -68,30 +102,8 @@ export function mockLlmResponse(
     case "P3_1":
       return {
         verdict: "assign",
-        userVisibleText:
-          "骨架已锁定：先 Body1（claim→reason→example），再 Body2，最后 conclusion。",
-        blueprint: {
-          body1: {
-            coreIdea: "workplace skills",
-            logicFlow: {
-              claimDirection: "state that universities should prioritize job-ready skills",
-              reasonDirection: "explain why soft skills are hard to learn from textbooks alone",
-              supportDirection: "give internship or project example",
-            },
-          },
-          body2: {
-            coreIdea: "academic knowledge",
-            logicFlow: {
-              claimDirection: "state that knowledge-for-its-own-sake suits academic paths",
-              reasonDirection: "explain long-term depth needed for research",
-              supportDirection: "contrast with short job-focused training",
-            },
-          },
-          conclusion: {
-            restateDirection: "balanced view depending on student goals",
-            summaryLogicDirection: "link employability vs academic depth",
-          },
-        },
+        advance: true,
+        userVisibleText: "进入逐句写作：先 Body1 claim 句。",
         modulePlan: {
           body1: ["claim", "reason", "example"],
           body2: ["claim", "reason", "example"],
@@ -103,40 +115,28 @@ export function mockLlmResponse(
       if (hasUserText && context.subStep.includes("S3_2")) {
         return {
           verdict: "pass",
-          userVisibleText: "这句功能到位。请点击「确认写入」，随后我会给你下一句任务与词块提示。",
+          advance: false,
+          userVisibleText: "这句功能到位。请点击「确认写入」。",
+          syntaxHint: "可尝试用 because / which 明确因果。",
           moduleComplete: true,
-          confirmedSentence: context.userMessage ?? "",
         };
       }
       return {
         verdict: "assign",
-        userVisibleText:
-          "请写 Body1 的 claim 句：明确你支持「就业技能」这一侧（或你的条件立场）。",
+        advance: false,
+        userVisibleText: "请写本句英文（按功能要求，可参考 Keywords）。",
         languageSupport: {
-          keywords: [
-            "prioritize",
-            "workplace skills",
-            "employability",
-            "practical training",
-            "graduates",
-          ],
-          phraseFragments: [
-            "Universities should prioritize...",
-            "This is because...",
-            "For example...",
-          ],
-          starterStructures: [
-            "Universities should prioritize job-relevant skills because...",
-            "From an employability perspective,...",
-          ],
+          keywords: ["prioritize", "employability", "graduates"],
+          phraseFragments: ["Universities should...", "This is because..."],
+          starterStructures: ["Universities should prioritize... because..."],
         },
-        moduleComplete: false,
       };
 
     case "P3_3":
       return {
         verdict: "pass",
-        userVisibleText: "本段论证链完整，进入下一段。",
+        advance: true,
+        userVisibleText: "本段衔接可读，进入下一段。",
         action: "proceed_next_body",
         integratedBodyText: (context.userMessage ?? "Body draft.").slice(0, 200),
       };
@@ -144,6 +144,7 @@ export function mockLlmResponse(
     default:
       return {
         verdict: "assign",
+        advance: false,
         userVisibleText: "请继续输入。",
       };
   }

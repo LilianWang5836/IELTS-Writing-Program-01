@@ -1,27 +1,35 @@
 import { STAGE1_OPENING, MARKERS, MODULE_LABELS } from "@/lib/domain/constants";
-import { getCurrentModule, moduleKey } from "@/lib/domain/module-compiler";
+import { applyHandoffToState, validateHandoff } from "@/lib/domain/handoff";
+import { getCurrentModule } from "@/lib/domain/module-compiler";
+import { buildRuleHintsBlock, ruleHintsForHandoff } from "@/lib/domain/rule-hints";
 import { resolvePromptModule, stageLabel } from "@/lib/domain/router";
+import { migrateSessionState } from "@/lib/domain/migrate-state";
 import { appendChat, stateSummary } from "@/lib/domain/state";
 import { validateUserSentence } from "@/lib/domain/validate";
 import type {
   LlmTurnResult,
   PromptModuleId,
   SessionState,
+  Stage1Handoff,
 } from "@/lib/domain/types";
 import { formatCoachDisplay } from "@/lib/llm/guard";
 import { callLlm } from "@/lib/llm/client";
 import { buildFullPrompt } from "@/lib/prompts/loader";
+import { markerWhenAdvance, shouldAdvance } from "./advance";
 import {
   afterBodyCheck,
   advanceModuleAfterPass,
   applyBlueprint,
-  applyStage1Pass,
-  applyStage2_1Pass,
-  applyStage2_2Pass,
-  applyStage2_3Pass,
+  applyBodyCoachUpdate,
+  applyHandoffAdvance,
+  applyStage2Body1Advance,
+  applyStage2Body2Advance,
   appendMarker,
+  bodyTaskAfterBody1,
+  bodyTaskAfterHandoff,
   integrateBodySentences,
   markerForSubStep,
+  mergeS1FromResult,
 } from "./transitions";
 
 export interface TurnResponse {
@@ -29,6 +37,10 @@ export interface TurnResponse {
   state: SessionState;
   requiresConfirm: boolean;
   canSubmit: boolean;
+}
+
+function ensureMigrated(state: SessionState): SessionState {
+  return migrateSessionState(state);
 }
 
 async function runPrompt(
@@ -54,8 +66,12 @@ function buildVars(
   const base: Record<string, string> = {
     state_summary: stateSummary(state),
     user_message: userMessage ?? "",
+    rule_hints: buildRuleHintsBlock(state),
   };
 
+  if (state.handoff) {
+    base.handoff_json = JSON.stringify(state.handoff);
+  }
   if (state.s1) {
     base.s1_position = state.s1.position;
     base.s1_json = JSON.stringify(state.s1);
@@ -63,9 +79,26 @@ function buildVars(
   if (state.s2) {
     base.body1_point = state.s2.body1Point;
     base.body2_point = state.s2.body2Point;
-    base.body1_logic = state.s2.body1Logic?.raw ?? "";
-    base.s2_json = JSON.stringify(state.s2);
+    base.body1_angle = state.s2.body1Angle;
+    base.body2_angle = state.s2.body2Angle;
+    base.body1_logic = state.s2.body1Logic?.slots
+      ? JSON.stringify(state.s2.body1Logic.slots)
+      : (state.s2.body1.chainSummary ?? state.s2.body1Logic?.raw ?? "");
+    base.body2_logic = state.s2.body2Logic?.slots
+      ? JSON.stringify(state.s2.body2Logic.slots)
+      : (state.s2.body2.chainSummary ?? state.s2.body2Logic?.raw ?? "");
+    base.s2_json = JSON.stringify({
+      body1: state.s2.body1,
+      body2: state.s2.body2,
+    });
   }
+  if (state.coachContext?.openIssue) {
+    base.open_issue = state.coachContext.openIssue;
+  }
+  if (state.coachContext?.lastQuestion) {
+    base.last_coach_question = state.coachContext.lastQuestion;
+  }
+
   if (state.s3) {
     const body = state.s3.currentBody;
     const mod = getCurrentModule(
@@ -117,19 +150,36 @@ async function processLlmTurn(
   let nextState = state;
   let autoContinue = false;
 
-  const marker = markerForSubStep(prevSubStep, result.verdict);
-  if (marker) reply = appendMarker(reply, marker);
+  const advance = shouldAdvance(state, prevSubStep, result);
 
-  if (prevSubStep === "S1_EVAL" && result.verdict === "pass") {
-    nextState = applyStage1Pass(nextState, result);
-  } else if (prevSubStep === "S2_1_SUBPOINTS" && result.verdict === "pass") {
-    nextState = applyStage2_1Pass(nextState, result);
-  } else if (prevSubStep === "S2_2_BODY1" && result.verdict === "pass") {
-    nextState = applyStage2_2Pass(nextState, result);
-  } else if (prevSubStep === "S2_3_BODY2" && result.verdict === "pass") {
-    nextState = applyStage2_3Pass(nextState, result);
-    autoContinue = true;
-  } else if (prevSubStep === "S3_1_BLUEPRINT") {
+  if (prevSubStep === "S1_EVAL") {
+    nextState = mergeS1FromResult(nextState, result);
+    if (!advance) {
+      nextState = appendChat(nextState, "assistant", reply);
+      return { reply, state: nextState, autoContinue: false };
+    }
+  }
+
+  if (markerWhenAdvance(prevSubStep, result, advance)) {
+    const m = markerForSubStep(prevSubStep);
+    if (m) reply = appendMarker(reply, m);
+  }
+
+  if (prevSubStep === "S2_2_BODY1") {
+    if (advance) {
+      nextState = applyStage2Body1Advance(nextState, result, userMessage);
+      reply = `${reply}\n\n${bodyTaskAfterBody1()}`;
+    } else {
+      nextState = applyBodyCoachUpdate(nextState, "body1", result, userMessage);
+    }
+  } else if (prevSubStep === "S2_3_BODY2") {
+    if (advance) {
+      nextState = applyStage2Body2Advance(nextState, result, userMessage);
+      autoContinue = true;
+    } else {
+      nextState = applyBodyCoachUpdate(nextState, "body2", result, userMessage);
+    }
+  } else if (prevSubStep === "S3_1_BLUEPRINT" && advance) {
     nextState = applyBlueprint(nextState, result);
     autoContinue = true;
   } else if (prevSubStep === "S3_2_MODULE" && nextState.s3) {
@@ -141,13 +191,13 @@ async function processLlmTurn(
     } else if (result.verdict === "pass") {
       s3.mode = "feedback";
       s3.pendingSentence = userMessage ?? s3.pendingSentence;
-    } else if (result.verdict === "fail") {
-      s3.mode = "assign";
+    } else {
+      s3.mode = result.verdict === "coach" ? "coach" : "assign";
       s3.pendingSentence = undefined;
     }
     nextState = { ...nextState, s3 };
   } else if (prevSubStep === "S3_3_BODY_CHECK") {
-    if (result.verdict === "pass") {
+    if (result.verdict === "pass" && advance) {
       const integrated =
         result.integratedBodyText ??
         integrateBodySentences(nextState, nextState.s3!.currentBody);
@@ -167,7 +217,7 @@ async function processLlmTurn(
         { ...result, integratedBodyText: integrated },
       );
       autoContinue = nextState.subStep === "S3_2_MODULE";
-    } else {
+    } else if (result.verdict === "fail" || result.verdict === "coach") {
       nextState = afterBodyCheck(nextState, result);
     }
   }
@@ -177,9 +227,10 @@ async function processLlmTurn(
 }
 
 export async function handleInit(state: SessionState): Promise<TurnResponse> {
+  const s0 = ensureMigrated(state);
   const opening = STAGE1_OPENING;
   const s = appendChat(
-    { ...state, subStep: "S1_EVAL" as SessionState["subStep"] },
+    { ...s0, subStep: "S1_EVAL" as SessionState["subStep"] },
     "assistant",
     opening,
   );
@@ -191,12 +242,86 @@ export async function handleInit(state: SessionState): Promise<TurnResponse> {
   };
 }
 
+export async function handleSubmitHandoff(
+  state: SessionState,
+  handoff: Stage1Handoff,
+): Promise<TurnResponse> {
+  let s = ensureMigrated({ ...state, handoff });
+
+  const v = validateHandoff(handoff);
+  if (!v.ok) {
+    return {
+      replies: [v.errors.join("；")],
+      state: s,
+      requiresConfirm: false,
+      canSubmit: true,
+    };
+  }
+
+  const rules = ruleHintsForHandoff(handoff);
+  if (rules.blockAdvance) {
+    return {
+      replies: [
+        `请先调整审题定稿：${rules.warnings.join(" ")}`,
+      ],
+      state: s,
+      requiresConfirm: false,
+      canSubmit: true,
+    };
+  }
+
+  s = applyHandoffToState(s, handoff);
+
+  let result: LlmTurnResult;
+  try {
+    result = await runPrompt(s, "P1H", {
+      query: s.topic,
+      handoff_json: JSON.stringify(handoff),
+      s1_json: JSON.stringify(s.s1 ?? {}),
+      state_summary: stateSummary(s),
+    });
+  } catch {
+    result = {
+      verdict: "pass",
+      advance: true,
+      userVisibleText: `审题定稿已收到。${bodyTaskAfterHandoff()}`,
+    };
+  }
+
+  if (!shouldAdvance(s, "S1_EVAL", result)) {
+    const reply = formatCoachDisplay({
+      ...result,
+      advance: false,
+    });
+    return {
+      replies: [reply],
+      state: appendChat(s, "assistant", reply),
+      requiresConfirm: false,
+      canSubmit: true,
+    };
+  }
+
+  s = applyHandoffAdvance(s);
+  let reply = formatCoachDisplay(result);
+  reply = appendMarker(reply, MARKERS.STAGE_1_PASS);
+  reply = `${reply}\n\n${bodyTaskAfterHandoff()}`;
+  s = appendChat(s, "assistant", reply);
+
+  return {
+    replies: [reply],
+    state: s,
+    requiresConfirm: false,
+    canSubmit: true,
+  };
+}
+
 export async function handleTurn(
   state: SessionState,
   message: string,
 ): Promise<TurnResponse> {
   const replies: string[] = [];
-  let s = appendChat(state, "user", message);
+  let s = ensureMigrated(state);
+  s = appendChat(s, "user", message);
   const moduleId = resolvePromptModule(s);
 
   if (moduleId === "OPENING" || moduleId === "NONE") {
@@ -264,7 +389,6 @@ export async function handleTurn(
     const currentModule = resolvePromptModule(s);
     if (currentModule === "NONE" || currentModule === "OPENING") break;
 
-    // 已有 assign 任务时勿在同一轮重复调用 P3.2
     if (
       currentModule === "P3_2" &&
       s.s3?.mode === "assign" &&
@@ -309,16 +433,17 @@ export async function handleTurn(
 }
 
 export async function handleConfirm(state: SessionState): Promise<TurnResponse> {
-  if (state.subStep !== "S3_2_MODULE" || !state.s3?.pendingSentence) {
+  const s0 = ensureMigrated(state);
+  if (s0.subStep !== "S3_2_MODULE" || !s0.s3?.pendingSentence) {
     return {
       replies: ["当前无需确认。"],
-      state,
+      state: s0,
       requiresConfirm: false,
       canSubmit: true,
     };
   }
 
-  let s = advanceModuleAfterPass(state);
+  let s = advanceModuleAfterPass(s0);
   const replies: string[] = [];
 
   if (s.subStep === "S3_3_BODY_CHECK") {

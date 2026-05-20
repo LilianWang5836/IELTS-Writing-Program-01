@@ -1,24 +1,52 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-/** Vercel Hobby 上限 10s；Pro 可调更高 */
 export const maxDuration = 60;
 import { z } from "zod";
 import questions from "@/data/questions.json";
-import { createInitialState } from "@/lib/domain/state";
-import type { Question, SessionState } from "@/lib/domain/types";
+import { createInitialState, buildLeftPanelText } from "@/lib/domain/state";
+import { migrateSessionState } from "@/lib/domain/migrate-state";
+import type { Question, SessionState, Stage1Handoff } from "@/lib/domain/types";
 import {
   handleConfirm,
   handleInit,
+  handleSubmitHandoff,
   handleTurn,
 } from "@/lib/orchestrator/handle-turn";
 
+const handoffSchema = z.object({
+  taskUnderstanding: z.string(),
+  position: z.string(),
+  body1Point: z.string(),
+  body1Angle: z.string(),
+  body2Point: z.string(),
+  body2Angle: z.string(),
+  questionType: z.string().optional(),
+});
+
 const bodySchema = z.object({
-  action: z.enum(["init", "turn", "confirm"]),
+  action: z.enum(["init", "turn", "confirm", "submit_handoff"]),
   questionId: z.string().optional(),
   message: z.string().optional(),
+  handoff: handoffSchema.optional(),
   state: z.custom<SessionState>().optional(),
 });
+
+function respond(result: {
+  replies: string[];
+  state: SessionState;
+  requiresConfirm: boolean;
+  canSubmit: boolean;
+}) {
+  const state = migrateSessionState(result.state);
+  return NextResponse.json({
+    replies: result.replies,
+    state,
+    requiresConfirm: result.requiresConfirm,
+    canSubmit: result.canSubmit,
+    leftPanel: buildLeftPanelText(state),
+  });
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -31,7 +59,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { action, questionId, message, state } = parsed.data;
+    const { action, questionId, message, state, handoff } = parsed.data;
 
     if (action === "init") {
       if (!questionId) {
@@ -43,45 +71,37 @@ export async function POST(req: NextRequest) {
       }
       const initial = createInitialState(q);
       const result = await handleInit(initial);
-      const { buildLeftPanelText } = await import("@/lib/domain/state");
-      return NextResponse.json({
-        replies: result.replies,
-        state: result.state,
-        requiresConfirm: result.requiresConfirm,
-        canSubmit: result.canSubmit,
-        leftPanel: buildLeftPanelText(result.state),
-      });
+      return respond(result);
     }
 
     if (!state) {
       return NextResponse.json({ error: "state required" }, { status: 400 });
     }
 
+    const migrated = migrateSessionState(state);
+
+    if (action === "submit_handoff") {
+      if (!handoff) {
+        return NextResponse.json({ error: "handoff required" }, { status: 400 });
+      }
+      const result = await handleSubmitHandoff(
+        migrated,
+        handoff as Stage1Handoff,
+      );
+      return respond(result);
+    }
+
     if (action === "turn") {
       if (!message?.trim()) {
         return NextResponse.json({ error: "message required" }, { status: 400 });
       }
-      const result = await handleTurn(state, message.trim());
-      const { buildLeftPanelText } = await import("@/lib/domain/state");
-      return NextResponse.json({
-        replies: result.replies,
-        state: result.state,
-        requiresConfirm: result.requiresConfirm,
-        canSubmit: result.canSubmit,
-        leftPanel: buildLeftPanelText(result.state),
-      });
+      const result = await handleTurn(migrated, message.trim());
+      return respond(result);
     }
 
     if (action === "confirm") {
-      const result = await handleConfirm(state);
-      const { buildLeftPanelText } = await import("@/lib/domain/state");
-      return NextResponse.json({
-        replies: result.replies,
-        state: result.state,
-        requiresConfirm: result.requiresConfirm,
-        canSubmit: result.canSubmit,
-        leftPanel: buildLeftPanelText(result.state),
-      });
+      const result = await handleConfirm(migrated);
+      return respond(result);
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

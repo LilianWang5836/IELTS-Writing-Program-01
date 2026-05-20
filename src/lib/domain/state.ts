@@ -1,9 +1,11 @@
 import { v4 as uuidv4 } from "uuid";
-import type { Question, SessionState } from "./types";
+import { EMPTY_HANDOFF, defaultBodySegment } from "./handoff";
+import { formatSlotsBlock } from "./logic-slots";
+import type { Question, SessionState, Stage1Handoff } from "./types";
 
 export function createInitialState(question: Question): SessionState {
   return {
-    version: 1,
+    version: 2,
     sessionId: uuidv4(),
     questionId: question.id,
     topic: question.prompt,
@@ -15,6 +17,9 @@ export function createInitialState(question: Question): SessionState {
       subBody1Pass: false,
       stage2Pass: false,
     },
+    handoff: { ...EMPTY_HANDOFF },
+    handoffLocked: false,
+    coachContext: {},
     chatHistory: [],
     leftPanelNotes: "",
   };
@@ -26,8 +31,22 @@ export function stateSummary(state: SessionState): string {
       stage: state.stage,
       subStep: state.subStep,
       markers: state.markers,
+      handoffLocked: state.handoffLocked,
+      handoff: state.handoff,
+      coachContext: state.coachContext,
       s1: state.s1,
-      s2: state.s2,
+      s2: state.s2
+        ? {
+            body1Point: state.s2.body1Point,
+            body2Point: state.s2.body2Point,
+            body1Angle: state.s2.body1Angle,
+            body2Angle: state.s2.body2Angle,
+            body1Status: state.s2.body1.status,
+            body2Status: state.s2.body2.status,
+            body1OpenIssue: state.s2.body1.openIssues?.[0],
+            body2OpenIssue: state.s2.body2.openIssues?.[0],
+          }
+        : undefined,
       s3: state.s3
         ? {
             currentBody: state.s3.currentBody,
@@ -54,24 +73,69 @@ export function appendChat(
   };
 }
 
+function handoffBlock(h: Stage1Handoff, locked: boolean): string[] {
+  const tag = locked ? "【审题定稿 · 已锁定】" : "【审题定稿 · 编辑中】";
+  return [
+    tag,
+    `① 题意：${h.taskUnderstanding || "—"}`,
+    `② 立场：${h.position || "—"}`,
+    `③ Body1：${h.body1Point || "—"}`,
+    `   角度：${h.body1Angle || "—"}`,
+    `④ Body2：${h.body2Point || "—"}`,
+    `   角度：${h.body2Angle || "—"}`,
+    "",
+  ];
+}
+
 export function buildLeftPanelText(state: SessionState): string {
   const parts: string[] = [];
 
-  if (state.s1) {
-    parts.push("【审题】");
-    parts.push(`题型：${state.s1.questionType}`);
-    parts.push(`任务：${state.s1.taskUnderstanding}`);
-    parts.push(`立场：${state.s1.position}`);
+  if (state.stage === 1 && state.handoff) {
+    parts.push(...handoffBlock(state.handoff, !!state.handoffLocked));
+  } else if (state.handoffLocked && state.handoff) {
+    parts.push(...handoffBlock(state.handoff, true));
+  }
+
+  if (state.coachContext?.openIssue) {
+    parts.push(`⚠ 当前待解决：${state.coachContext.openIssue}`);
     parts.push("");
   }
 
-  if (state.s2) {
-    parts.push("【论点】");
-    parts.push(`Body 1：${state.s2.body1Point}`);
-    if (state.s2.body1Logic?.raw) parts.push(`  论证：${state.s2.body1Logic.raw}`);
-    parts.push(`Body 2：${state.s2.body2Point}`);
-    if (state.s2.body2Logic?.raw) parts.push(`  论证：${state.s2.body2Logic.raw}`);
-    parts.push("");
+  if (state.s2 && state.stage >= 2) {
+    if (state.subStep === "S2_2_BODY1" || state.s2.body1.draft) {
+      parts.push("【Body1 论证草稿】");
+      parts.push(state.s2.body1.draft || "（在下方输入区提交本段论证）");
+      if (state.s2.body1.chainSummary) {
+        parts.push(`链条：${state.s2.body1.chainSummary}`);
+      }
+      parts.push(
+        ...formatSlotsBlock(
+          "  已识别：",
+          state.s2.body1.slots,
+          undefined,
+        ),
+      );
+      parts.push("");
+    }
+    if (
+      state.subStep === "S2_3_BODY2" ||
+      state.s2.body2.status === "ready" ||
+      state.s2.body2.draft
+    ) {
+      parts.push("【Body2 论证草稿】");
+      parts.push(state.s2.body2.draft || "（待写）");
+      if (state.s2.body2.chainSummary) {
+        parts.push(`链条：${state.s2.body2.chainSummary}`);
+      }
+      parts.push(
+        ...formatSlotsBlock(
+          "  已识别：",
+          state.s2.body2.slots,
+          undefined,
+        ),
+      );
+      parts.push("");
+    }
   }
 
   if (state.s3?.integratedBodies.body1) {
@@ -93,16 +157,30 @@ export function buildLeftPanelText(state: SessionState): string {
   }
 
   const sentences = state.s3?.confirmedSentences ?? {};
-  const draftKeys = Object.keys(sentences).filter(
-    (k) => !state.s3?.integratedBodies.body1?.includes(k),
-  );
-  if (draftKeys.length > 0) {
-    parts.push("【逐句草稿】");
-    for (const key of draftKeys.sort()) {
+  const keys = Object.keys(sentences).sort();
+  if (keys.length > 0) {
+    parts.push("【已确认句子】");
+    for (const key of keys) {
       const lines = sentences[key];
       if (lines?.length) parts.push(`${key}: ${lines.join(" ")}`);
     }
   }
 
-  return parts.join("\n").trim() || "（确认后的内容将显示在这里）";
+  return parts.join("\n").trim() || "（内容将显示在这里）";
+}
+
+export function initS2FromHandoff(state: SessionState): SessionState {
+  const h = state.handoff!;
+  return {
+    ...state,
+    stage: 2,
+    s2: {
+      body1Point: h.body1Point,
+      body2Point: h.body2Point,
+      body1Angle: h.body1Angle,
+      body2Angle: h.body2Angle,
+      body1: defaultBodySegment(),
+      body2: defaultBodySegment(),
+    },
+  };
 }

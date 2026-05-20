@@ -8,7 +8,7 @@ export function StageProgress() {
 
   const stages = [
     { n: 1, done: state.markers.stage1Pass, label: "审题立意" },
-    { n: 2, done: state.markers.stage2Pass, label: "因果金字塔" },
+    { n: 2, done: state.markers.stage2Pass, label: "论证链条" },
     { n: 3, done: state.subStep === "COMPLETED", label: "逐句写作" },
   ];
 

@@ -1,61 +1,25 @@
-# 【内容回应】Stage 1：审题立意特训
+# 【内容回应】Stage 1：审题探索（聊天 Coach，不推进阶段）
 
-## 判定逻辑（Stage 1 Pass/Fail）
+本步仅 **角度探索 + 题意/立场澄清**。学生定稿在左侧编辑区提交，**不要**在本轮 pass 后进入 Stage 2。
 
-必须先识别题型，再判断：
-
-**Discuss both views**
-- 是否识别双方观点
-- 是否给出总体判断（允许分情况讨论，不强制选边）
-
-**Agree / Disagree**
-- 是否存在稳定总体判断
-- 允许：部分同意 / 条件同意 / 权衡判断
-- 禁止：摇摆不定 / 回避判断 / 前后矛盾
-
-**Advantages / Disadvantages**
-- 是否理解「比较视角」而非简单列举
-
-**Two-part question**
-- 是否回答两个问题
-
-**Positive / Negative development**
-- 是否给出价值判断
-- 允许：权衡判断/让步讨论
-
-### 必检项（所有题型通用）
-- 是否遗漏限制条件（对象 / 时间 / 程度 / 场景）
-- 是否扩大或缩小题目范围
-
-### Fail 输出格式
-第 1 句话：指出具体漏掉的核心信息或错误理解
-第 2 句话：强制追问缺失内容
-
-### PASS（同轮切流，见【流程规划】）
-当用户回答同时满足：
-1. 正确题型
-2. 抓住任务
-3. 无关键遗漏
-4. 有稳定总体判断
-
-你必须在【同一轮回复】中完成：
-1. 一句话肯定用户审题正确
-2. 一句自然过渡进入 Stage 2（不得等待用户输入）
-3. 输出 Stage 2 的首个任务引导
-
-输出示例：
-「审题完全正确！现在我们无缝进入【Stage 2：Body段骨架搭建】。基于你刚才的立场，请直接告诉我：你的 Body 1 和 Body 2 分别打算用哪两个分论点来支撑总立场？」
+## 教练行为
+- 可多轮启发：题型、任务、可写角度、立场（允许部分同意）
+- 每轮：mirror（理解）+ 至多 1 个 coachQuestion
+- **禁止**因聊天 pass 而输出 Stage 2 任务或 advance
+- 不给两个现成分论点当答案；可提示「整理进左侧审题定稿」
 
 ## 用户本轮回答
 {{user_message}}
 
 ## 输出 JSON
 {
-  "verdict": "pass" | "fail",
-  "questionType": "discuss|agree|adv_disadv|two_part|pos_neg|unknown",
-  "userVisibleText": "≤3句",
+  "verdict": "coach" | "fail" | "pass",
+  "advance": false,
+  "mirror": "一句话复述学生内容",
+  "coachQuestion": "一个启发问题，或空",
+  "userVisibleText": "≤3句，含 mirror 要点",
   "extracted": {
-    "questionType": "",
+    "questionType": "discuss|agree|adv_disadv|two_part|pos_neg|unknown",
     "taskUnderstanding": "",
     "position": ""
   }

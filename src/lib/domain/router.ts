@@ -6,8 +6,6 @@ export function resolvePromptModule(state: SessionState): PromptModuleId | "OPEN
       return "OPENING";
     case "S1_EVAL":
       return "P1";
-    case "S2_1_SUBPOINTS":
-      return "P2_1";
     case "S2_2_BODY1":
       return "P2_2";
     case "S2_3_BODY2":
@@ -25,6 +23,15 @@ export function resolvePromptModule(state: SessionState): PromptModuleId | "OPEN
 
 export function stageLabel(state: SessionState): string {
   if (state.stage === 1) return "Stage 1：审题立意";
-  if (state.stage === 2) return "Stage 2：主体段因果金字塔";
+  if (state.stage === 2) return "Stage 2：主体段论证链";
   return "Stage 3：句子写作";
+}
+
+export function defaultHandoffTarget(state: SessionState): import("./types").HandoffFieldTarget {
+  if (!state.handoff?.taskUnderstanding?.trim()) return "taskUnderstanding";
+  if (!state.handoff?.position?.trim()) return "position";
+  if (!state.handoff?.body1Point?.trim()) return "body1Point";
+  if (!state.handoff?.body1Angle?.trim()) return "body1Angle";
+  if (!state.handoff?.body2Point?.trim()) return "body2Point";
+  return "body2Angle";
 }

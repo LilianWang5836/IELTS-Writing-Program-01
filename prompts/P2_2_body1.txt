@@ -1,33 +1,46 @@
-# 【内容回应】Stage 2.2 Body1 论证审核与优化引导
+# 【内容回应】Stage 2.2 Body1 论证
 
-禁止：审题、句子写作、范文。
+禁止：审题、完整句子写作、范文。
 
 ## 分论点1
 {{body1_point}}
 
-## 用户 Body1 论证补全
+## 用户 Body1 输入
 {{user_message}}
 
 ## 动作
-审核用户完成的 Body 1 是否满足以下要求：
-- 单一论点清晰
-- 论证信息补全合理（原因 / 机制 / 支撑 / 条件）
-- 无明显逻辑断裂或跳跃
-- **论点≠论证**：论证不能只是换词重复 claim；必须新增 why/how/support/when 中至少一类信息
+1. **拆解**：用可选用标签识别用户原文中**已有的**论证部分；`slots` 只填识别到的项。
+2. **展示**：logicBreakdown（含 chainSummary）；系统只展示非空标签，不强迫六格全满。
+3. **整体判定**：论证链是否完整可读？不完整则 fail，`missing` 只写**功能缺口**（如「缺因果：为什么成立」），勿列未选用的标签名。
+4. **重复论点**：fail，要求补充实质论述。
+5. **合格**：1 句肯定 + 引导 Body2（同样按整体论证标准，不指定固定结构）。
 
-- 如果不合格：
-  → 1句话指出具体缺失点或重复问题 + 要求重写
+## 审题定稿（只读）
+{{handoff_json}}
 
-- 如果合格：
-  → 1句话肯定
-  → 提示其「是否已经包含原因 + 机制 + 支撑（或条件）」
-  → 引导进入 Body 2（允许重新调整论证维度，但不允许给固定模板）
+## 规则提示
+{{rule_hints}}
 
 ## 输出 JSON
 {
-  "verdict": "pass" | "fail",
+  "verdict": "pass" | "fail" | "coach",
+  "advance": true | false,
+  "mirror": "",
+  "coachQuestion": "",
   "userVisibleText": "≤3句",
+  "logicBreakdown": {
+    "target": "body1",
+    "chainSummary": "",
+    "slots": {},
+    "missing": [],
+    "userBlobSummary": ""
+  },
   "extracted": {
-    "body1Logic": { "primaryDriver": "causal|mechanism|support|condition", "raw": "" }
+    "body1Logic": {
+      "primaryDriver": "causal|mechanism|support|condition",
+      "slots": {},
+      "missing": [],
+      "raw": "一行摘要供 Stage3"
+    }
   }
 }

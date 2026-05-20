@@ -9,13 +9,14 @@ export type QuestionType =
 export type SubStep =
   | "S1_AWAIT"
   | "S1_EVAL"
-  | "S2_1_SUBPOINTS"
   | "S2_2_BODY1"
   | "S2_3_BODY2"
   | "S3_1_BLUEPRINT"
   | "S3_2_MODULE"
   | "S3_3_BODY_CHECK"
   | "COMPLETED";
+
+export type SegmentStatus = "coaching" | "ready";
 
 export type ModuleId =
   | "claim"
@@ -28,10 +29,55 @@ export type ModuleId =
 
 export type BodyKey = "body1" | "body2" | "conclusion";
 
+export type ParagraphSlot =
+  | "claim"
+  | "reason"
+  | "elaboration"
+  | "support"
+  | "example"
+  | "link";
+
+export interface ParagraphSlots {
+  claim?: string | null;
+  reason?: string | null;
+  elaboration?: string | null;
+  support?: string | null;
+  example?: string | null;
+  link?: string | null;
+}
+
+export interface LogicBreakdown {
+  target: "subpoints" | "body1" | "body2";
+  chainSummary?: string;
+  slots: ParagraphSlots;
+  missing?: ParagraphSlot[];
+  userBlobSummary?: string;
+}
+
 export interface LogicFill {
   primaryDriver?: "causal" | "mechanism" | "support" | "condition";
   fills?: Record<string, string>;
+  slots?: ParagraphSlots;
+  missing?: ParagraphSlot[];
   raw?: string;
+}
+
+export interface Stage1Handoff {
+  taskUnderstanding: string;
+  position: string;
+  body1Point: string;
+  body1Angle: string;
+  body2Point: string;
+  body2Angle: string;
+  questionType?: string;
+}
+
+export interface BodySegment {
+  status: SegmentStatus;
+  draft: string;
+  chainSummary?: string;
+  slots?: ParagraphSlots;
+  openIssues?: string[];
 }
 
 export interface Stage1Data {
@@ -58,8 +104,13 @@ export interface Blueprint {
   };
 }
 
+export interface CoachContext {
+  lastQuestion?: string;
+  openIssue?: string;
+}
+
 export interface SessionState {
-  version: 1;
+  version: 2;
   sessionId: string;
   questionId: string;
   topic: string;
@@ -71,10 +122,17 @@ export interface SessionState {
     subBody1Pass: boolean;
     stage2Pass: boolean;
   };
+  handoff?: Stage1Handoff;
+  handoffLocked?: boolean;
+  coachContext?: CoachContext;
   s1?: Stage1Data;
   s2?: {
     body1Point: string;
     body2Point: string;
+    body1Angle: string;
+    body2Angle: string;
+    body1: BodySegment;
+    body2: BodySegment;
     body1Logic?: LogicFill;
     body2Logic?: LogicFill;
   };
@@ -83,7 +141,7 @@ export interface SessionState {
     modulePlan: Record<BodyKey, ModuleId[]>;
     currentBody: BodyKey;
     moduleIndex: number;
-    mode: "assign" | "feedback";
+    mode: "assign" | "feedback" | "coach";
     confirmedSentences: Partial<Record<string, string[]>>;
     pendingSentence?: string;
     lastAssignText?: string;
@@ -103,12 +161,20 @@ export interface Question {
 
 export type PromptModuleId =
   | "P1"
-  | "P2_1"
+  | "P1H"
   | "P2_2"
   | "P2_3"
   | "P3_1"
   | "P3_2"
   | "P3_3";
+
+export type HandoffFieldTarget =
+  | "taskUnderstanding"
+  | "position"
+  | "body1Point"
+  | "body1Angle"
+  | "body2Point"
+  | "body2Angle";
 
 export interface LanguageSupport {
   keywords?: string[];
@@ -117,8 +183,13 @@ export interface LanguageSupport {
 }
 
 export interface LlmTurnResult {
-  verdict: "pass" | "fail" | "assign";
+  verdict: "pass" | "fail" | "assign" | "coach";
+  /** 为 true 时系统才切 subStep / 打暗号 */
+  advance?: boolean;
+  mirror?: string;
+  coachQuestion?: string;
   userVisibleText: string;
+  logicBreakdown?: LogicBreakdown;
   languageSupport?: LanguageSupport;
   extracted?: Record<string, unknown>;
   blueprint?: Blueprint;
@@ -129,4 +200,5 @@ export interface LlmTurnResult {
   action?: "append_sentence" | "proceed_next_body";
   missingGap?: "reason" | "example" | "impact" | null;
   integratedBodyText?: string | null;
+  syntaxHint?: string | null;
 }

@@ -2,7 +2,14 @@
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import type { Question, SessionState } from "@/lib/domain/types";
+import { EMPTY_HANDOFF } from "@/lib/domain/handoff";
+import { defaultHandoffTarget } from "@/lib/domain/router";
+import type {
+  HandoffFieldTarget,
+  Question,
+  SessionState,
+  Stage1Handoff,
+} from "@/lib/domain/types";
 
 interface WritingStore {
   questions: Question[];
@@ -10,6 +17,8 @@ interface WritingStore {
   state: SessionState | null;
   messages: Array<{ role: "user" | "assistant"; text: string }>;
   leftPanel: string;
+  handoffDraft: Stage1Handoff | null;
+  insertTarget: HandoffFieldTarget;
   loading: boolean;
   requiresConfirm: boolean;
   canSubmit: boolean;
@@ -20,10 +29,14 @@ interface WritingStore {
   initSession: () => Promise<void>;
   sendMessage: (text: string) => Promise<void>;
   confirmSentence: () => Promise<void>;
+  submitHandoff: () => Promise<void>;
+  setHandoffField: (key: HandoffFieldTarget, value: string) => void;
+  setInsertTarget: (key: HandoffFieldTarget) => void;
+  applySelectionToHandoff: (text: string) => void;
   reset: () => void;
 }
 
-const STORAGE_KEY = "ielts-writing-tutor-v1";
+const STORAGE_KEY = "ielts-writing-tutor-v2";
 
 const safeStorage = createJSONStorage(() => {
   if (typeof window === "undefined") {
@@ -44,6 +57,8 @@ export const useWritingStore = create<WritingStore>()(
       state: null,
       messages: [],
       leftPanel: "",
+      handoffDraft: null,
+      insertTarget: "taskUnderstanding",
       loading: false,
       requiresConfirm: false,
       canSubmit: false,
@@ -57,6 +72,8 @@ export const useWritingStore = create<WritingStore>()(
           state: null,
           messages: [],
           leftPanel: "",
+          handoffDraft: null,
+          insertTarget: "taskUnderstanding",
           requiresConfirm: false,
           canSubmit: false,
           error: null,
@@ -68,7 +85,10 @@ export const useWritingStore = create<WritingStore>()(
           set({ error: "请先选择题目" });
           return;
         }
-        if (existing?.questionId === selectedQuestionId && existing.subStep !== "S1_AWAIT") {
+        if (
+          existing?.questionId === selectedQuestionId &&
+          existing.subStep !== "S1_AWAIT"
+        ) {
           return;
         }
         set({ loading: true, error: null });
@@ -76,12 +96,17 @@ export const useWritingStore = create<WritingStore>()(
           const res = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "init", questionId: selectedQuestionId }),
+            body: JSON.stringify({
+              action: "init",
+              questionId: selectedQuestionId,
+            }),
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "Init failed");
           set({
             state: data.state,
+            handoffDraft: data.state.handoff ?? { ...EMPTY_HANDOFF },
+            insertTarget: defaultHandoffTarget(data.state),
             messages: data.replies.map((t: string) => ({
               role: "assistant" as const,
               text: t,
@@ -95,6 +120,65 @@ export const useWritingStore = create<WritingStore>()(
           set({
             loading: false,
             error: e instanceof Error ? e.message : "初始化失败",
+          });
+        }
+      },
+
+      setHandoffField: (key, value) => {
+        const { handoffDraft, state } = get();
+        const base = handoffDraft ?? state?.handoff ?? { ...EMPTY_HANDOFF };
+        const next = { ...base, [key]: value };
+        set({
+          handoffDraft: next,
+          state: state ? { ...state, handoff: next } : state,
+        });
+      },
+
+      setInsertTarget: (key) => set({ insertTarget: key }),
+
+      applySelectionToHandoff: (text) => {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        const { insertTarget } = get();
+        get().setHandoffField(insertTarget, trimmed);
+      },
+
+      submitHandoff: async () => {
+        const { state, handoffDraft } = get();
+        if (!state) return;
+        const handoff = handoffDraft ?? state.handoff ?? EMPTY_HANDOFF;
+        set({ loading: true, error: null });
+        try {
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "submit_handoff",
+              state,
+              handoff,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error ?? "Submit failed");
+          set({
+            state: data.state,
+            handoffDraft: data.state.handoff ?? handoff,
+            messages: [
+              ...get().messages,
+              ...data.replies.map((t: string) => ({
+                role: "assistant" as const,
+                text: t,
+              })),
+            ],
+            leftPanel: data.leftPanel ?? "",
+            requiresConfirm: data.requiresConfirm,
+            canSubmit: data.canSubmit,
+            loading: false,
+          });
+        } catch (e) {
+          set({
+            loading: false,
+            error: e instanceof Error ? e.message : "提交定稿失败",
           });
         }
       },
@@ -114,20 +198,24 @@ export const useWritingStore = create<WritingStore>()(
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "Request failed");
-          set((s) => ({
+          set({
             state: data.state,
+            handoffDraft: data.state.handoff ?? get().handoffDraft,
+            insertTarget: data.state.handoffLocked
+              ? get().insertTarget
+              : defaultHandoffTarget(data.state),
             messages: [
-              ...s.messages,
+              ...get().messages,
               ...data.replies.map((t: string) => ({
                 role: "assistant" as const,
                 text: t,
               })),
             ],
-            leftPanel: data.leftPanel ?? s.leftPanel,
+            leftPanel: data.leftPanel ?? get().leftPanel,
             requiresConfirm: data.requiresConfirm,
             canSubmit: data.canSubmit,
             loading: false,
-          }));
+          });
         } catch (e) {
           set({
             loading: false,
@@ -148,20 +236,20 @@ export const useWritingStore = create<WritingStore>()(
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "Confirm failed");
-          set((s) => ({
+          set({
             state: data.state,
             messages: [
-              ...s.messages,
+              ...get().messages,
               ...data.replies.map((t: string) => ({
                 role: "assistant" as const,
                 text: t,
               })),
             ],
-            leftPanel: data.leftPanel ?? s.leftPanel,
+            leftPanel: data.leftPanel ?? get().leftPanel,
             requiresConfirm: data.requiresConfirm,
             canSubmit: data.canSubmit,
             loading: false,
-          }));
+          });
         } catch (e) {
           set({
             loading: false,
@@ -175,6 +263,8 @@ export const useWritingStore = create<WritingStore>()(
           state: null,
           messages: [],
           leftPanel: "",
+          handoffDraft: null,
+          insertTarget: "taskUnderstanding",
           requiresConfirm: false,
           canSubmit: false,
           error: null,
@@ -189,6 +279,8 @@ export const useWritingStore = create<WritingStore>()(
         state: s.state,
         messages: s.messages,
         leftPanel: s.leftPanel,
+        handoffDraft: s.handoffDraft,
+        insertTarget: s.insertTarget,
         requiresConfirm: s.requiresConfirm,
         canSubmit: s.canSubmit,
       }),

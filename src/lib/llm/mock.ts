@@ -200,15 +200,32 @@ export function mockLlmResponse(
 
     case "P2_2": {
       const raw = context.userMessage ?? "";
+
       if (/不知道怎么串|不会串|怎么连/.test(raw)) {
         return {
           verdict: "coach",
           advance: false,
           mirror: "没关系，我根据你已说的先搭一版骨架。",
           coachQuestion:
-            "这条线是否顺？要改请说哪一环（论点/原因/例子/扣题）。",
+            "这条线是否顺？要改请说哪一环（论点/原因/例子/段末收束）。",
           userVisibleText: "",
           paragraphSubstanceSufficient: false,
+          chainTurnRole: "meta",
+          chainTurnQuality: "none",
+        };
+      }
+
+      if (/重复|问过了|又说/.test(raw)) {
+        return {
+          verdict: "coach",
+          advance: false,
+          mirror: "抱歉，刚才重复问了。",
+          coachQuestion:
+            "请写段末收束（Link）：用「因此/所以」一句，把例子接到就业/求职结果（一句即可）。",
+          userVisibleText: "",
+          paragraphSubstanceSufficient: false,
+          chainTurnRole: "meta",
+          chainTurnQuality: "none",
         };
       }
 
@@ -217,92 +234,118 @@ export function mockLlmResponse(
           verdict: "coach",
           advance: false,
           mirror: "我们继续按链条补环，不用急着收尾。",
-          coachQuestion: "还缺哪一环？你可以补例子或扣题到「尽快就业」。",
+          coachQuestion: "还缺哪一环？你可以补段末收束到就业/求职。",
           userVisibleText: "",
           paragraphSubstanceSufficient: false,
+          chainTurnRole: "meta",
+          chainTurnQuality: "none",
         };
       }
 
-      const hasExample = /项目|实习|coding|编程|实践|工程师/.test(raw);
-      const hasReason = /因为|所以|才能|直接|更容易|有助于/.test(raw);
-      const hasLink = /就业|求职|竞争|找工作|上岗/.test(raw);
-      const substanceReady =
-        hasExample && hasReason && hasLink && raw.length >= 40;
-
-      if (!hasUserText || raw.length < 15) {
+      if (!hasUserText || raw.length < 12) {
         return {
           verdict: "coach",
           advance: false,
           mirror: "我们按链条一环一环来。",
           coachQuestion:
-            "先补原因：为什么提供工作技能，能帮助学生更快就业？",
+            "请写原因：为什么大学要提供实习/项目/实操（可用「原因：」开头）？",
           userVisibleText: "",
           paragraphSubstanceSufficient: false,
+          chainTurnRole: "none",
+          chainTurnQuality: "none",
         };
       }
 
-      if (!hasExample) {
+      if (/^原因\s*[:：]|因为/.test(raw) && !/比如|例如/.test(raw)) {
         return {
           verdict: "coach",
           advance: false,
-          mirror: "论点/原因方向有了。",
+          mirror: "课本与实践的差异我听到了，原因这一环够了。",
           coachQuestion:
-            "给一个具体例子：学校可提供什么实践或项目？（如 coding 项目、实习）",
+            "请写举例：给一个具体场景（如计算机岗位、技术栈、实习/项目）。",
           userVisibleText: "",
           paragraphSubstanceSufficient: false,
+          chainTurnRole: "reason",
+          chainTurnQuality: "ok",
+          chainTurnText: raw,
+          extracted: {
+            chainTurnRole: "reason",
+            chainTurnQuality: "ok",
+            body1Logic: { primaryDriver: "causal", slots: {}, raw },
+          },
         };
       }
 
-      if (!hasReason) {
+      if (/比如|例如|举例/.test(raw)) {
+        const concrete =
+          /技术栈|计算机|公司|实习|项目|岗位|编程|实训/.test(raw);
         return {
           verdict: "coach",
           advance: false,
-          mirror: "例子很具体。",
-          coachQuestion:
-            "补一层因果：这些技能/项目如何让学生更快找到工作？",
+          mirror: concrete
+            ? "计算机/技术栈这个例子够了。"
+            : "方向对，再具体一点。",
+          coachQuestion: concrete
+            ? "请写段末收束：用「因此/所以」一句，说明上述如何帮助学生更快就业/求职（勿重复全文立场）。"
+            : "你举的方向听到了，请补：公司或项目里具体做了什么（一句）？",
           userVisibleText: "",
           paragraphSubstanceSufficient: false,
+          chainTurnRole: "example",
+          chainTurnQuality: concrete ? "ok" : "weak",
+          chainTurnText: raw,
+          extracted: {
+            chainTurnRole: "example",
+            chainTurnQuality: concrete ? "ok" : "weak",
+            body1Logic: { primaryDriver: "causal", slots: {}, raw },
+          },
         };
       }
 
-      if (!hasLink || !substanceReady) {
+      if (/因此|所以/.test(raw) && /工作|就业|求职|面试|适应/.test(raw)) {
+        const proposal = {
+          chainSummary: "技能/项目 → 实用技术 → 更易就业",
+          slots: {
+            claim: "大学应为希望尽快就业的学生提供职场所需的知识和技能",
+            reason: "课本知识偏学术，与职场技能不匹配，需在实践项目中补充",
+            example:
+              "如计算机行业各公司技术栈不同，需通过实际项目学习实用技术",
+            link: raw.trim(),
+          },
+          draft: raw,
+        };
         return {
           verdict: "coach",
           advance: false,
-          mirror: "例子和原因都有了。",
-          coachQuestion:
-            "扣题到审题：这些能力如何落到「帮助学生尽快就业」？（一句话）",
+          mirror: "",
+          coachQuestion: "",
           userVisibleText: "",
-          paragraphSubstanceSufficient: false,
+          paragraphSubstanceSufficient: true,
+          proposalSummary: "四环齐了，请看左侧「确认链条并填入」。",
+          chainProposal: proposal,
+          chainTurnRole: "link",
+          chainTurnQuality: "ok",
+          extracted: {
+            chainTurnRole: "link",
+            chainTurnQuality: "ok",
+            body1Logic: {
+              primaryDriver: "causal",
+              slots: proposal.slots,
+              raw,
+            },
+          },
         };
       }
 
-      const proposal = {
-        chainSummary: "提供工作技能 → 项目/实习练技能 → 更易就业",
-        slots: {
-          claim: "大学提供工作技能",
-          reason: "代码/项目规划等可直接用于工作，项目经验助找实习",
-          example: "与工种相关的实践项目（如工程师自己 coding 做项目）",
-          link: "在求职中获得竞争优势、更快就业",
-        },
-        draft: raw,
-      };
       return {
         verdict: "coach",
         advance: false,
-        mirror: "",
-        coachQuestion: "",
+        mirror: "收到。",
+        coachQuestion:
+          "请写原因、举例或段末收束中的一环（当前建议先补还没写清的那环）。",
         userVisibleText: "",
-        paragraphSubstanceSufficient: true,
-        proposalSummary: "四环齐了，请看左侧「确认链条并填入」。",
-        chainProposal: proposal,
-        extracted: {
-          body1Logic: {
-            primaryDriver: "causal",
-            slots: proposal.slots,
-            raw,
-          },
-        },
+        paragraphSubstanceSufficient: false,
+        chainTurnRole: "none",
+        chainTurnQuality: "none",
       };
     }
 

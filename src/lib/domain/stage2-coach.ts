@@ -9,16 +9,26 @@ import {
   buildSlotsFromChat,
   detectChainConfusion,
   detectChainMetaQuestion,
+  exampleFollowUpCoachPrompt,
   formatChainProgress,
+  isWeakExampleSentence,
   formatChainSkeleton,
   getChainBuildContext,
   getNextChainBuildStep,
-  isBannedCoachQuestion,
   isChainStepFilled,
+  isExampleSentence,
   mergeSlots,
   type ChainBuildStep,
 } from "./chain-scaffold";
-import { userBlobForWorkshopBody } from "./stage2-context";
+import {
+  mergeSlotsWithTurnUnderstanding,
+  parseChainTurnUnderstanding,
+  resolveHybridCoachTurn,
+} from "./chain-understanding";
+import {
+  detectChainFrustration,
+  userBlobForWorkshopBody,
+} from "./stage2-context";
 import type {
   ChainPhase,
   ChainProposal,
@@ -77,14 +87,6 @@ function sanitizeMirror(result: LlmTurnResult, userMessage?: string): LlmTurnRes
   return { ...result, mirror, coachQuestion: result.coachQuestion?.trim() ?? "" };
 }
 
-function pickCoachQuestion(
-  llmQ: string,
-  scaffoldQ: string,
-): string {
-  if (!llmQ || isBannedCoachQuestion(llmQ)) return scaffoldQ;
-  return llmQ;
-}
-
 export function postProcessStage2(
   state: SessionState,
   result: LlmTurnResult,
@@ -100,9 +102,18 @@ export function postProcessStage2(
   }
 
   const sanitized = sanitizeMirror(result, userMessage);
+  const understanding = parseChainTurnUnderstanding(sanitized, userMessage);
   const chatSlots = buildSlotsFromChat(nextState, body);
   const seg = body === "body1" ? nextState.s2?.body1 : nextState.s2?.body2;
-  const workingSlots = mergeSlots(chatSlots, seg?.slots);
+  let workingSlots = mergeSlots(
+    mergeSlotsWithTurnUnderstanding(
+      chatSlots,
+      understanding,
+      userMessage,
+      body,
+    ),
+    seg?.slots,
+  );
 
   const proposalFromLlm = chainProposalFromResult(sanitized, body);
   const slotsForSubstance = mergeSlots(workingSlots, proposalFromLlm?.slots);
@@ -180,6 +191,73 @@ export function postProcessStage2(
     };
   }
 
+  if (detectChainFrustration(userMessage)) {
+    const prevF = (state.coachContext?.chainBuildStep ?? "claim") as ChainBuildStep;
+    const afterF = getNextChainBuildStep(workingSlots, body, buildCtx);
+    const ex = workingSlots.example?.trim() ?? "";
+
+    if (
+      ex &&
+      isExampleSentence(ex, body) &&
+      !isWeakExampleSentence(ex, body) &&
+      (prevF === "example" || /举例|例子|Example/i.test(state.coachContext?.lastQuestion ?? ""))
+    ) {
+      nextState = setBodyChainPhase(
+        nextState,
+        body,
+        phase === "locked" ? "locked" : "coaching",
+        undefined,
+        workingSlots,
+      );
+      const mirror = "抱歉，刚才重复问了举例；你的例子我记下了。";
+      const coachQ = afterF.coachPrompt;
+      const progress = formatChainProgress(workingSlots, afterF.step);
+      return {
+        result: {
+          verdict: "coach",
+          advance: false,
+          mirror,
+          coachQuestion: coachQ,
+          userVisibleText: [mirror, coachQ, progress].filter(Boolean).join("\n\n"),
+          logicBreakdown: undefined,
+        },
+        state: {
+          ...nextState,
+          coachContext: {
+            ...nextState.coachContext,
+            chainBuildStep: afterF.step,
+            lastQuestion: coachQ,
+            openIssue: undefined,
+          },
+        },
+      };
+    }
+
+    if (ex && isWeakExampleSentence(ex, body)) {
+      const coachQ = exampleFollowUpCoachPrompt(ex, body);
+      const mirror = "抱歉，刚才问法重复了；你的方向对，再具体一点即可。";
+      return {
+        result: {
+          verdict: "coach",
+          advance: false,
+          mirror,
+          coachQuestion: coachQ,
+          userVisibleText: [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n"),
+          logicBreakdown: undefined,
+        },
+        state: {
+          ...nextState,
+          coachContext: {
+            ...nextState.coachContext,
+            chainBuildStep: "example",
+            lastQuestion: coachQ,
+            openIssue: coachQ,
+          },
+        },
+      };
+    }
+  }
+
   if (detectChainConfusion(userMessage)) {
     const skeleton = formatChainSkeleton(workingSlots, bodyLabel);
     const coachQ =
@@ -248,58 +326,18 @@ export function postProcessStage2(
   }
 
   const prevStep = (state.coachContext?.chainBuildStep ?? "claim") as ChainBuildStep;
-  const stepLabel = (s: ChainBuildStep) =>
-    s === "ready" ? "" : SLOT_HINT[s];
-
-  const userAdvancedStep =
-    !!userMessage?.trim() &&
-    prevStep !== "ready" &&
-    prevStep !== "claim" &&
-    buildStep !== prevStep &&
-    isChainStepFilled(workingSlots, prevStep, body);
-
-  const scaffoldQ = stepPrompt || substance.coachPrompt || "";
-  const preferScaffold =
-    buildStep === "reason" ||
-    buildStep === "example" ||
-    buildStep === "link";
-
-  let coachQ: string;
-  if (userAdvancedStep) {
-    coachQ = scaffoldQ;
-  } else if (preferScaffold) {
-    coachQ =
-      scaffoldQ ||
-      pickCoachQuestion(sanitized.coachQuestion ?? "", scaffoldQ);
-  } else {
-    coachQ = pickCoachQuestion(sanitized.coachQuestion ?? "", scaffoldQ);
-  }
-
-  let mirror: string;
-  if (userAdvancedStep && buildStep !== "ready") {
-    mirror =
-      sanitized.mirror && sanitized.mirror !== userMessage?.trim()
-        ? sanitized.mirror
-        : `好，${stepLabel(prevStep)}这一环够了，接下来补${stepLabel(buildStep)}。`;
-  } else if (
-    sanitized.mirror &&
-    sanitized.mirror !== userMessage?.trim()
-  ) {
-    mirror = sanitized.mirror;
-  } else if (buildStep === "ready") {
-    mirror = "各环齐了，请看左侧整理。";
-  } else if (buildStep === "claim") {
-    mirror = "我们按链条一环一环来，先不用写整段。";
-  } else if (
-    userMessage?.trim() &&
-    isChainStepFilled(workingSlots, buildStep, body)
-  ) {
-    mirror = `好，${stepLabel(buildStep)}这一环有了，继续下一环。`;
-  } else {
-    mirror = scaffoldQ
-      ? `这一步还差一句，请参考下面提示补全。`
-      : `好，${stepLabel(buildStep)}这一环有了，继续下一环。`;
-  }
+  const lastQ = state.coachContext?.lastQuestion ?? "";
+  const { mirror, coachQ } = resolveHybridCoachTurn({
+    understanding,
+    buildStep,
+    stepPrompt: stepPrompt || substance.coachPrompt || "",
+    prevStep,
+    lastQuestion: lastQ,
+    sanitized,
+    workingSlots,
+    body,
+    userMessage,
+  });
 
   const userVisible = [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n");
 
@@ -318,7 +356,7 @@ export function postProcessStage2(
         ...nextState.coachContext,
         chainBuildStep: buildStep,
         lastQuestion: coachQ,
-        openIssue: scaffoldQ || substance.coachPrompt,
+        openIssue: coachQ || substance.coachPrompt,
       },
     },
   };

@@ -1,7 +1,7 @@
 import type { SessionState, WorkshopBodyKey } from "./types";
 
 const BODY1_EMPLOY_RE =
-  /就业|工作技能|职场|实习|求职|招聘|上岗|coding|编程|项目|工程师|实践|雇主|技能训练/i;
+  /就业|工作|工作技能|职场|实习|求职|招聘|上岗|coding|编程|项目|工程师|实践|雇主|技能训练|技术栈|计算机|公司|实用|岗位/i;
 const BODY2_ACADEMIC_RE =
   /学术|纯粹|知识|医学|理论|体系|深耕|研究|导师|论文|课程|领域|深造|科研|研究生|专业基础|底子|循序渐进/i;
 
@@ -28,6 +28,13 @@ export function stage2UserMessages(state: SessionState): string[] {
     .filter((m) => m.role === "user")
     .map((m) => m.content.trim())
     .filter(Boolean);
+}
+
+const CHAIN_FRUSTRATION_RE =
+  /重复|问过了|说过|又问|别绕|怎么还问|已经回答|已经说/i;
+
+export function detectChainFrustration(message?: string): boolean {
+  return !!message?.trim() && CHAIN_FRUSTRATION_RE.test(message);
 }
 
 export function detectChainMetaQuestion(message?: string): boolean {

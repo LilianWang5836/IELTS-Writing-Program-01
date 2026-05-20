@@ -231,4 +231,8 @@ export interface LlmTurnResult {
   missingGap?: "reason" | "example" | "impact" | null;
   integratedBodyText?: string | null;
   syntaxHint?: string | null;
+  /** Stage2：本轮用户话在论证链中的功能（理解轨） */
+  chainTurnRole?: "reason" | "example" | "link" | "none" | "meta";
+  chainTurnQuality?: "ok" | "weak" | "off_topic" | "none";
+  chainTurnText?: string;
 }

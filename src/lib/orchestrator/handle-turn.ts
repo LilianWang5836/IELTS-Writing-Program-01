@@ -143,6 +143,7 @@ function buildVars(
       chainBuildStep: state.coachContext?.chainBuildStep ?? "claim",
       bodyPoint: body === "body1" ? state.s2?.body1Point : state.s2?.body2Point,
       bodyAngle: body === "body1" ? state.s2?.body1Angle : state.s2?.body2Angle,
+      coachMode: "hybrid_llm_role_rule_gate",
     });
   }
 

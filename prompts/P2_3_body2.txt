@@ -15,12 +15,11 @@
 {{paragraph_substance_assessment}}
 
 ## 搭链顺序（必须遵守）
-1. **按环推进**：Claim → Reason → Example → Link（**段末收束**：用「因此/所以」把例子接回**本分论点 + 学术/知识这一侧**；勿重复全文立场）。
-2. 每轮 **只推进当前一环**；禁止泛泛采访式连问。
-3. **禁止**问「你对论证链条满意吗」；够齐时由系统出 chainProposal。
-4. 用户说「不知道怎么串」→ 口述骨架并问要改哪一环。
-5. 勿仅「学习要时间」循环；须与 Body1 就业维度区分。
-6. `paragraphSubstanceSufficient: true` 仅当各环有用户原文支撑；`advance` 永远 false。
+1. **按环推进**：Claim → Reason → Example → Link（段末收束到学术/知识侧；勿重复全文立场）。
+2. **先判功能、再追问**：填 `chainTurnRole` / `chainTurnQuality`；mirror 与 coachQuestion 一致；弱例启发式追问，禁止模板复读。
+3. 用户说「重复/问过了」→ meta，道歉并推进。
+4. 勿仅「学习要时间」循环；须与 Body1 就业维度区分。
+5. `paragraphSubstanceSufficient: true` 仅当各环有用户原文；`advance` 永远 false。
 
 ## 审题定稿
 {{handoff_json}}
@@ -33,16 +32,17 @@
   "verdict": "coach",
   "advance": false,
   "mirror": "1句",
-  "coachQuestion": "仅当前环 1 问；禁止满意类收尾",
+  "coachQuestion": "1问",
   "userVisibleText": "",
+  "chainTurnRole": "reason | example | link | none | meta",
+  "chainTurnQuality": "ok | weak | off_topic | none",
+  "chainTurnText": "",
   "paragraphSubstanceSufficient": false,
   "proposalSummary": "",
-  "chainProposal": {
-    "chainSummary": "claim → reason → support → link",
-    "slots": {},
-    "draft": ""
-  },
+  "chainProposal": { "chainSummary": "", "slots": {}, "draft": "" },
   "extracted": {
+    "chainTurnRole": "reason",
+    "chainTurnQuality": "ok",
     "body2Logic": { "primaryDriver": "causal", "slots": {}, "raw": "" }
   }
 }

@@ -116,14 +116,14 @@ function normalizeCoachSentence(s: string): string {
     .trim();
 }
 
-function isReasonSentence(s: string, body: WorkshopBodyKey): boolean {
+export function isReasonSentence(s: string, body: WorkshopBodyKey): boolean {
   const raw = s.trim();
   const t = normalizeCoachSentence(s);
   if (t.length < 10 || isStanceOnlySentence(t)) return false;
 
   const labeledReason = /^原因\s*[:：]/i.test(raw);
   const hasCausal =
-    /因为|所以|因此|才能|有助于|使得|由于|才|需要|差异|不同于|无法从/.test(
+    /因为|所以|因此|才能|有助于|使得|由于|需要|差异|不同于|无法从|所以才|只有.*才/.test(
       t,
     );
 
@@ -165,23 +165,69 @@ function linkQualityScore(s: string, body: WorkshopBodyKey): number {
   return score;
 }
 
-function isExampleSentence(s: string, body: WorkshopBodyKey): boolean {
+function hasExampleLead(s: string): boolean {
+  return /例如|比如|举例\s*[:：]|比方说/.test(s.trim());
+}
+
+export function isExampleSentence(s: string, body: WorkshopBodyKey): boolean {
   const t = s.trim();
   if (t.length < 10 || isStanceOnlySentence(t)) return false;
-  if (/^因为/.test(t)) return false;
+  if (/^因为/.test(t) && !hasExampleLead(t)) return false;
+  if (hasExampleLead(t)) return true;
 
   if (body === "body1") {
-    if (/例如|比如/.test(t)) return true;
     return (
-      /实习|实操|项目经验|岗位实训|coding|编程项目|工作坊|校企/.test(t) &&
-      !/^从就业角度/.test(t)
+      /实习|实操|项目|岗位实训|coding|编程|技术栈|计算机|工程师|工作坊|校企|在公司|公司学习/.test(
+        t,
+      ) && !/^从就业角度/.test(t)
     );
   }
-  if (/例如|比如/.test(t)) return true;
   return /医学|课程|研究|导师|论文|实验|领域训练|临床/.test(t);
 }
 
-function isLinkSentence(s: string, body: WorkshopBodyKey): boolean {
+function exampleQualityScore(s: string, body: WorkshopBodyKey): number {
+  const t = s.trim();
+  if (!isExampleSentence(s, body)) return 0;
+  let score = t.length >= 28 ? 2 : 1;
+  if (hasExampleLead(t)) score += 1;
+  if (
+    /技术栈|实习|项目|实训|编程|计算机|岗位|医学|课程|导师|公司|实操/.test(
+      t,
+    )
+  ) {
+    score += 3;
+  }
+  return score;
+}
+
+/** 有举例意图但偏泛，需启发式追问 */
+export function isWeakExampleSentence(
+  s: string,
+  body: WorkshopBodyKey,
+): boolean {
+  if (!isExampleSentence(s, body)) return true;
+  const t = s.trim();
+  if (exampleQualityScore(s, body) >= 4) return false;
+  if (hasExampleLead(t) && t.length < 22) return true;
+  return hasExampleLead(t) && !/实习|项目|技术栈|计算机|岗位|课程|医学|公司/.test(t);
+}
+
+export function exampleFollowUpCoachPrompt(
+  attempt: string,
+  body: WorkshopBodyKey,
+): string {
+  const hint =
+    body === "body1"
+      ? "公司名/岗位、技术栈名称，或实习/项目里具体做了什么"
+      : "课程名、研究课题或训练场景";
+  const clip = attempt.trim().slice(0, 40);
+  return (
+    `你举的方向我听到了（${clip}${attempt.length > 40 ? "…" : ""}）。` +
+    `请再补一点：${hint}（一句即可）。`
+  );
+}
+
+export function isLinkSentence(s: string, body: WorkshopBodyKey): boolean {
   const t = s.trim();
   if (t.length < 10 || isStanceOnlySentence(t)) return false;
   if (/^因为/.test(t) && !/就业|求职|深造|学术|面试|工作/.test(t)) {
@@ -312,30 +358,48 @@ export function buildSlotsFromChat(
   );
 
   let bestReason = { text: "", score: 0 };
+  let bestExample = { text: "", score: 0 };
   let bestLink = { text: "", score: 0 };
 
   for (const msg of msgs) {
     const labeled = msg.trim();
-    const extraSents =
-      /^原因\s*[:：]/i.test(labeled) ? [labeled] : [];
-    const sents = [...extraSents, ...splitSentences(msg)];
+    const extraSents: string[] = [];
+    if (/^原因\s*[:：]/i.test(labeled)) extraSents.push(labeled);
+    if (/^举例\s*[:：]/i.test(labeled) || hasExampleLead(labeled)) {
+      extraSents.push(labeled);
+    }
+    const sents = [...extraSents, ...splitSentences(msg), labeled];
 
+    const seen = new Set<string>();
     for (const sent of sents) {
-      if (body === "body1" && /医学|理论体系|纯粹.*知识|专业理论/.test(sent) && !/就业|实习|工作技能|项目实操/.test(sent)) {
+      const key = sent.trim().slice(0, 48);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+
+      if (body === "body1" && /医学|理论体系|纯粹.*知识|专业理论/.test(sent) && !/就业|实习|工作技能|项目实操|技术栈|计算机/.test(sent)) {
         continue;
       }
       if (body === "body2" && /就业|求职|工作技能/.test(sent) && !/学术|知识|研究|深造/.test(sent)) {
         continue;
       }
-      if (isReasonSentence(sent, body)) {
-        const sc = reasonQualityScore(sent, body);
-        if (sc > bestReason.score) {
-          bestReason = { text: normalizeCoachSentence(sent) || sent.trim(), score: sc };
+      if (isExampleSentence(sent, body)) {
+        const sc = exampleQualityScore(sent, body);
+        if (sc > bestExample.score) {
+          bestExample = { text: sent.trim(), score: sc };
         }
         continue;
       }
-      if (!slots.example && isExampleSentence(sent, body)) {
-        slots.example = sent;
+      if (hasExampleLead(sent)) {
+        continue;
+      }
+      if (isReasonSentence(sent, body)) {
+        const sc = reasonQualityScore(sent, body);
+        if (sc > bestReason.score) {
+          bestReason = {
+            text: normalizeCoachSentence(sent) || sent.trim(),
+            score: sc,
+          };
+        }
         continue;
       }
       if (isLinkSentence(sent, body)) {
@@ -348,6 +412,7 @@ export function buildSlotsFromChat(
   }
 
   if (bestReason.text) slots.reason = bestReason.text;
+  if (bestExample.text) slots.example = bestExample.text;
   if (bestLink.text) slots.link = bestLink.text;
 
   return dedupeSlots(slots);
@@ -366,9 +431,11 @@ export function isChainStepFilled(
     return !!slots.reason?.trim() && isReasonSentence(slots.reason, body);
   }
   if (step === "example") {
+    const ex = slots.example?.trim() || slots.support?.trim() || "";
     return (
-      !!(slots.example?.trim() || slots.support?.trim()) &&
-      isExampleSentence(slots.example ?? slots.support ?? "", body)
+      !!ex &&
+      isExampleSentence(ex, body) &&
+      !isWeakExampleSentence(ex, body)
     );
   }
   if (step === "link") {
@@ -446,17 +513,22 @@ export function getNextChainBuildStep(
     };
   }
 
-  if (!slots.example?.trim() && !slots.support?.trim()) {
+  const ex = slots.example?.trim();
+  if (
+    !ex ||
+    !isExampleSentence(ex, body) ||
+    isWeakExampleSentence(ex, body)
+  ) {
     const hint =
       body === "body1" && /实习|项目/.test(point)
         ? "可写定稿里提到的实习或项目实操"
         : body === "body1"
           ? "如校企实习、coding 项目、岗位实训"
           : "如课程、研究课题、导师指导";
-    return {
-      step: "example",
-      coachPrompt: `请写举例（Example）：给一个具体场景（${hint}）。不要用「有理/合理」代替例子。`,
-    };
+    const coachPrompt = ex
+      ? exampleFollowUpCoachPrompt(ex, body)
+      : `请写举例（Example）：给一个具体场景（${hint}）。不要用「有理/合理」代替例子。`;
+    return { step: "example", coachPrompt };
   }
 
   const link = slots.link?.trim();

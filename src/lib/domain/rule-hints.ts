@@ -80,6 +80,9 @@ export function buildRuleHintsBlock(state: SessionState): string {
       );
     } else {
       lines.push(
+        "规则提示：理解轨填 chainTurnRole/Quality（整句功能）；规则轨决定能否写入 slots 与是否齐环。禁止 mirror 肯定后重复同一环模板问。",
+      );
+      lines.push(
         "规则提示：按 Claim→Reason→Example→Link 逐环推进；禁止问「满意吗」；advance 永远 false。",
       );
       if (state.coachContext?.chainBuildStep) {

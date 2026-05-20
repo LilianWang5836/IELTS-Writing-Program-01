@@ -496,12 +496,8 @@ export function mergeSlots(
   }
   const nr = out.reason?.trim();
   const ne = out.example?.trim();
-  const nl = out.link?.trim();
   if (nr && ne && nr === ne && prevReason && prevReason !== ne) {
     out.reason = prevReason;
-  }
-  if (nr && nl && nr === nl) {
-    delete out.link;
   }
   return dedupeSlots(out);
 }

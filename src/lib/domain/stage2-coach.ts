@@ -3,6 +3,7 @@ import {
   formatChainProposalCoachMessage,
   isChainProposalComplete,
 } from "./chain-proposal";
+import { buildChainBaselineSlots } from "./chain-slot-pool";
 import {
   areChainSlotsSemanticallyValid,
   buildChainProposalFromChat,
@@ -15,17 +16,12 @@ import {
   formatChainSkeleton,
   getChainBuildContext,
   getNextChainBuildStep,
-  getNextChainBuildStepLenient,
   isChainStepFilled,
   isExampleSentence,
   mergeSlots,
   type ChainBuildStep,
 } from "./chain-scaffold";
-import {
-  mergeSlotsWithTurnUnderstanding,
-  parseChainTurnUnderstanding,
-  resolveHybridCoachTurn,
-} from "./chain-understanding";
+import { resolveChainTurnDecision } from "./chain-turn-decision";
 import {
   detectCoachCounterQuestion,
   detectChainFrustration,
@@ -116,17 +112,33 @@ export function postProcessStage2(
   }
 
   const sanitized = sanitizeMirror(result, userMessage);
-  const understanding = parseChainTurnUnderstanding(sanitized, userMessage);
-  const chatSlots = buildSlotsFromChat(nextState, body);
   const seg = body === "body1" ? nextState.s2?.body1 : nextState.s2?.body2;
-  const latestTurnSlots = mergeSlotsWithTurnUnderstanding(
-    chatSlots,
-    understanding,
-    userMessage,
+  const baselineSlots = buildChainBaselineSlots(nextState, body, seg?.slots);
+  const buildCtx = getChainBuildContext(nextState, body);
+  const prevStep = (state.coachContext?.chainBuildStep ?? "claim") as ChainBuildStep;
+  const prevAskCount = state.coachContext?.chainStepAskCount ?? 0;
+  const lastQ = state.coachContext?.lastQuestion ?? "";
+  const expectedStep = getNextChainBuildStep(baselineSlots, body, buildCtx).step;
+
+  const decision = resolveChainTurnDecision({
+    baselineSlots,
+    result: sanitized,
     body,
-  );
-  // Preserve prior slots as baseline, but let latest turn overwrite stale values.
-  let workingSlots = mergeSlots(seg?.slots, latestTurnSlots);
+    buildCtx,
+    userMessage,
+    prevStep,
+    prevAskCount,
+    sameStepAsPrev: prevStep === expectedStep,
+    lastQuestion: lastQ,
+  });
+
+  const workingSlots = decision.workingSlots;
+  const buildStep = decision.advanceTo;
+  const stepPrompt =
+    buildStep === "ready"
+      ? ""
+      : getNextChainBuildStep(workingSlots, body, buildCtx).coachPrompt;
+  const progressBlock = formatChainProgress(workingSlots, buildStep);
 
   const proposalFromLlm = chainProposalFromResult(sanitized, body);
   const slotsForSubstance = mergeSlots(workingSlots, proposalFromLlm?.slots);
@@ -136,30 +148,6 @@ export function postProcessStage2(
     userMessage,
     slotsForSubstance,
   );
-
-  const buildCtx = getChainBuildContext(nextState, body);
-  let { step: buildStep, coachPrompt: stepPrompt } =
-    getNextChainBuildStep(workingSlots, body, buildCtx);
-  const prevStep = (state.coachContext?.chainBuildStep ?? "claim") as ChainBuildStep;
-  const prevAskCount = state.coachContext?.chainStepAskCount ?? 0;
-  const sameStepAsPrev = prevStep === buildStep;
-
-  const canEscalateWeak =
-    (understanding.quality === "weak" || understanding.quality === "acceptable") &&
-    (understanding.role === "reason" ||
-      understanding.role === "example" ||
-      understanding.role === "link") &&
-    understanding.role === buildStep &&
-    sameStepAsPrev &&
-    prevAskCount >= 1;
-  if (canEscalateWeak) {
-    const lenient = getNextChainBuildStepLenient(workingSlots, body, buildCtx);
-    if (lenient.step !== buildStep) {
-      buildStep = lenient.step;
-      stepPrompt = lenient.coachPrompt;
-    }
-  }
-  const progressBlock = formatChainProgress(workingSlots, buildStep);
 
   let finalProposal = proposalFromLlm;
   if (!finalProposal && substance.sufficient) {
@@ -412,19 +400,7 @@ export function postProcessStage2(
     };
   }
 
-  const lastQ = state.coachContext?.lastQuestion ?? "";
-  const { mirror, coachQ } = resolveHybridCoachTurn({
-    understanding,
-    buildStep,
-    stepPrompt: stepPrompt || substance.coachPrompt || "",
-    prevStep,
-    lastQuestion: lastQ,
-    sanitized,
-    workingSlots,
-    body,
-    userMessage,
-  });
-
+  const { mirror, ask: coachQ } = decision.coach;
   const userVisible = [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n");
 
   return {

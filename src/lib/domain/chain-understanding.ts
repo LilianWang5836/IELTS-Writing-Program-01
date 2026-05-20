@@ -1,6 +1,12 @@
 import {
+  applyPrimaryRingWrite,
+  parseUnderstandingForStep,
+} from "./chain-turn-decision";
+import {
   buildSlotsFromChat,
   exampleFollowUpCoachPrompt,
+  getChainBuildContext,
+  getNextChainBuildStep,
   hasExampleLead,
   isChainStepFilled,
   isExampleSentence,
@@ -161,7 +167,7 @@ function upsertRoleSlot(
 }
 
 /**
- * 理解轨提议 + 规则守门：只有通过规则校验的 slot 才写入
+ * @deprecated 使用 chain-turn-decision.applyPrimaryRingWrite（一轮只写主槽）
  */
 export function mergeSlotsWithTurnUnderstanding(
   ruleSlots: ParagraphSlots,
@@ -218,7 +224,7 @@ export interface HybridCoachTurnInput {
   userMessage?: string;
 }
 
-/** 理解轨定调 mirror/追问；规则轨提供 stepPrompt 底线 */
+/** @deprecated 使用 resolveChainTurnDecision */
 export function resolveHybridCoachTurn(
   input: HybridCoachTurnInput,
 ): { mirror: string; coachQ: string } {
@@ -369,11 +375,22 @@ export function slotsAfterUserTurn(
   result: LlmTurnResult,
 ): ParagraphSlots {
   const ruleSlots = buildSlotsFromChat(state, body);
-  const understanding = parseChainTurnUnderstanding(result, userMessage);
-  return mergeSlotsWithTurnUnderstanding(
-    ruleSlots,
-    understanding,
+  const ctx = getChainBuildContext(state, body);
+  const expectedStep = getNextChainBuildStep(ruleSlots, body, ctx).step;
+  const understanding = parseUnderstandingForStep(
+    result,
     userMessage,
+    expectedStep,
     body,
   );
+  const ring = understanding.role;
+  if (ring === "reason" || ring === "example" || ring === "link") {
+    return applyPrimaryRingWrite(
+      ruleSlots,
+      ring,
+      understanding.slotText || userMessage || "",
+      body,
+    );
+  }
+  return ruleSlots;
 }

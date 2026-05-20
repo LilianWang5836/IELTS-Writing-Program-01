@@ -334,6 +334,39 @@ export function isOppositeGapCoachQuestion(prev: string, next: string): boolean 
   return !!p && !!n && p !== n;
 }
 
+function normCoachQuestion(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, "").slice(0, 40);
+}
+
+export function isRepeatedQuestion(prev: string, next: string): boolean {
+  if (!prev.trim() || !next.trim()) return false;
+  if (isOppositeGapCoachQuestion(prev, next)) return false;
+  const a = normCoachQuestion(prev);
+  const b = normCoachQuestion(next);
+  if (a === b) return true;
+  if (a.length > 8 && b.length > 8 && (a.includes(b) || b.includes(a))) return true;
+  const themes = [
+    ["职能", "强调", "观点"],
+    ["两个观点", "双方", "分别"],
+    ["平衡", "体现", "价值"],
+    ["概括", "一句话", "任务"],
+    ["填左侧", "6 栏", "定稿"],
+    ["各用一句话", "就业技能一侧", "学术知识一侧"],
+    ["两侧", "写实"],
+    ["就业/技能一侧", "就业技能一侧", "实习、项目"],
+    ["学术/知识一侧", "学术知识一侧", "长期学习"],
+    ["开放", "批判性", "教学机会"],
+    ["哪些领域", "教学方法", "学习机会"],
+    ["你认为大学", "应该提供哪些"],
+  ];
+  for (const group of themes) {
+    if (group.some((w) => prev.includes(w)) && group.some((w) => next.includes(w))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** 本轮用户是否回答了上一问所对应的一侧 */
 export function userAnsweredExplorationGap(
   message: string | undefined,
@@ -844,6 +877,67 @@ export function enrichHandoffFromChat(
     out.position = built.position;
   }
   return out;
+}
+
+const ANGLE_TERM_RE =
+  /切入面|角度|视角|讨论范围|什么.*面|不懂.*(面|角度)|body\s*[12].*角度/i;
+
+export function detectAngleConfusion(message?: string): boolean {
+  return !!message?.trim() && ANGLE_TERM_RE.test(message);
+}
+
+/** 需先教切入面：学生困惑，或分论点已有但切入面未齐 */
+export function needsAngleTeaching(
+  handoff: Stage1Handoff,
+  userMessage: string | undefined,
+  contentReady: boolean,
+): { needed: boolean; followUp: string } {
+  const confused = detectAngleConfusion(userMessage);
+  const p1 = handoff.body1Point?.trim();
+  const p2 = handoff.body2Point?.trim();
+  const a1 = handoff.body1Angle?.trim();
+  const a2 = handoff.body2Angle?.trim();
+  const pointsWithoutAngles =
+    contentReady && ((!!p1 && !a1) || (!!p2 && !a2) || (!!p1 && !!p2 && (!a1 || !a2)));
+
+  if (!confused && !pointsWithoutAngles) {
+    return { needed: false, followUp: "" };
+  }
+
+  let followUp: string;
+  if (!a1 && !a2) {
+    followUp =
+      "Body1 打算从哪一面写（如就业市场）？Body2 用另一个范围（如学术深造）？各说一个词即可。";
+  } else if (!a1) {
+    followUp = "Body1 就业/技能这条线，你打算用什么词标出「这一段的范围」？";
+  } else if (!a2) {
+    followUp = "Body2 学术/知识这条线，对应的范围词打算写什么？";
+  } else {
+    followUp = "两段切入面要不同：就业侧你标什么？学术侧你标什么？各一个词即可。";
+  }
+
+  return { needed: true, followUp };
+}
+
+export function resolveHandoffProposal(
+  state: SessionState,
+  result: {
+    proposedHandoff?: Stage1Handoff;
+    extracted?: Record<string, unknown>;
+  },
+): Stage1Handoff | null {
+  let proposal = proposedHandoffFromResult(result, state);
+  if (!proposal) proposal = extractProposedHandoffRule(state);
+  const substance = assessEssaySubstance(state);
+  const sides = explorationSideStatus(userMessages(state));
+  const shouldBuild =
+    substance.sufficient || (sides.employ && sides.academic);
+  if (shouldBuild && !isHandoffProposalComplete(proposal ?? {})) {
+    const built = buildHandoffFromChat(state);
+    if (isHandoffProposalComplete(built)) proposal = built;
+  }
+  if (!proposal) return null;
+  return sanitizeHandoffProposal(proposal, state);
 }
 
 /** 提交审题定稿后、进 Body1 前的短反馈 */

@@ -6,7 +6,8 @@
     "dev": "NODE_USE_ENV_PROXY=1 next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:chain": "npx tsx scripts/chain-regression.mjs"
   },
   "dependencies": {
     "jsonrepair": "^3.14.0",

@@ -8,11 +8,14 @@ import type {
 export type { ChainPhase, ChainProposal } from "./types";
 
 export function isChainProposalComplete(p: ChainProposal | null | undefined): boolean {
-  if (!p?.chainSummary?.trim() || !p.draft?.trim()) return false;
-  const s = p.slots;
+  if (!p?.chainSummary?.trim()) return false;
+  const s = p.slots ?? {};
   const hasClaim = !!(s.claim?.trim() || s.elaboration?.trim());
-  const hasReason = !!(s.reason?.trim() || s.link?.trim() || s.support?.trim());
-  return hasClaim && hasReason;
+  const hasReason = !!s.reason?.trim();
+  const hasExample = !!(s.example?.trim() || s.support?.trim());
+  const hasLink = !!s.link?.trim();
+  const draftOk = (p.draft?.trim().length ?? 0) >= 12;
+  return hasClaim && hasReason && hasExample && hasLink && draftOk;
 }
 
 export function chainProposalFromResult(

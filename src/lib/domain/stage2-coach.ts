@@ -7,6 +7,7 @@ import {
   buildChainProposalFromChat,
   buildSlotsFromChat,
   detectChainConfusion,
+  detectChainMetaQuestion,
   formatChainProgress,
   formatChainSkeleton,
   getNextChainBuildStep,
@@ -14,6 +15,7 @@ import {
   mergeSlots,
   type ChainBuildStep,
 } from "./chain-scaffold";
+import { userBlobForWorkshopBody } from "./stage2-context";
 import type {
   ChainPhase,
   ChainProposal,
@@ -25,14 +27,6 @@ import type {
 import { assessParagraphSubstance } from "./paragraph-substance";
 
 const MAX_MIRROR_CHARS = 100;
-
-function userBlob(state: SessionState, body: WorkshopBodyKey): string {
-  const seg = body === "body1" ? state.s2?.body1 : state.s2?.body2;
-  const msgs = state.chatHistory
-    .filter((m) => m.role === "user")
-    .map((m) => m.content);
-  return [seg?.draft ?? "", ...msgs].join("\n");
-}
 
 function truncateMirror(text: string): string {
   const t = text.trim();
@@ -117,7 +111,7 @@ export function postProcessStage2(
   );
 
   const { step: buildStep, coachPrompt: stepPrompt } =
-    getNextChainBuildStep(workingSlots);
+    getNextChainBuildStep(workingSlots, body);
   const progressBlock = formatChainProgress(workingSlots, buildStep);
 
   let finalProposal = proposalFromLlm;
@@ -130,7 +124,9 @@ export function postProcessStage2(
 
   const llmOk = sanitized.paragraphSubstanceSufficient === true;
   const rulesOk = substance.sufficient;
+  const ringsReady = buildStep === "ready";
   const canPropose =
+    ringsReady &&
     (rulesOk || (llmOk && !!proposalFromLlm)) &&
     !!finalProposal &&
     isChainProposalComplete(finalProposal);
@@ -142,6 +138,41 @@ export function postProcessStage2(
     undefined,
     workingSlots,
   );
+
+  if (detectChainMetaQuestion(userMessage)) {
+    const point =
+      body === "body1" ? nextState.s2?.body1Point : nextState.s2?.body2Point;
+    const stepLabel =
+      buildStep === "ready" ? "下一环" : SLOT_LABEL[buildStep];
+    const coachQ =
+      stepPrompt ||
+      (buildStep === "claim"
+        ? `先写论点：扣住「${point || "本分论点"}」。`
+        : `当前先补 ${stepLabel}。`);
+    const mirror =
+      buildStep === "claim"
+        ? "我们按链条一环一环来，不用一次写整段。"
+        : `当前环节是 ${stepLabel}，写完再说下一句。`;
+    return {
+      result: {
+        verdict: "coach",
+        advance: false,
+        mirror,
+        coachQuestion: coachQ,
+        userVisibleText: [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n"),
+        logicBreakdown: undefined,
+      },
+      state: {
+        ...nextState,
+        coachContext: {
+          ...nextState.coachContext,
+          chainBuildStep: buildStep,
+          lastQuestion: coachQ,
+          openIssue: undefined,
+        },
+      },
+    };
+  }
 
   if (detectChainConfusion(userMessage)) {
     const skeleton = formatChainSkeleton(workingSlots, bodyLabel);
@@ -173,7 +204,9 @@ export function postProcessStage2(
   if (canPropose && finalProposal) {
     const finalProposalFull: ChainProposal = {
       ...finalProposal,
-      draft: finalProposal.draft || userBlob(nextState, body).slice(0, 500),
+      draft:
+        finalProposal.draft ||
+        userBlobForWorkshopBody(nextState, body).slice(0, 500),
     };
     const msg = formatChainProposalCoachMessage(
       finalProposalFull,
@@ -247,6 +280,13 @@ const SLOT_HINT: Record<Exclude<ChainBuildStep, "ready">, string> = {
   reason: "原因",
   example: "例子",
   link: "扣题",
+};
+
+const SLOT_LABEL: Record<Exclude<ChainBuildStep, "ready">, string> = {
+  claim: "论点（Claim）",
+  reason: "原因（Reason）",
+  example: "举例（Example）",
+  link: "扣题（Link）",
 };
 
 export function applyChainProposalToState(

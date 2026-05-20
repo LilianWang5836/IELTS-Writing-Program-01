@@ -1,8 +1,14 @@
 import { claimReasonRedundant } from "./rule-hints";
+import { userBlobForWorkshopBody } from "./stage2-context";
 import type { ParagraphSlots, SessionState, WorkshopBodyKey } from "./types";
 
 const CAUSAL_MARKERS =
   /因为|所以|因此|从而|才能|有助于|使得|导致|由于|through|because|so that|therefore/i;
+
+const BODY1_EMPLOY_RE =
+  /就业|工作技能|职场|实习|求职|招聘|上岗|项目|工程师|实践|雇主/i;
+const BODY2_ACADEMIC_RE =
+  /学术|纯粹|知识|医学|理论|体系|研究|导师|论文|课程|领域|深造|科研|专业/i;
 
 export interface ParagraphSubstanceAssessment {
   sufficient: boolean;
@@ -27,7 +33,7 @@ function scoreBlob(text: string): number {
   let score = 1;
   if (t.length >= 45) score += 1;
   if (CAUSAL_MARKERS.test(t)) score += 1;
-  if (/例如|比如|比如|实习|研究|项目|雇主|招聘|论文|导师/.test(t)) score += 1;
+  if (/例如|比如|实习|研究|项目|雇主|招聘|论文|导师|医学|理论/.test(t)) score += 1;
   return score;
 }
 
@@ -42,12 +48,13 @@ function textsTooSimilar(a: string, b: string): boolean {
   return false;
 }
 
-function userBlobForBody(state: SessionState, body: WorkshopBodyKey): string {
-  const msgs = state.chatHistory
-    .filter((m) => m.role === "user")
-    .map((m) => m.content);
-  const seg = body === "body1" ? state.s2?.body1 : state.s2?.body2;
-  return [seg?.draft ?? "", ...msgs].join("\n");
+function slotsHaveFourRings(slots?: ParagraphSlots): boolean {
+  if (!slots) return false;
+  const hasClaim = !!(slots.claim?.trim() || slots.elaboration?.trim());
+  const hasReason = !!slots.reason?.trim();
+  const hasExample = !!(slots.example?.trim() || slots.support?.trim());
+  const hasLink = !!slots.link?.trim();
+  return hasClaim && hasReason && hasExample && hasLink;
 }
 
 export function assessParagraphSubstance(
@@ -56,57 +63,78 @@ export function assessParagraphSubstance(
   userMessage?: string,
   slots?: ParagraphSlots,
 ): ParagraphSubstanceAssessment {
-  const blob = [userBlobForBody(state, body), userMessage ?? ""].join("\n");
+  const workshopBlob = userBlobForWorkshopBody(state, body);
+  const blob = [workshopBlob, userMessage?.trim() ?? ""]
+    .filter(Boolean)
+    .join("\n");
   const point =
     body === "body1" ? state.s2?.body1Point : state.s2?.body2Point;
   const angle =
     body === "body1" ? state.s2?.body1Angle : state.s2?.body2Angle;
   const gaps: string[] = [];
 
-  if (blob.trim().length < 18) {
+  if (workshopBlob.trim().length < 12 && (userMessage?.trim().length ?? 0) < 12) {
     return {
       sufficient: false,
-      gaps: ["本段论证太短"],
-      coachPrompt: `请用几句话说明：${point || "本分论点"}为什么成立？`,
+      gaps: ["本段论证尚未开始"],
+      coachPrompt:
+        body === "body1"
+          ? `请用几句话说明：${point || "就业侧分论点"}为什么成立？（实习/项目/技能等）`
+          : `请用几句话说明：${point || "学术侧分论点"}为什么成立？`,
     };
   }
 
   const score = scoreBlob(blob);
-  const slotBlob = slotText(slots);
   const hasClaimDir =
     !!(slots?.claim?.trim() || slots?.elaboration?.trim()) ||
-    /应该|需要|可以|必须|主张|认为|提供|侧重/.test(blob);
-  const hasReasonDir =
-    !!(slots?.reason?.trim() || slots?.link?.trim() || slots?.support?.trim()) ||
-    CAUSAL_MARKERS.test(blob);
-  const hasExample =
-    !!(slots?.example?.trim() || slots?.support?.trim()) ||
-    /例如|比如|实习|项目|研究|雇主|招聘|课程|论文/.test(blob);
+    (!!point?.trim() && blob.length >= 8);
+  const hasReasonDir = !!slots?.reason?.trim();
+  const hasExample = !!(slots?.example?.trim() || slots?.support?.trim());
+  const hasLink = !!slots?.link?.trim();
+
+  if (body === "body1" && blob.length >= 15 && !BODY1_EMPLOY_RE.test(blob)) {
+    gaps.push("请围绕就业/工作技能写，勿用 Stage1 学术举例（如医学理论）代替本段");
+  }
+  if (body === "body2" && blob.length >= 15 && !BODY2_ACADEMIC_RE.test(blob)) {
+    gaps.push("请围绕学术/知识/研究写，与 Body1 就业技能区分开");
+  }
 
   if (!hasClaimDir) {
-    gaps.push("缺清晰论点：你在证什么？（扣住审题分论点）");
+    gaps.push("缺清晰论点：扣住审题分论点");
   }
   if (!hasReasonDir) {
     gaps.push("缺因果/机制：为什么成立？");
   }
-  if (score < 2) {
+  if (!hasExample) {
+    gaps.push(
+      body === "body1"
+        ? "缺具体例子：实习、项目、岗位技能等"
+        : "缺具体例子：课程、研究、领域训练等",
+    );
+  }
+  if (!hasLink) {
+    gaps.push(
+      body === "body1"
+        ? "缺扣题：如何落到「尽快就业」"
+        : "缺扣题：如何落到「学术深造/纯粹知识」",
+    );
+  }
+  if (score < 2 && workshopBlob.length >= 20) {
     gaps.push("论述偏薄：再补一句「怎么做/会怎样」");
   }
 
   if (claimReasonRedundant(slots)) {
-    gaps.push("论点与原因像在重复同一句，请补不同功能的一层");
+    gaps.push("论点与原因像在重复，请补不同功能的一层");
   }
-
-  if (body === "body1" && !hasExample && score < 3) {
-    gaps.push("就业/技能侧建议补一个具体例子（实习、项目、招聘等）");
+  if (
+    slots?.reason?.trim() &&
+    slots?.example?.trim() &&
+    textsTooSimilar(slots.reason, slots.example)
+  ) {
+    gaps.push("原因与例子不宜同一句，请各写一层");
   }
 
   if (body === "body2") {
-    if (!hasExample && !/(研究|论文|导师|课程|领域|深入|系统)/.test(blob)) {
-      gaps.push(
-        "学术侧建议补：知识/纯粹学习如何支撑深造（而非只说「学习要时间」）",
-      );
-    }
     const b1slots = state.s2?.body1.slots;
     const b1text = slotText(b1slots) + (state.s2?.body1.draft ?? "");
     if (b1text && textsTooSimilar(blob, b1text)) {
@@ -114,20 +142,10 @@ export function assessParagraphSubstance(
     }
   }
 
-  if (point && angle) {
-    const anchor = `${point} ${angle}`;
-    const anchorNorm = norm(anchor);
-    const blobNorm = norm(blob);
-    if (
-      anchorNorm.length > 8 &&
-      !blobNorm.includes(norm(point).slice(0, 6)) &&
-      score < 3
-    ) {
-      gaps.push(`请扣住审题：${point.slice(0, 40)}…`);
-    }
-  }
-
-  const sufficient = gaps.length === 0 && score >= 2 && hasClaimDir && hasReasonDir;
+  const sufficient =
+    gaps.length === 0 &&
+    score >= 2 &&
+    slotsHaveFourRings(slots);
 
   return {
     sufficient,

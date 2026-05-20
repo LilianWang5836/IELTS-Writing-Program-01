@@ -196,16 +196,45 @@ function isTaskOrPositionBlob(text: string): boolean {
   return false;
 }
 
+const GENERIC_ACADEMIC_POINT =
+  /^走学术深造路径者应侧重纯粹知识与领域积累$/;
+
 export function isValidBodyPoint(
   text: string | undefined,
   side: "employ" | "academic",
 ): boolean {
   const t = text?.trim() ?? "";
-  if (t.length < 6 || t.length > MAX_BODY_POINT_CHARS + 4) return false;
+  if (t.length < 8 || t.length > MAX_BODY_POINT_CHARS + 4) return false;
   if (isTaskOrPositionBlob(t)) return false;
-  if (side === "employ" && dimEmployCount(t) < 1) return false;
+  if (side === "employ") {
+    if (dimEmployCount(t) < 1) return false;
+    if (/^应该以?工作技能为主[。.]?$/i.test(t)) return false;
+  }
   if (side === "academic" && dimAcademicCount(t) < 1) return false;
+  if (side === "academic" && GENERIC_ACADEMIC_POINT.test(t)) return false;
   return true;
+}
+
+function lastRichAcademicMessage(msgs: string[]): string {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (
+      m.length >= 24 &&
+      (/医学|专业理论|理论知识|体系化|循序渐进|底子|纯粹/.test(m) ||
+        dimAcademicCount(m) >= 2)
+    ) {
+      return m;
+    }
+  }
+  return "";
+}
+
+function normalizeEmployPoint(text: string): string {
+  const t = text.trim();
+  if (/^应该以?工作技能为主[。.]?$/i.test(t)) {
+    return "以就业为目标的学生，大学应侧重可上岗的工作技能与实务训练";
+  }
+  return trimPoint(t);
 }
 
 function extractEmployPoint(...sources: string[]): string {
@@ -235,6 +264,14 @@ function extractEmployPoint(...sources: string[]): string {
 function extractAcademicPoint(...sources: string[]): string {
   for (const text of sources) {
     if (!text.trim()) continue;
+    if (/医学|专业理论|理论知识/.test(text) && /体系化|循序渐进|底子|花时间/.test(text)) {
+      return trimPoint(
+        "非就业导向学生需掌握体系化专业理论（如医学基础），打底后才能深入",
+      );
+    }
+    if (/医学|专业理论/.test(text) && text.length >= 20) {
+      return trimPoint("大学应为深造导向学生提供系统专业理论知识");
+    }
     const patterns = [
       /知识(?:本身)?[:：]\s*([^；;\n,，]+)/i,
       /(?:走)?学术(?:道路)?[^。；,，]{0,40}/,
@@ -247,13 +284,9 @@ function extractAcademicPoint(...sources: string[]): string {
       const m = text.match(re);
       if (m) {
         const raw = (m[1] ?? m[0]).trim();
-        if (raw.length >= 6 && !isTaskOrPositionBlob(raw)) return trimPoint(raw);
+        if (raw.length >= 8 && !isTaskOrPositionBlob(raw)) return trimPoint(raw);
       }
     }
-  }
-  const blob = sources.join(" ");
-  if (/反之|学术|纯粹|知识|深造/.test(blob) && dimAcademicCount(blob) >= 1) {
-    return "走学术深造路径者应侧重纯粹知识与领域积累";
   }
   return "";
 }
@@ -295,15 +328,18 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
   const blob = msgs.join("\n");
   const { employText, academicText } = accumulateDimensionTexts(msgs);
   const h = state.handoff;
+  const lastAcad = lastRichAcademicMessage(msgs);
 
-  const body1 =
+  let body1 =
     h?.body1Point?.trim() ||
     pointFromSideText(employText, "employ") ||
     extractEmployPoint(blob);
-  const body2 =
+  body1 = normalizeEmployPoint(body1);
+
+  let body2 =
     h?.body2Point?.trim() ||
-    pointFromSideText(academicText, "academic") ||
-    extractAcademicPoint(academicText, blob);
+    extractAcademicPoint(lastAcad, academicText, blob) ||
+    pointFromSideText(academicText, "academic");
 
   return {
     questionType:
@@ -336,16 +372,26 @@ export function sanitizeHandoffProposal(
       out.body1Angle = ruleBuilt.body1Angle;
     }
   } else {
-    out.body1Point = trimPoint(out.body1Point);
+    out.body1Point = normalizeEmployPoint(out.body1Point);
   }
 
-  if (!isValidBodyPoint(out.body2Point, "academic")) {
+  if (
+    !isValidBodyPoint(out.body2Point, "academic") ||
+    GENERIC_ACADEMIC_POINT.test(out.body2Point.trim())
+  ) {
     out.body2Point = ruleBuilt.body2Point;
     if (!out.body2Angle?.trim() && ruleBuilt.body2Angle) {
       out.body2Angle = ruleBuilt.body2Angle;
     }
   } else {
     out.body2Point = trimPoint(out.body2Point);
+  }
+  if (
+    ruleBuilt.body2Point &&
+    GENERIC_ACADEMIC_POINT.test(out.body2Point.trim()) &&
+    isValidBodyPoint(ruleBuilt.body2Point, "academic")
+  ) {
+    out.body2Point = ruleBuilt.body2Point;
   }
 
   if (!out.taskUnderstanding?.trim()) {

@@ -8,7 +8,10 @@ import type { ChainProposal } from "./types";
 
 export type ChainBuildStep = "claim" | "reason" | "example" | "link" | "ready";
 
-export { detectChainMetaQuestion } from "./stage2-context";
+export {
+  detectChainMetaQuestion,
+  detectChainProcessQuestion,
+} from "./stage2-context";
 
 const MAX_CLAIM_CHARS = 52;
 

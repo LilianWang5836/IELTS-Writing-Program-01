@@ -130,6 +130,91 @@ ok(
 const step = getNextChainBuildStep(decision.workingSlots, "body1").step;
 ok(step === "ready", "getNextChainBuildStep 为 ready");
 
+const body2Reason =
+  "很多专业知识是系统性的，需要花很多时间从简单到难的学习";
+const body2Example =
+  "比如说医学生，本身的课业量是很大的，需要花很多时间学习，基础没有打扎实的话，后面学下去会很困难";
+const body2Baseline = buildChainBaselineSlots(
+  {
+    chatHistory: [
+      { role: "assistant", content: "我们一起搭 Body2 论证链" },
+      { role: "user", content: body2Reason },
+      { role: "user", content: body2Example },
+    ],
+    handoffLocked: true,
+    stage: 2,
+    s2: {
+      body2Point: "大学应提供持续学习个人兴趣领域的机会",
+      body2Angle: "纯粹知识、深入探索兴趣领域",
+    },
+  },
+  "body2",
+  {
+    claim: "走学术道路者应持续学习感兴趣领域并积累系统知识",
+    reason: body2Reason,
+    example: body2Example,
+  },
+);
+const body2Decision = resolveChainTurnDecision({
+  baselineSlots: body2Baseline,
+  result: {
+    mirror: "你以医学生为例，解释了持续学习和扎实基础的重要性。",
+    chainTurnRole: "example",
+    chainTurnQuality: "weak",
+    coachQuestion: "请你提供一个具体的课程名、研究课题或训练场景。",
+  },
+  body: "body2",
+  buildCtx: {
+    bodyPoint: "大学应提供持续学习个人兴趣领域的机会",
+    bodyAngle: "纯粹知识、深入探索兴趣领域",
+  },
+  userMessage: body2Example,
+  prevStep: "example",
+  prevAskCount: 1,
+  sameStepAsPrev: true,
+  lastQuestion: "课程名、研究课题或训练场景",
+});
+ok(body2Decision.advanceTo === "link", "Body2 医学生例后 advanceTo 为 link");
+ok(
+  !/课程名|研究课题|训练场景/.test(body2Decision.coach.ask || ""),
+  "Body2 不因 LLM weak 再追举例细节",
+);
+ok(
+  /段末收束|因此|所以|Link/i.test(body2Decision.coach.ask || ""),
+  "Body2 改问 Link",
+);
+
+const metaDecision = resolveChainTurnDecision({
+  baselineSlots: {
+    claim: "走学术道路者应持续学习感兴趣领域并积累系统知识",
+    reason: body2Reason,
+  },
+  result: {
+    chainTurnRole: "example",
+    chainTurnQuality: "weak",
+    coachQuestion: "请再补一点：课程名",
+  },
+  body: "body2",
+  buildCtx: {
+    bodyPoint: "大学应提供持续学习个人兴趣领域的机会",
+    bodyAngle: "纯粹知识、深入探索兴趣领域",
+  },
+  userMessage: "我现在需要提供什么，分论点已经给了，你觉着这个分论点可以么",
+  prevStep: "example",
+  prevAskCount: 0,
+  sameStepAsPrev: false,
+  lastQuestion: "",
+});
+ok(metaDecision.understanding.role === "meta", "流程/meta 问句标 meta");
+ok(
+  !/你举的方向我听到了/.test(metaDecision.coach.ask || ""),
+  "meta 不走举例追问模板",
+);
+ok(
+  /分论点|审题|Claim|原因|举例|收束/.test(metaDecision.coach.mirror || ""),
+  "meta 镜像说明定稿/环节",
+);
+
 if (fail) {
   process.exit(1);
 }

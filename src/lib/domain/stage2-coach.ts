@@ -10,6 +10,7 @@ import {
   buildSlotsFromChat,
   detectChainConfusion,
   detectChainMetaQuestion,
+  detectChainProcessQuestion,
   exampleFollowUpCoachPrompt,
   formatChainProgress,
   isWeakExampleSentence,
@@ -221,7 +222,7 @@ export function postProcessStage2(
     };
   }
 
-  if (detectChainMetaQuestion(userMessage)) {
+  if (detectChainMetaQuestion(userMessage) || detectChainProcessQuestion(userMessage)) {
     const point =
       body === "body1" ? nextState.s2?.body1Point : nextState.s2?.body2Point;
     const stepLabel =

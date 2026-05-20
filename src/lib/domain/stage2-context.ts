@@ -8,6 +8,10 @@ const BODY2_ACADEMIC_RE =
 const META_QUESTION_RE =
   /我先写|写什么|写啥|从哪写|怎么写|如何写|怎么开始|不知道从|还没写|要写什么/i;
 
+/** 对流程/审题定稿的疑问（不是 Reason/Example/Link 内容） */
+const CHAIN_PROCESS_RE =
+  /分论点.*(已经|给了|有了|可以|行吗|够|对吗)|论点.*(可以|行吗|够|对吗)|需要提供什么|需要写什么|要提供什么|你觉着.*分论点|你觉得.*分论点|claim.*(可以|够|吗)/i;
+
 const COACH_COUNTER_QUESTION_RE =
   /为什么.*(还|要)|我不是.*(已经|都)|我这不是已经|还需要解释什么|什么意思|这是什么意思|你为什么这么问|为什么要我再|已经回答了|已经解释了/i;
 
@@ -44,6 +48,17 @@ export function detectChainMetaQuestion(message?: string): boolean {
   const m = message?.trim() ?? "";
   if (!m || m.length > 80) return false;
   return META_QUESTION_RE.test(m);
+}
+
+export function detectChainProcessQuestion(message?: string): boolean {
+  const m = message?.trim() ?? "";
+  if (!m) return false;
+  if (detectChainMetaQuestion(m)) return true;
+  if (m.length > 120) return false;
+  if (/比如说|例如|比如|医学生|因此|所以|因为/.test(m) && m.length > 40) {
+    return false;
+  }
+  return CHAIN_PROCESS_RE.test(m);
 }
 
 /** 用户对教练流程提出反问/质疑：优先回答，不直接套模板 */

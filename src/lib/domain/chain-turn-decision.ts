@@ -26,6 +26,7 @@ import {
   type ChainTurnRole,
   type ChainTurnUnderstanding,
 } from "./chain-understanding";
+import { detectChainProcessQuestion } from "./stage2-context";
 import type { LlmTurnResult, ParagraphSlots, WorkshopBodyKey } from "./types";
 
 export type ChainRing = "reason" | "example" | "link";
@@ -75,6 +76,34 @@ function detectMessageRing(
   return null;
 }
 
+function exampleRingSatisfied(
+  advanceTo: ChainBuildStep,
+  workingSlots: ParagraphSlots,
+  body: WorkshopBodyKey,
+): boolean {
+  return (
+    advanceTo === "link" ||
+    advanceTo === "ready" ||
+    isChainStepFilled(workingSlots, "example", body)
+  );
+}
+
+function reconcileQuality(
+  llmQuality: ChainTurnQuality,
+  inferred: ChainTurnQuality,
+  ring: ChainRing,
+  msg: string,
+  body: WorkshopBodyKey,
+): ChainTurnQuality {
+  if (inferred === "ok" && llmQuality === "weak" && messageFillsRing(msg, ring, body)) {
+    if (ring === "example" && !isWeakExampleSentence(msg, body)) return "ok";
+    if (ring === "reason" && isReasonSentence(msg, body)) return "ok";
+    if (ring === "link" && isLinkSentence(msg, body)) return "ok";
+  }
+  if (llmQuality === "none") return inferred;
+  return llmQuality;
+}
+
 function shouldUseLlmCoachQuestion(
   llmQ: string,
   advanceTo: ChainBuildStep,
@@ -85,10 +114,10 @@ function shouldUseLlmCoachQuestion(
   if (advanceTo === "ready") return false;
   if (areChainSlotsSemanticallyValid(workingSlots, body)) return false;
   if (
-    /具体.*(?:职业|行业)|再.*(?:举例|例子)|举一个.*例子|哪个行业|什么职业/.test(
+    /具体.*(?:职业|行业)|再.*(?:举例|例子)|举一个.*例子|哪个行业|什么职业|课程名|研究课题|训练场景/.test(
       llmQ,
     ) &&
-    isChainStepFilled(workingSlots, "example", body)
+    exampleRingSatisfied(advanceTo, workingSlots, body)
   ) {
     return false;
   }
@@ -140,16 +169,22 @@ export function parseUnderstandingForStep(
   const base = parseChainTurnUnderstanding(result, userMessage);
   const msg = userMessage?.trim() ?? "";
   if (!msg || base.role === "meta") return base;
+  if (detectChainProcessQuestion(msg)) {
+    return { role: "meta", quality: "none", slotText: msg };
+  }
 
   const detected = detectMessageRing(msg, body);
   if (detected) {
+    const inferred = inferQualityForRing(msg, detected, body);
+    const llmQ =
+      base.role === detected && base.quality !== "none" ? base.quality : "none";
     const q =
-      base.role === detected && base.quality !== "none"
-        ? base.quality
-        : inferQualityForRing(msg, detected, body);
+      llmQ !== "none"
+        ? reconcileQuality(llmQ, inferred, detected, msg, body)
+        : inferred;
     return {
       role: detected,
-      quality: q === "none" ? inferQualityForRing(msg, detected, body) : q,
+      quality: q === "none" ? inferred : q,
       slotText: base.slotText || msg,
     };
   }
@@ -158,13 +193,16 @@ export function parseUnderstandingForStep(
   if (!expectedRing) return base;
 
   if (messageFillsRing(msg, expectedRing, body)) {
+    const inferred = inferQualityForRing(msg, expectedRing, body);
+    const llmQ =
+      base.role === expectedRing && base.quality !== "none" ? base.quality : "none";
     const q =
-      base.role === expectedRing && base.quality !== "none"
-        ? base.quality
-        : inferQualityForRing(msg, expectedRing, body);
+      llmQ !== "none"
+        ? reconcileQuality(llmQ, inferred, expectedRing, msg, body)
+        : inferred;
     return {
       role: expectedRing,
-      quality: q === "none" ? inferQualityForRing(msg, expectedRing, body) : q,
+      quality: q === "none" ? inferred : q,
       slotText: base.slotText || msg,
     };
   }
@@ -219,6 +257,9 @@ function shortPromptForStep(
 ): string {
   if (step === "reason") return reasonCoachPrompt(body, ctx);
   if (step === "example") {
+    if (isChainStepFilled(slots, "example", body)) {
+      return getNextChainBuildStep(slots, body, ctx).coachPrompt;
+    }
     const ex = slots.example?.trim();
     return ex
       ? exampleFollowUpCoachPrompt(ex, body)
@@ -228,6 +269,43 @@ function shortPromptForStep(
     return linkCoachPrompt(body, ctx, slots.example?.trim());
   }
   return "";
+}
+
+function buildProcessMetaCoach(input: {
+  advanceTo: ChainBuildStep;
+  workingSlots: ParagraphSlots;
+  body: WorkshopBodyKey;
+  ctx: ChainBuildContext;
+  userMessage?: string;
+  llmMirror: string;
+}): { mirror: string; ask: string } {
+  const { advanceTo, workingSlots, body, ctx, userMessage, llmMirror } = input;
+  const msg = userMessage?.trim() ?? "";
+  const next = getNextChainBuildStep(workingSlots, body, ctx);
+  const stepHint =
+    advanceTo === "ready"
+      ? "链条将齐"
+      : STEP_HINT[ringFromStep(advanceTo) ?? "reason"] ?? "下一环";
+
+  let mirror = llmMirror;
+  if (/分论点|论点.*(可以|行吗|够)|claim/i.test(msg)) {
+    mirror =
+      mirror ||
+      "分论点已由审题定稿，左侧 Claim 不用再写；我们按环节补原因→举例→段末收束即可。";
+  } else if (/需要提供什么|要写什么|干什么/i.test(msg)) {
+    mirror =
+      mirror ||
+      `论点已在左侧；当前请先补${stepHint}（一句中文即可）。`;
+  } else {
+    mirror = mirror || "好的，我们按搭链环节往下走。";
+  }
+
+  const ask =
+    advanceTo === "ready"
+      ? ""
+      : clipCoachAsk(next.coachPrompt || shortPromptForStep(advanceTo, body, ctx, workingSlots));
+
+  return { mirror, ask };
 }
 
 function buildCoachMessage(input: {
@@ -262,7 +340,19 @@ function buildCoachMessage(input: {
       ? sanitized.mirror
       : "";
 
+  if (understanding.role === "meta") {
+    return buildProcessMetaCoach({
+      advanceTo,
+      workingSlots,
+      body,
+      ctx,
+      userMessage,
+      llmMirror,
+    });
+  }
+
   const expectedRing = ringFromStep(expectedStep);
+  const exampleDone = exampleRingSatisfied(advanceTo, workingSlots, body);
   const advanced =
     expectedRing &&
     advanceTo !== expectedStep &&
@@ -311,12 +401,32 @@ function buildCoachMessage(input: {
     };
   }
 
-  if (understanding.quality === "weak" && understanding.role === "example") {
+  if (
+    understanding.quality === "weak" &&
+    understanding.role === "example" &&
+    !exampleDone
+  ) {
     const attempt =
       workingSlots.example?.trim() || understanding.slotText || userMessage || "";
     return {
       mirror: llmMirror || "方向对，再具体一点即可。",
       ask: exampleFollowUpCoachPrompt(attempt, body),
+    };
+  }
+
+  if (
+    exampleDone &&
+    advanceTo === "link" &&
+    (understanding.role === "example" ||
+      (understanding.quality === "weak" && !!workingSlots.example?.trim()))
+  ) {
+    const linkPrompt = clipCoachAsk(
+      linkCoachPrompt(body, ctx, workingSlots.example?.trim()),
+    );
+    return {
+      mirror:
+        llmMirror || "好，举例这一环够了，接下来补段末收束。",
+      ask: linkPrompt,
     };
   }
 
@@ -347,10 +457,20 @@ function buildCoachMessage(input: {
         ask: "再补8–15字：更多面试 / 更快上岗 / 更好适应（选一）。",
       };
     }
-    if (expectedRing === "example" && workingSlots.example?.trim()) {
+    if (
+      expectedRing === "example" &&
+      workingSlots.example?.trim() &&
+      !exampleDone
+    ) {
       return {
         mirror: llmMirror || "抱歉，刚才问重复了。",
         ask: exampleFollowUpCoachPrompt(workingSlots.example, body),
+      };
+    }
+    if (expectedRing === "example" && exampleDone && advanceTo === "link") {
+      return {
+        mirror: llmMirror || "抱歉，刚才问重复了；举例已够，请补段末收束。",
+        ask: clipCoachAsk(linkCoachPrompt(body, ctx, workingSlots.example?.trim())),
       };
     }
   }

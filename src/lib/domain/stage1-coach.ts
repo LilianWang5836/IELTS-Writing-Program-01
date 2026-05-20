@@ -22,7 +22,10 @@ import {
 import { ANGLE_TEACH_CHAT } from "./constants";
 import type { LlmTurnResult, SessionState, Stage1Handoff } from "./types";
 
-export { assessExplorationContent } from "./essay-substance";
+export {
+  assessExplorationContent,
+  isProposalAffirmation,
+} from "./essay-substance";
 
 const FRUSTRATION_RE =
   /看不懂|不懂你的|不清楚|不明白|已经说|说得很清楚|什么意思|别绕|听不懂/i;

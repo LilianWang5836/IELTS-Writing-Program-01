@@ -10,7 +10,7 @@
 
 ## 判定
 - ① 题意是否扣题 ② 立场是否可执行 ③ 两个分论点是否清晰 ④ 两个「角度」是否不同切入面
-- 若可进入 Stage 2：verdict=pass, advance=true，userVisibleText 1 句肯定 + 1 句 Body1 任务（勿写范文）
+- 若可进入 Stage 2：verdict=pass, advance=true，userVisibleText 1–2 句肯定审题定稿（可点名 Body1/Body2 方向），勿列 ①–⑥ 清单、勿写范文（Body1 任务由系统另发）
 - 若不行：advance=false，verdict=coach 或 fail，指出问题并只问 1 个追问
 
 ## 输出 JSON

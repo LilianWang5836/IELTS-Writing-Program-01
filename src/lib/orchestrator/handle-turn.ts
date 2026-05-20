@@ -19,7 +19,12 @@ import {
   userMessages,
 } from "@/lib/domain/essay-substance";
 import { assessParagraphSubstance } from "@/lib/domain/paragraph-substance";
-import { assessExplorationContent, postProcessStage1 } from "@/lib/domain/stage1-coach";
+import {
+  assessExplorationContent,
+  isProposalAffirmation,
+  postProcessStage1,
+} from "@/lib/domain/stage1-coach";
+import { buildStage1SubmitFeedback } from "@/lib/domain/essay-substance";
 import {
   applyChainProposalToState,
   postProcessStage2,
@@ -444,7 +449,11 @@ export async function handleSubmitHandoff(
   }
 
   s = applyHandoffAdvance(s);
-  const reply = `${formatCoachDisplay(result)}\n\n${bodyTaskAfterHandoff(s)}`;
+  const bridge = buildStage1SubmitFeedback(handoff);
+  const p1h = formatCoachDisplay(result).trim();
+  const reply = [bridge, p1h, bodyTaskAfterHandoff(s)]
+    .filter(Boolean)
+    .join("\n\n");
   s = appendChat(s, "assistant", reply);
 
   return {
@@ -479,6 +488,34 @@ export async function handleTurn(
       state: s,
       requiresConfirm: false,
       canSubmit: false,
+    };
+  }
+
+  if (
+    s.subStep === "S1_EVAL" &&
+    !s.handoffLocked &&
+    s.coachContext?.handoffPhase === "proposed" &&
+    s.handoffProposal
+  ) {
+    if (isProposalAffirmation(message)) {
+      const confirmed = await handleConfirmHandoffProposal(s);
+      return {
+        ...confirmed,
+        replies: [
+          "好，我先按整理版填入左侧，请核对各栏。",
+          ...confirmed.replies,
+          "无误后点「提交审题定稿」，再进入 Body1 搭链。",
+        ],
+      };
+    }
+    return {
+      replies: [
+        "整理稿已在上一轮给出；若要改某栏请直接说改哪一项。",
+        "若认可，请点左侧「确认整理并填入」，或回复「是」。",
+      ],
+      state: s,
+      requiresConfirm: false,
+      canSubmit: true,
     };
   }
 

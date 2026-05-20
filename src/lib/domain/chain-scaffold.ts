@@ -135,20 +135,67 @@ function isExampleSentence(s: string, body: WorkshopBodyKey): boolean {
 function isLinkSentence(s: string, body: WorkshopBodyKey): boolean {
   const t = s.trim();
   if (t.length < 10 || isStanceOnlySentence(t)) return false;
-  if (/^因为/.test(t) && !/就业|求职|深造|学术/.test(t)) return false;
+  if (/^因为/.test(t) && !/就业|求职|深造|学术|面试|工作/.test(t)) {
+    return false;
+  }
+
+  const linkLead =
+    /因此|所以|从而|这样一来|换言之|可见|总之|综上|这意味着/.test(t);
 
   if (body === "body1") {
+    const employOutcome =
+      /就业|求职|找工作|面试|上岗|招聘|雇主|职场|毕业生|工作中|企业|适应|竞争力|offer/i.test(
+        t,
+      );
+    if (linkLead && employOutcome) return true;
+    if (
+      employOutcome &&
+      /才能|有助于|更容易|更利|更好|更顺|更快|直接应用/.test(t)
+    ) {
+      return true;
+    }
     return (
-      /(?:才能|有助于|从而|最终实现|落到|达成).*(?:就业|求职|上岗|找工作)/.test(
+      /(?:才能|有助于|从而|最终实现|落到|达成).*(?:就业|求职|上岗|找工作|面试)/.test(
         t,
       ) ||
-      (/(?:就业|求职|尽快就业|找工作)/.test(t) &&
-        /目标|目的|让学生/.test(t))
+      (/(?:就业|求职|尽快就业|找工作|面试)/.test(t) &&
+        /目标|目的|让学生|毕业生/.test(t))
     );
   }
+
+  const academicOutcome =
+    /深造|读研|学术|科研|研究|领域|知识|积累|理论|专业基础/.test(t);
+  if (linkLead && academicOutcome) return true;
   return (
     /(?:才能|有助于|从而|支撑).*(?:深造|读研|学术|科研)/.test(t) ||
     (/(?:深造|读研|学术道路)/.test(t) && /知识|积累|系统/.test(t))
+  );
+}
+
+/** 段末收束（Link）：按本分论点与切入面生成引导，非重复全文立场 */
+export function linkCoachPrompt(
+  body: WorkshopBodyKey,
+  ctx?: ChainBuildContext,
+): string {
+  const point = ctx?.bodyPoint || "本分论点";
+  const angle = ctx?.bodyAngle?.trim() || "";
+  const shortPoint =
+    point.length > 36 ? `${point.slice(0, 36)}…` : point;
+
+  if (body === "body1") {
+    const scope = angle || "就业/职场技能这一侧";
+    return (
+      `请写段末收束（Link）：用「因此/所以」一句，把刚才的例子接到「${scope}」，` +
+      `说明它如何支撑「${shortPoint}」（可写求职、面试、上岗、适应工作等；` +
+      `勿再重复「取决于个人规划」等全文立场）。`
+    );
+  }
+
+  const scope = angle || "学术深造 / 纯粹知识这一侧";
+  return (
+    `请写段末收束（Link）：用「因此/所以」一句，把例子接到「${scope}」，` +
+    `说明它如何支撑「${shortPoint}」（可写长期学习、研究基础、领域积累等；` +
+    `勿再重复全文立场）。`
   );
 }
 
@@ -304,13 +351,11 @@ export function getNextChainBuildStep(
     };
   }
 
-  if (!slots.link?.trim()) {
+  const link = slots.link?.trim();
+  if (!link || !isLinkSentence(link, body)) {
     return {
       step: "link",
-      coachPrompt:
-        body === "body1"
-          ? `请写扣题（Link）：上述如何落到「帮助学生尽快就业」？（一句，勿重复原因或立场）`
-          : `请写扣题（Link）：上述如何落到「学术深造 / 纯粹知识」？（一句）`,
+      coachPrompt: linkCoachPrompt(body, ctx),
     };
   }
 

@@ -290,14 +290,14 @@ const SLOT_HINT: Record<Exclude<ChainBuildStep, "ready">, string> = {
   claim: "论点",
   reason: "原因",
   example: "例子",
-  link: "扣题",
+  link: "段末收束",
 };
 
 const SLOT_LABEL: Record<Exclude<ChainBuildStep, "ready">, string> = {
   claim: "论点（Claim）",
   reason: "原因（Reason）",
   example: "举例（Example）",
-  link: "扣题（Link）",
+  link: "段末收束（Link）",
 };
 
 export function applyChainProposalToState(

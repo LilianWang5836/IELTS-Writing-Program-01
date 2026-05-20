@@ -1,4 +1,3 @@
-import { HANDOFF_FIELD_LABELS } from "./constants";
 import type { SessionState, Stage1Handoff } from "./types";
 
 const SUBSTANCE_MARKERS =
@@ -144,16 +143,26 @@ export function accumulateDimensionTexts(msgs: string[]): {
       }
 
       const kind = classifyChunk(chunk);
-      if (kind === "employ") employText = appendSide(employText, chunk);
-      else if (kind === "academic") academicText = appendSide(academicText, chunk);
+      if (kind === "employ") {
+        if (!isPositionOnlyChunk(chunk, "employ")) {
+          employText = appendSide(employText, chunk);
+        }
+      } else if (kind === "academic") {
+        if (!isPositionOnlyChunk(chunk, "academic")) {
+          academicText = appendSide(academicText, chunk);
+        }
+      }
       else if (kind === "mixed" || (dimEmployCount(chunk) >= 1 && dimAcademicCount(chunk) >= 1)) {
         const parts = chunk.split(
           /(?=知识本身|学术道路|学术|纯粹|反之|on the other hand|尽快工作|工作技能)/i,
         );
         for (const p of parts) {
           const k = classifyChunk(p);
-          if (k === "employ") employText = appendSide(employText, p);
-          else if (k === "academic") academicText = appendSide(academicText, p);
+          if (k === "employ" && !isPositionOnlyChunk(p, "employ")) {
+            employText = appendSide(employText, p);
+          } else if (k === "academic" && !isPositionOnlyChunk(p, "academic")) {
+            academicText = appendSide(academicText, p);
+          }
         }
       }
     }
@@ -728,14 +737,42 @@ export function formatProposalCoachMessage(
   const intro =
     summary?.trim() ||
     "我按我们聊的内容整理了一版审题定稿，你看看是否准确。";
-  return [
+  const p1 = proposal.body1Point?.trim();
+  const p2 = proposal.body2Point?.trim();
+  const a1 = proposal.body1Angle?.trim();
+  const a2 = proposal.body2Angle?.trim();
+  const lines = [
     intro,
-    `${HANDOFF_FIELD_LABELS.taskUnderstanding}：${proposal.taskUnderstanding}`,
-    `${HANDOFF_FIELD_LABELS.position}：${proposal.position}`,
-    `${HANDOFF_FIELD_LABELS.body1Point}：${proposal.body1Point}`,
-    `${HANDOFF_FIELD_LABELS.body1Angle}：${proposal.body1Angle}`,
-    `${HANDOFF_FIELD_LABELS.body2Point}：${proposal.body2Point}`,
-    `${HANDOFF_FIELD_LABELS.body2Angle}：${proposal.body2Angle}`,
-    "若认可，请点左侧「确认整理并填入」，可改几个字后再提交定稿。",
-  ].join("\n");
+    `题意：${proposal.taskUnderstanding?.trim() || "（见左侧）"}`,
+    `立场：${proposal.position?.trim() || "（见左侧）"}`,
+    p1 ? `Body1（就业/技能）：${p1}${a1 ? ` · 范围：${a1}` : ""}` : "",
+    p2 ? `Body2（学术/知识）：${p2}${a2 ? ` · 范围：${a2}` : ""}` : "",
+    "六栏细目在左侧；若认可，请点「确认整理并填入」，可改几个字后再点「提交审题定稿」。",
+    "聊天里回复「是」也会帮你填入左侧。",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+/** 聊天里口头认可整理提案（非改稿） */
+export function isProposalAffirmation(message: string): boolean {
+  const m = message.trim();
+  if (!m || m.length > 16) return false;
+  return /^(?:是|对|可以|好的|没问题|认可|确认|同意|嗯|好|ok|yes)[。.!]?$/i.test(
+    m,
+  );
+}
+
+/** 提交审题定稿后、进 Body1 前的短反馈 */
+export function buildStage1SubmitFeedback(h: Stage1Handoff): string {
+  const p1 = h.body1Point?.trim();
+  const p2 = h.body2Point?.trim();
+  return [
+    "审题定稿已锁定，可以开始搭论证链。",
+    h.position?.trim() ? `总立场：${h.position.trim()}` : "",
+    p1 ? `Body1 将论证：${p1}` : "",
+    p2 ? `Body2 将论证：${p2}` : "",
+    "若还想改立场或分论点，可在左侧微调后再继续。",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

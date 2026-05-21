@@ -65,7 +65,6 @@ export const MAIN_ERROR_PRIORITY: Array<{
   { priority: "P1", kind: "cause_effect_gap" },
   { priority: "P2", kind: "collocation" },
   { priority: "P2", kind: "noun_pile" },
-  { priority: "P3", kind: "unclear_wording" },
 ];
 
 const BANNED_FEEDBACK_RE =
@@ -546,7 +545,8 @@ export function diagnoseSentence(
 
   for (const step of MAIN_ERROR_PRIORITY) {
     const kind = step.kind as Exclude<SentenceProblemKind, "none" | "unclear_wording">;
-    if (!detector[kind]()) continue;
+    const probe = detector[kind];
+    if (!probe || !probe()) continue;
     const meta = diagnosticMeta[kind];
     return buildDiagnosis(kind, step.priority, meta.label, meta.q, module);
   }

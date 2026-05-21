@@ -42,6 +42,10 @@ const good =
 const d4 = diagnoseSentence(good, "claim");
 ok(d4.pass, "完整句 pass");
 
+const fuzzy = "Good for jobs.";
+const d5 = diagnoseSentence(fuzzy, "reason");
+ok(d5.kind === "unclear_wording", "未命中前置规则时走 unclear 兜底");
+
 const fb = formatSentenceCoachFeedback(d1, badSubject);
 ok(!/grammar issue|awkward/i.test(fb), "无笼统 grammar 评语");
 ok(/Keywords/.test(fb), "含 scaffolding");

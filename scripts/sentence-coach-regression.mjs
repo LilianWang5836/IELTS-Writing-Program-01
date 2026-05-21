@@ -5,6 +5,7 @@
 import {
   MAIN_ERROR_PRIORITY,
   applyStudentAnchoredScaffolding,
+  assessMeaningAlignment,
   diagnoseSentence,
   formatSentenceCoachFeedback,
 } from "../src/lib/domain/sentence-coach.ts";
@@ -36,6 +37,27 @@ ok(d2b.kind === "missing_verb", "缺少核心谓语");
 const badGap = "students join internships, competitive advantage";
 const d3 = diagnoseSentence(badGap, "example");
 ok(d3.kind === "cause_effect_gap", "因果断裂");
+
+const mockState = {
+  s2: {
+    body1Point: "大学应教授实用技能，使毕业生能迅速找到工作",
+    body1Angle: "实践经验帮助求职和适应工作",
+    body2Point: "",
+    body2Angle: "",
+  },
+  s3: {
+    currentBody: "body1",
+    modulePlan: { body1: ["example"], body2: [], conclusion: [] },
+    moduleIndex: 0,
+  },
+} ;
+const m1 = assessMeaningAlignment(
+  mockState,
+  "Students learn C++ at school.",
+  "example",
+);
+ok(!m1.aligned, "meaning 缺失时先拦截");
+ok(m1.missing.includes("job") || m1.missing.includes("logic_link"), "能指出缺失 meaning");
 
 const good =
   "Universities should prioritize practical skills because this helps graduates adapt to workplace demands.";

@@ -38,9 +38,10 @@ Body2 论点：{{body2_point}}
 每次只识别 **ONE** main problem。
 
 优先级：
-1. P1 句子结构断裂 / 主语缺失 / 从句挂错 / 因果断裂
-2. P2 搭配 / 冠词 / 名词堆叠
-3. P3 表述不够学术自然
+1. P0 Intent Alignment（是否完整表达既定中文逻辑）
+2. P1 句子结构断裂 / 主语缺失 / 从句挂错 / 因果断裂
+3. P2 搭配 / 冠词 / 名词堆叠
+4. P3 表述不够学术自然
 
 禁止笼统说：
 - grammar issue / awkward sentence / improve clarity
@@ -57,6 +58,10 @@ Instead:
 1. identify the ONE biggest structural issue
 2. guide the student to repair it
 3. provide local scaffolding only
+
+Meaning-first gate:
+- 先对照已确认中文大纲（bodyPoint/bodyAngle）检查 meaning 是否完整
+- 若 meaning 缺失（对象/因果/结果/关键逻辑），先修 meaning，不进入 grammar refinement
 
 VERY IMPORTANT:
 Scaffolding should primarily reuse or reorganize the student's existing words.

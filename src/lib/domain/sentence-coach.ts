@@ -28,9 +28,10 @@ export function getModuleDirection(state: SessionState): string {
   return "";
 }
 
-export type SentenceProblemPriority = "P1" | "P2" | "P3";
+export type SentenceProblemPriority = "P0" | "P1" | "P2" | "P3";
 
 export type SentenceProblemKind =
+  | "meaning_gap"
   | "missing_subject"
   | "missing_verb"
   | "subject_verb_broken"
@@ -53,6 +54,12 @@ export interface SentenceDiagnosis {
   pass: boolean;
 }
 
+export interface MeaningAlignmentResult {
+  aligned: boolean;
+  missing: string[];
+  requiredConcepts: string[];
+}
+
 /** 单轮只修一个问题（由前到后匹配） */
 export const MAIN_ERROR_PRIORITY: Array<{
   priority: SentenceProblemPriority;
@@ -72,6 +79,84 @@ const BANNED_FEEDBACK_RE =
 
 const SUBJECT_STARTERS =
   /^(universities|university|students?|graduates?|they|it|this|these|those|the\s+\w+|many|some|people|employers|companies|governments?|job\s+seekers?|young\s+people)/i;
+
+const CONCEPT_CUES: Record<string, string[]> = {
+  job: ["job", "jobs", "work", "workplace", "employment", "employer", "career", "interview"],
+  practice: ["practice", "practical", "intern", "internship", "project", "projects", "hands-on", "experience"],
+  skill: ["skill", "skills", "technology", "technical", "language", "languages"],
+  adapt: ["adapt", "adaptation", "fit", "transition", "ready"],
+  academic: ["academic", "research", "knowledge", "theory", "study", "long-term"],
+};
+
+function detectOutlineConcepts(outline: string): string[] {
+  const text = outline.trim();
+  const concepts: string[] = [];
+  if (/就业|求职|工作|职场|面试/.test(text)) concepts.push("job");
+  if (/实践|实习|项目|动手/.test(text)) concepts.push("practice");
+  if (/技能|技术|能力|语言/.test(text)) concepts.push("skill");
+  if (/适应|上岗|过渡/.test(text)) concepts.push("adapt");
+  if (/学术|研究|深造|知识|理论|长期/.test(text)) concepts.push("academic");
+  return concepts;
+}
+
+function hasAnyCue(sentence: string, cues: string[]): boolean {
+  const s = sentence.toLowerCase();
+  return cues.some((c) => s.includes(c.toLowerCase()));
+}
+
+function moduleNeedsConnector(module?: string): boolean {
+  return module === "reason" || module === "example";
+}
+
+function hasCauseOrContrast(sentence: string): boolean {
+  return /\b(because|so|therefore|thus|as a result|which helps|which leads|while|but|however|instead|rather than|whereas)\b/i.test(
+    sentence,
+  );
+}
+
+export function assessMeaningAlignment(
+  state: SessionState,
+  sentence: string,
+  module?: string,
+): MeaningAlignmentResult {
+  const s3 = state.s3;
+  const body = s3?.currentBody;
+  const s2 = state.s2;
+  if (!s2 || !body || body === "conclusion") {
+    return { aligned: true, missing: [], requiredConcepts: [] };
+  }
+
+  const bodyPoint = body === "body1" ? s2.body1Point : s2.body2Point;
+  const bodyAngle = body === "body1" ? s2.body1Angle : s2.body2Angle;
+  const outline = `${bodyPoint} ${bodyAngle}`.trim();
+  const concepts = detectOutlineConcepts(outline);
+  const required = concepts.slice(0, 3);
+  const missing: string[] = [];
+
+  for (const c of required) {
+    if (!hasAnyCue(sentence, CONCEPT_CUES[c] ?? [])) {
+      missing.push(c);
+    }
+  }
+
+  if (moduleNeedsConnector(module) && !hasCauseOrContrast(sentence)) {
+    missing.push("logic_link");
+  }
+
+  if (module === "example" && !/\b(for example|for instance|such as|e\.g\.)\b/i.test(sentence)) {
+    // Example 句可以没有显式标记，但至少要有场景词；若都没有，视为 meaning 风险
+    const hasScene = /\b(at school|in class|in companies|at work|in workplace|during internship)\b/i.test(
+      sentence,
+    );
+    if (!hasScene) missing.push("example_scene");
+  }
+
+  return {
+    aligned: missing.length === 0,
+    missing,
+    requiredConcepts: required,
+  };
+}
 
 function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
@@ -207,6 +292,14 @@ function scaffoldingFor(
   };
 
   switch (kind) {
+    case "meaning_gap":
+      return {
+        ...base,
+        hintZh: "先把核心中文逻辑说完整，再做语法细修。",
+        keywords: ["contrast", "result", "workplace", "internship"],
+        phraseFragments: ["X at school, but Y at work", "..., which helps ..."],
+        starterStructures: ["先保留核心对比 + 再补结果"],
+      };
     case "missing_subject":
       return {
         ...base,
@@ -432,6 +525,10 @@ function locateProblemSnippet(
   if (!s) return "";
   const low = s.toLowerCase();
 
+  if (diagnosis.kind === "meaning_gap") {
+    return s.split(/[,;，；]/)[0]?.trim() ?? s.slice(0, 28);
+  }
+
   if (diagnosis.kind === "missing_subject") {
     const afterThat = s.match(/\bthat\s+([^,.;，；]+)/i)?.[1]?.trim();
     if (afterThat) return afterThat.split(/\s+/).slice(0, 6).join(" ");
@@ -499,7 +596,10 @@ export function diagnoseSentence(
     };
   }
 
-  const detector: Record<Exclude<SentenceProblemKind, "none" | "unclear_wording">, () => boolean> = {
+  const detector: Record<
+    Exclude<SentenceProblemKind, "none" | "unclear_wording" | "meaning_gap">,
+    () => boolean
+  > = {
     missing_subject: () => detectMissingSubject(s),
     missing_verb: () => detectMissingVerb(s),
     subject_verb_broken: () => detectBrokenWhich(s),
@@ -510,7 +610,7 @@ export function diagnoseSentence(
   };
 
   const diagnosticMeta: Record<
-    Exclude<SentenceProblemKind, "none" | "unclear_wording">,
+    Exclude<SentenceProblemKind, "none" | "unclear_wording" | "meaning_gap">,
     { label: string; q: string }
   > = {
     missing_subject: {
@@ -544,7 +644,10 @@ export function diagnoseSentence(
   };
 
   for (const step of MAIN_ERROR_PRIORITY) {
-    const kind = step.kind as Exclude<SentenceProblemKind, "none" | "unclear_wording">;
+    const kind = step.kind as Exclude<
+      SentenceProblemKind,
+      "none" | "unclear_wording" | "meaning_gap"
+    >;
     const probe = detector[kind];
     if (!probe || !probe()) continue;
     const meta = diagnosticMeta[kind];
@@ -674,6 +777,68 @@ export function postProcessStage3Sentence(
 
   const sentence = userMessage?.trim() ?? s3.pendingSentence?.trim() ?? "";
   if (!sentence) return { result: next, state: nextState };
+
+  const meaning = assessMeaningAlignment(state, sentence, mod ?? undefined);
+  if (!meaning.aligned) {
+    const missingLabels = meaning.missing
+      .map((m) =>
+        m === "job"
+          ? "求职/工作结果"
+          : m === "practice"
+            ? "实践/实习经历"
+            : m === "skill"
+              ? "技能/技术对象"
+              : m === "adapt"
+                ? "适应工作"
+                : m === "academic"
+                  ? "学术/研究目标"
+                  : m === "logic_link"
+                    ? "因果/对比连接"
+                    : "例子场景",
+      )
+      .join("、");
+
+    const meaningDiagnosis = applyStudentAnchoredScaffolding(
+      buildDiagnosis(
+        "meaning_gap",
+        "P0",
+        "Meaning 未对齐",
+        `这句还没完整表达既定中文逻辑，当前缺：${missingLabels}。先把这些意思补全。`,
+        mod ?? undefined,
+      ),
+      sentence,
+    );
+
+    const feedbackText = formatSentenceCoachFeedback(meaningDiagnosis, sentence);
+    next = {
+      ...next,
+      verdict: "coach",
+      advance: false,
+      userVisibleText: feedbackText,
+      mirror: meaningDiagnosis.repairQuestionZh,
+      coachQuestion: meaningDiagnosis.repairQuestionZh,
+      languageSupport: {
+        keywords: meaningDiagnosis.keywords,
+        phraseFragments: meaningDiagnosis.phraseFragments,
+        starterStructures: meaningDiagnosis.starterStructures,
+      },
+      moduleComplete: false,
+      syntaxHint: undefined,
+    };
+
+    return {
+      result: next,
+      state: {
+        ...nextState,
+        s3: { ...s3, mode: "coach", pendingSentence: sentence },
+        coachContext: {
+          ...nextState.coachContext,
+          lastQuestion: meaningDiagnosis.repairQuestionZh,
+          openIssue: "Meaning 未对齐",
+        },
+      },
+    };
+  }
 
   const diagnosisRaw = diagnoseSentence(sentence, mod ?? undefined);
   const diagnosis = applyStudentAnchoredScaffolding(diagnosisRaw, sentence);

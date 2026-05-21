@@ -37,6 +37,7 @@ import {
   postProcessStage2,
 } from "@/lib/domain/stage2-coach";
 import {
+  assessMeaningAlignment,
   diagnoseSentence,
   postProcessStage3Sentence,
 } from "@/lib/domain/sentence-coach";
@@ -194,8 +195,15 @@ function buildVars(
         state.s3.currentBody,
         state.s3.moduleIndex,
       );
+      const meaning = assessMeaningAlignment(
+        state,
+        userMessage,
+        mod ?? undefined,
+      );
       const diagnosis = diagnoseSentence(userMessage, mod ?? undefined);
       base.sentence_diagnosis = JSON.stringify({
+        meaningAligned: meaning.aligned,
+        meaningMissing: meaning.missing,
         pass: diagnosis.pass,
         priority: diagnosis.priority,
         kind: diagnosis.kind,

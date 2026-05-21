@@ -3,6 +3,7 @@
  */
 import { normalizeBlueprint } from "./blueprint-from-s2";
 import { getCurrentModule } from "./module-compiler";
+import { buildStage3OutputContract } from "./output-contract";
 import { sampleStage3Task } from "./stage3-task-sampler";
 import type { LlmTurnResult, SessionState } from "./types";
 
@@ -811,31 +812,6 @@ function prependHint(hint: string, text: string): string {
   return `${hint}\n\n${text}`;
 }
 
-function buildStage3OutputContract(input: {
-  state: SessionState;
-  module: string | null;
-  meaningOk: boolean;
-  meaningReason: string;
-  paragraphFit: boolean;
-  paragraphReason: string;
-  feedback: string;
-  suggestedRevision: string;
-  nextStep: string;
-}): string {
-  const o = input.state.s3?.orchestrator;
-  const essayLine = o
-    ? `thesis consistency: ${o.essayContradiction ? "risk" : "ok"} | structure: ${o.focusLayer} focus (${o.mode})`
-    : "thesis consistency: n/a | structure: n/a";
-  return [
-    `【Meaning Check】${input.meaningOk ? "yes" : "no"} - ${input.meaningReason}`,
-    `【Essay Check】${essayLine}`,
-    `【Paragraph Check】role=${input.module ?? "sentence"} | ${input.paragraphFit ? "fit" : "drift"} - ${input.paragraphReason}`,
-    `【Feedback】\n${input.feedback}`,
-    `【Suggested Revision】\n${input.suggestedRevision}`,
-    `【Next Step】${input.nextStep}`,
-  ].join("\n\n");
-}
-
 export function postProcessStage3Sentence(
   state: SessionState,
   result: LlmTurnResult,
@@ -872,7 +848,6 @@ export function postProcessStage3Sentence(
       ...next,
       verdict: "assign",
       userVisibleText: buildStage3OutputContract({
-        state,
         module: mod ?? null,
         meaningOk: true,
         meaningReason: "当前为任务布置轮",
@@ -881,6 +856,7 @@ export function postProcessStage3Sentence(
         feedback: feedbackBody,
         suggestedRevision: "先写一句英文草稿（不必一次完美）。",
         nextStep: "提交你的句子后，我会先看 meaning 与结构，再做细修。",
+        orchestrator,
       }),
       languageSupport: ls,
       syntaxHint: undefined,
@@ -908,7 +884,6 @@ export function postProcessStage3Sentence(
       verdict: "coach",
       advance: false,
       userVisibleText: buildStage3OutputContract({
-        state,
         module: mod ?? null,
         meaningOk: true,
         meaningReason: "当前是表达讨论，不是内容偏题",
@@ -920,6 +895,7 @@ export function postProcessStage3Sentence(
         ),
         suggestedRevision: "基于你原句改一版，不需要整句重写。",
         nextStep: "继续提交英文句子，我会回到当前模块修句。",
+        orchestrator,
       }),
       mirror: clarification,
       coachQuestion: "继续改原句即可，不需要整句重写。",
@@ -957,7 +933,6 @@ export function postProcessStage3Sentence(
       verdict: "coach",
       advance: false,
       userVisibleText: buildStage3OutputContract({
-        state,
         module: mod ?? null,
         meaningOk: false,
         meaningReason: "优先处理更高层矛盾",
@@ -972,6 +947,7 @@ export function postProcessStage3Sentence(
             ? "先写一句与总论点同向的句子。"
             : "先写一句明确承担当前段功能的句子。",
         nextStep: "先完成上层修复，再进入句内细修。",
+        orchestrator,
       }),
       mirror: hardGuide,
       coachQuestion: "按这个方向改一版，再进入句内细修。",
@@ -1037,7 +1013,6 @@ export function postProcessStage3Sentence(
       verdict: "coach",
       advance: false,
       userVisibleText: buildStage3OutputContract({
-        state,
         module: mod ?? null,
         meaningOk: false,
         meaningReason: `缺失：${missingLabels}`,
@@ -1047,6 +1022,7 @@ export function postProcessStage3Sentence(
         suggestedRevision:
           meaningDiagnosis.phraseFragments[0] ?? "先补齐缺失 meaning，再微调语法。",
         nextStep: "补齐上述 meaning 后再发一版句子。",
+        orchestrator,
       }),
       mirror: meaningDiagnosis.repairQuestionZh,
       coachQuestion: meaningDiagnosis.repairQuestionZh,
@@ -1084,7 +1060,6 @@ export function postProcessStage3Sentence(
       verdict: "pass",
       advance: false,
       userVisibleText: buildStage3OutputContract({
-        state,
         module: mod ?? null,
         meaningOk: true,
         meaningReason: "已覆盖当前句目标含义",
@@ -1093,6 +1068,7 @@ export function postProcessStage3Sentence(
         feedback: passText,
         suggestedRevision: "保持此框架，后续只做词汇/语法微调。",
         nextStep: "点击确认写入，进入下一句。",
+        orchestrator,
       }),
       moduleComplete: next.moduleComplete ?? true,
       mirror: undefined,
@@ -1113,7 +1089,6 @@ export function postProcessStage3Sentence(
     verdict: "coach",
     advance: false,
     userVisibleText: buildStage3OutputContract({
-      state,
       module: mod ?? null,
       meaningOk: true,
       meaningReason: "核心含义可理解，进入结构/表达修复",
@@ -1126,6 +1101,7 @@ export function postProcessStage3Sentence(
       suggestedRevision:
         diagnosis.phraseFragments[0] ?? "按反馈只改一个问题，再发一版。",
       nextStep: "保留原意，修改这一处后提交。",
+      orchestrator,
     }),
     mirror: diagnosis.repairQuestionZh,
     coachQuestion: diagnosis.repairQuestionZh,

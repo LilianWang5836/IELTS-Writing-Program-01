@@ -6,6 +6,10 @@ import { resolvePromptModule, stageLabel } from "@/lib/domain/router";
 import { normalizeBlueprint } from "@/lib/domain/blueprint-from-s2";
 import { migrateSessionState } from "@/lib/domain/migrate-state";
 import { applyOrchestratorShadow } from "@/lib/domain/essay-orchestrator";
+import {
+  applyOrchestratorHardGate,
+  observeOrchestratorHardGate,
+} from "@/lib/domain/orchestrator-gate";
 import { appendChat, stateSummary } from "@/lib/domain/state";
 import { validateUserSentence } from "@/lib/domain/validate";
 import type {
@@ -210,6 +214,11 @@ function buildVars(
       base.orchestrator_snapshot = JSON.stringify(state.s3.orchestrator);
       base.current_focus_layer = state.s3.orchestrator.focusLayer;
     }
+    if (state.coachContext?.orchestratorGate) {
+      base.orchestrator_gate_telemetry = JSON.stringify(
+        state.coachContext.orchestratorGate,
+      );
+    }
   }
   return base;
 }
@@ -229,9 +238,25 @@ async function processLlmTurn(
 
   let nextState = state;
   let autoContinue = false;
+  const gated = applyOrchestratorHardGate(state, result, prevSubStep);
+  if (gated) {
+    result = gated.result;
+    nextState = gated.state;
+    const reply = formatCoachDisplay(result, {
+      stage1: prevSubStep === "S1_EVAL",
+      stage2: prevSubStep === "S2_2_BODY1" || prevSubStep === "S2_3_BODY2",
+      stage3Sentence: prevSubStep === "S3_2_MODULE",
+    });
+    nextState = appendChat(nextState, "assistant", reply);
+    return { reply, state: nextState, autoContinue: false };
+  }
+  nextState = observeOrchestratorHardGate(state, {
+    subStep: prevSubStep,
+    hit: false,
+  });
 
   if (prevSubStep === "S1_EVAL") {
-    const processed = postProcessStage1(state, result, userMessage);
+    const processed = postProcessStage1(nextState, result, userMessage);
     result = processed.result;
     nextState = mergeS1FromResult(processed.state, result);
     const reply = formatCoachDisplay(result, { stage1: true });
@@ -241,7 +266,7 @@ async function processLlmTurn(
 
   if (prevSubStep === "S2_2_BODY1" || prevSubStep === "S2_3_BODY2") {
     const body: BodyKey = prevSubStep === "S2_2_BODY1" ? "body1" : "body2";
-    const processed = postProcessStage2(state, result, body, userMessage);
+    const processed = postProcessStage2(nextState, result, body, userMessage);
     result = processed.result;
     nextState = applyBodyCoachUpdate(processed.state, body, result, userMessage);
     const reply = formatCoachDisplay(result, { stage2: true });
@@ -250,7 +275,7 @@ async function processLlmTurn(
   }
 
   if (prevSubStep === "S3_2_MODULE") {
-    const processed = postProcessStage3Sentence(state, result, userMessage);
+    const processed = postProcessStage3Sentence(nextState, result, userMessage);
     result = processed.result;
     nextState = processed.state;
     const reply = formatCoachDisplay(result, { stage3Sentence: true });

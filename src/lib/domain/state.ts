@@ -165,6 +165,25 @@ export function buildLeftPanelText(state: SessionState): string {
     parts.push("");
   }
 
+  if (state.coachContext?.orchestratorGate) {
+    const g = state.coachContext.orchestratorGate;
+    parts.push("【Hard Gate Telemetry】");
+    parts.push(
+      `hits=${g.totalHits} | streak=${g.consecutiveHits} | hardTurns=${g.hardModeTurns}`,
+    );
+    if (g.lastLayer || g.lastReason || g.lastSubStep) {
+      parts.push(
+        `last=${g.lastLayer ?? "n/a"} / ${g.lastReason ?? "n/a"} / ${g.lastSubStep ?? "n/a"}`,
+      );
+    }
+    if (g.downgradeSuggested) {
+      parts.push(
+        `suggest=${g.suggestedMode ?? "soft"} @hit=${g.suggestedAtHits ?? "n/a"} (${g.suggestReason ?? "high hard-gate pressure"})`,
+      );
+    }
+    parts.push("");
+  }
+
   const sentences = state.s3?.confirmedSentences ?? {};
   const keys = Object.keys(sentences).sort();
   if (keys.length > 0) {

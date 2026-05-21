@@ -1,4 +1,5 @@
 import { jsonrepair } from "jsonrepair";
+import { isOutputContractText } from "@/lib/domain/output-contract";
 import type {
   LanguageSupport,
   LogicBreakdown,
@@ -114,10 +115,13 @@ function prependMirror(result: LlmTurnResult, coach: string): string {
 
 /** Stage 1：mirror + 单问，防重复拼接 */
 export function formatStage1CoachDisplay(result: LlmTurnResult): string {
+  const uv = result.userVisibleText?.trim();
+  if (isOutputContractText(uv)) return uv;
+
   const parts: string[] = [];
   const mirror = result.mirror?.trim();
   const question = result.coachQuestion?.trim();
-  const uv = result.userVisibleText?.trim();
+  const userVisible = uv;
 
   if (mirror) parts.push(mirror);
   if (question) {
@@ -126,14 +130,14 @@ export function formatStage1CoachDisplay(result: LlmTurnResult): string {
       parts.push(question);
     }
   }
-  if (uv) {
+  if (userVisible) {
     const joined = parts.join(" ");
     if (
-      !mirror?.includes(uv.slice(0, 10)) &&
-      !question?.includes(uv.slice(0, 10)) &&
-      !joined.includes(uv.slice(0, Math.min(12, uv.length)))
+      !mirror?.includes(userVisible.slice(0, 10)) &&
+      !question?.includes(userVisible.slice(0, 10)) &&
+      !joined.includes(userVisible.slice(0, Math.min(12, userVisible.length)))
     ) {
-      parts.push(uv);
+      parts.push(userVisible);
     }
   }
 
@@ -142,10 +146,13 @@ export function formatStage1CoachDisplay(result: LlmTurnResult): string {
 
 /** Stage 2：口语反馈，链条不进聊天 */
 export function formatStage2CoachDisplay(result: LlmTurnResult): string {
+  const uv = result.userVisibleText?.trim();
+  if (isOutputContractText(uv)) return uv;
+
   const parts: string[] = [];
   const mirror = result.mirror?.trim();
   const question = result.coachQuestion?.trim();
-  const uv = result.userVisibleText?.trim();
+  const userVisible = uv;
 
   if (mirror) parts.push(mirror);
   if (question) {
@@ -154,14 +161,14 @@ export function formatStage2CoachDisplay(result: LlmTurnResult): string {
       parts.push(question);
     }
   }
-  if (uv) {
+  if (userVisible) {
     const joined = parts.join(" ");
     if (
-      !mirror?.includes(uv.slice(0, 10)) &&
-      !question?.includes(uv.slice(0, 10)) &&
-      !joined.includes(uv.slice(0, Math.min(12, uv.length)))
+      !mirror?.includes(userVisible.slice(0, 10)) &&
+      !question?.includes(userVisible.slice(0, 10)) &&
+      !joined.includes(userVisible.slice(0, Math.min(12, userVisible.length)))
     ) {
-      parts.push(uv);
+      parts.push(userVisible);
     }
   }
 

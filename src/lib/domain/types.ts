@@ -145,6 +145,18 @@ export interface Blueprint {
 export type HandoffPhase = "exploring" | "proposed" | "editing" | "locked";
 
 export interface CoachContext {
+  orchestratorGate?: {
+    totalHits: number;
+    consecutiveHits: number;
+    hardModeTurns: number;
+    lastLayer?: "essay" | "paragraph";
+    lastReason?: string;
+    lastSubStep?: string;
+    downgradeSuggested?: boolean;
+    suggestedMode?: "soft" | "shadow";
+    suggestReason?: string;
+    suggestedAtHits?: number;
+  };
   lastQuestion?: string;
   openIssue?: string;
   exploreRound?: number;

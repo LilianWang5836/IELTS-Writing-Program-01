@@ -44,6 +44,7 @@ import type {
   WorkshopBodyKey,
 } from "./types";
 import { assessParagraphSubstance } from "./paragraph-substance";
+import { buildOutputContract } from "./output-contract";
 
 const MAX_MIRROR_CHARS = 220;
 
@@ -125,6 +126,31 @@ function nextChainAskCount(
   const prevCount = state.coachContext?.chainStepAskCount ?? 0;
   if (prevStep === step) return prevCount + 1;
   return 1;
+}
+
+function buildStage2OutputContract(input: {
+  state: SessionState;
+  body: WorkshopBodyKey;
+  module: string;
+  meaningOk: boolean;
+  meaningReason: string;
+  paragraphFit: boolean;
+  paragraphReason: string;
+  feedback: string;
+  suggestedRevision: string;
+  nextStep: string;
+}): string {
+  return buildOutputContract({
+    module: `${input.body}:${input.module}`,
+    meaningOk: input.meaningOk,
+    meaningReason: input.meaningReason,
+    paragraphFit: input.paragraphFit,
+    paragraphReason: input.paragraphReason,
+    feedback: input.feedback,
+    suggestedRevision: input.suggestedRevision,
+    nextStep: input.nextStep,
+    orchestrator: input.state.s3?.orchestrator,
+  });
 }
 
 export function postProcessStage2(
@@ -275,7 +301,24 @@ export function postProcessStage2(
         advance: false,
         mirror: explain,
         coachQuestion: coachQ,
-        userVisibleText: [explain, softNext].filter(Boolean).join("\n\n"),
+        userVisibleText: buildStage2OutputContract({
+          state: nextState,
+          body,
+          module: buildStep,
+          meaningOk: true,
+          meaningReason: "流程确认，不是内容偏题",
+          paragraphFit: buildStep === "ready",
+          paragraphReason:
+            buildStep === "ready"
+              ? "链条关键环已齐，可准备并入"
+              : `当前优先补 ${SLOT_LABEL[buildStep]}`,
+          feedback: [explain, softNext].filter(Boolean).join("\n\n"),
+          suggestedRevision:
+            buildStep === "ready"
+              ? "核对左侧链条，若顺就并入。"
+              : `补一句${SLOT_LABEL[buildStep]}（一句即可）。`,
+          nextStep: coachQ || "继续按当前环节补一句。",
+        }),
         logicBreakdown: undefined,
       },
       state: {
@@ -312,7 +355,24 @@ export function postProcessStage2(
         advance: false,
         mirror,
         coachQuestion: coachQ,
-        userVisibleText: [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n"),
+        userVisibleText: buildStage2OutputContract({
+          state: nextState,
+          body,
+          module: buildStep,
+          meaningOk: true,
+          meaningReason: "当前是流程/策略澄清",
+          paragraphFit: buildStep === "ready",
+          paragraphReason:
+            buildStep === "ready"
+              ? "链条完整，可并入"
+              : `当前在补 ${SLOT_LABEL[buildStep]}`,
+          feedback: [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n"),
+          suggestedRevision:
+            buildStep === "ready"
+              ? "确认是否并入链条。"
+              : `按提示补一句${SLOT_LABEL[buildStep]}。`,
+          nextStep: coachQ || "继续当前环节。",
+        }),
         logicBreakdown: undefined,
       },
       state: {
@@ -371,7 +431,24 @@ export function postProcessStage2(
           advance: false,
           mirror,
           coachQuestion: coachQ,
-          userVisibleText: [mirror, coachQ, progress].filter(Boolean).join("\n\n"),
+          userVisibleText: buildStage2OutputContract({
+            state: nextState,
+            body,
+            module: afterF.step,
+            meaningOk: true,
+            meaningReason: "你的输入有效，系统已吸收",
+            paragraphFit: afterF.step === "ready",
+            paragraphReason:
+              afterF.step === "ready"
+                ? "链条够写，可并入"
+                : `下一步补 ${SLOT_LABEL[afterF.step]}`,
+            feedback: [mirror, coachQ, progress].filter(Boolean).join("\n\n"),
+            suggestedRevision:
+              afterF.step === "ready"
+                ? "检查左侧链条并确认。"
+                : `补一句${SLOT_LABEL[afterF.step]}，保持一句话。`,
+            nextStep: coachQ || "继续下一环。",
+          }),
           logicBreakdown: undefined,
         },
         state: {
@@ -397,7 +474,18 @@ export function postProcessStage2(
           advance: false,
           mirror,
           coachQuestion: coachQ,
-          userVisibleText: [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n"),
+          userVisibleText: buildStage2OutputContract({
+            state: nextState,
+            body,
+            module: "example",
+            meaningOk: true,
+            meaningReason: "例子方向正确，需要更具体",
+            paragraphFit: false,
+            paragraphReason: "example 仍偏泛，需要可写细节",
+            feedback: [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n"),
+            suggestedRevision: "补一个具体场景/对象/结果。",
+            nextStep: coachQ || "再具体一点后提交。",
+          }),
           logicBreakdown: undefined,
         },
         state: {
@@ -427,7 +515,24 @@ export function postProcessStage2(
         advance: false,
         mirror: skeleton,
         coachQuestion: coachQ,
-        userVisibleText: `${skeleton}\n\n${progressBlock}`,
+        userVisibleText: buildStage2OutputContract({
+          state: nextState,
+          body,
+          module: buildStep,
+          meaningOk: true,
+          meaningReason: "你在确认结构理解",
+          paragraphFit: buildStep === "ready",
+          paragraphReason:
+            buildStep === "ready"
+              ? "骨架已完整"
+              : `当前应先完成 ${SLOT_LABEL[buildStep]}`,
+          feedback: `${skeleton}\n\n${progressBlock}`,
+          suggestedRevision:
+            buildStep === "ready"
+              ? "指出要改的具体一环。"
+              : `按骨架补一句${SLOT_LABEL[buildStep]}。`,
+          nextStep: coachQ || "继续当前环节。",
+        }),
         logicBreakdown: undefined,
       },
       state: {
@@ -491,7 +596,18 @@ export function postProcessStage2(
         advance: false,
         mirror: "",
         coachQuestion: "",
-        userVisibleText: `${msg}\n\n${finalizeProgress}`,
+        userVisibleText: buildStage2OutputContract({
+          state: nextState,
+          body,
+          module: "ready",
+          meaningOk: true,
+          meaningReason: "段内 meaning 已闭环",
+          paragraphFit: true,
+          paragraphReason: "claim/reason/example/link 已到可写状态",
+          feedback: `${msg}\n\n${finalizeProgress}`,
+          suggestedRevision: "若无异议，确认并入链条。",
+          nextStep: "点击并入链条；若要改，指出具体一环。",
+        }),
         logicBreakdown: undefined,
       },
       state: {
@@ -530,7 +646,24 @@ export function postProcessStage2(
       advance: false,
       mirror,
       coachQuestion: coachQ,
-      userVisibleText: userVisible,
+      userVisibleText: buildStage2OutputContract({
+        state: nextState,
+        body,
+        module: buildStep,
+        meaningOk: true,
+        meaningReason: "核心意思可理解",
+        paragraphFit: buildStep === "ready",
+        paragraphReason:
+          buildStep === "ready"
+            ? "链条闭环，可并入"
+            : `当前还缺 ${SLOT_LABEL[buildStep]}`,
+        feedback: userVisible,
+        suggestedRevision:
+          buildStep === "ready"
+            ? "检查链条是否需要微调。"
+            : `按问题只补一句${SLOT_LABEL[buildStep]}。`,
+        nextStep: coachQ || "继续按当前进度推进。",
+      }),
       logicBreakdown: undefined,
     },
     state: {

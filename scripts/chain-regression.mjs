@@ -15,6 +15,10 @@ import {
 } from "../src/lib/domain/chain-discourse.ts";
 import { detectChainUserIntent } from "../src/lib/domain/stage2-context.ts";
 import {
+  deriveChainWorkflowStatus,
+  formatChainWorkshopPanel,
+} from "../src/lib/domain/chain-workflow-ui.ts";
+import {
   areChainSlotsSemanticallyValid,
   getNextChainBuildStep,
   isChainStepFilled,
@@ -335,6 +339,62 @@ ok(
   !/课程名|研究课题/.test(clarifyDecision.coach.ask || ""),
   "所以呢 不触发举例追问",
 );
+
+const wfReady = deriveChainWorkflowStatus({
+  body: "body2",
+  coverage: b2SoftCov,
+  chainPhase: "coaching",
+  canPropose: true,
+  ringsReady: true,
+  rulesOk: true,
+  substanceGaps: [],
+  hasProposalDraft: true,
+});
+ok(wfReady.kind === "ready_to_finalize", "coverage 齐 + canPropose → Ready to finalize");
+ok(
+  /Ready to finalize|确认链条/.test(
+    formatChainWorkshopPanel({ body: "body2", coverage: b2SoftCov, workflow: wfReady }),
+  ),
+  "工作流面板含 finalize 提示",
+);
+
+const wfDraft = deriveChainWorkflowStatus({
+  body: "body2",
+  coverage: b2SoftCov,
+  chainPhase: "coaching",
+  canPropose: false,
+  ringsReady: true,
+  rulesOk: true,
+  substanceGaps: [],
+  hasProposalDraft: false,
+});
+ok(wfDraft.kind === "ready_to_draft", "功能齐但未 canPropose → Ready to draft chain");
+ok(
+  formatChainWorkshopPanel({
+    body: "body2",
+    coverage: b2SoftCov,
+    workflow: wfDraft,
+  }).includes("Reasoning"),
+  "面板含 Coverage 维度",
+);
+
+const wfMissing = deriveChainWorkflowStatus({
+  body: "body2",
+  coverage: {
+    claimEstablished: true,
+    causalExplained: true,
+    concreteGrounding: false,
+    argumentativeClosure: false,
+    missing: ["grounding", "closure"],
+  },
+  chainPhase: "coaching",
+  canPropose: false,
+  ringsReady: false,
+  rulesOk: true,
+  substanceGaps: [],
+  hasProposalDraft: false,
+});
+ok(wfMissing.kind === "building", "缺多环 → Building argument");
 
 if (fail) {
   process.exit(1);

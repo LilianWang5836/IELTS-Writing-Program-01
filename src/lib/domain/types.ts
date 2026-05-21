@@ -82,6 +82,22 @@ export interface ChainProposal {
   draft: string;
 }
 
+/** Stage2 功能覆盖快照（内层 discourse） */
+export interface ChainCoverageSnapshot {
+  claimEstablished: boolean;
+  causalExplained: boolean;
+  concreteGrounding: boolean;
+  argumentativeClosure: boolean;
+  missing: Array<"causal" | "grounding" | "closure">;
+}
+
+export interface ChainWorkflowSnapshot {
+  kind: string;
+  title: string;
+  detail?: string;
+  nextAction?: string;
+}
+
 export interface BodySegment {
   status: SegmentStatus;
   draft: string;
@@ -90,6 +106,10 @@ export interface BodySegment {
   openIssues?: string[];
   chainPhase?: ChainPhase;
   chainProposal?: ChainProposal;
+  /** 论证功能覆盖（左栏进度主依据） */
+  chainCoverage?: ChainCoverageSnapshot;
+  /** 工作坊工作流状态（与 canPropose 对齐） */
+  chainWorkflow?: ChainWorkflowSnapshot;
 }
 
 export interface Stage1Data {

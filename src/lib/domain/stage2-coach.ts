@@ -12,26 +12,32 @@ import {
   detectChainMetaQuestion,
   detectChainProcessQuestion,
   exampleFollowUpCoachPrompt,
-  formatChainProgress,
-  isWeakExampleSentence,
   formatChainSkeleton,
   getChainBuildContext,
   getNextChainBuildStep,
   isChainStepFilled,
   isExampleSentence,
+  isWeakExampleSentence,
   mergeSlots,
+  normalizeHandoffClaimForChain,
   type ChainBuildStep,
 } from "./chain-scaffold";
 import { isParagraphCoverageComplete } from "./chain-discourse";
 import { resolveChainTurnDecision } from "./chain-turn-decision";
+import {
+  deriveChainWorkflowStatus,
+  formatChainWorkshopPanel,
+} from "./chain-workflow-ui";
 import {
   detectCoachCounterQuestion,
   detectChainFrustration,
   userBlobForWorkshopBody,
 } from "./stage2-context";
 import type {
+  ChainCoverageSnapshot,
   ChainPhase,
   ChainProposal,
+  ChainWorkflowSnapshot,
   LlmTurnResult,
   ParagraphSlots,
   SessionState,
@@ -52,16 +58,36 @@ function getChainPhase(state: SessionState, body: WorkshopBodyKey): ChainPhase {
   return seg?.chainPhase ?? "coaching";
 }
 
+function ensureClaimInSlots(
+  slots: ParagraphSlots | undefined,
+  state: SessionState,
+  body: WorkshopBodyKey,
+): ParagraphSlots {
+  const out = { ...(slots ?? {}) };
+  if (out.claim?.trim()) return out;
+  const point =
+    body === "body1" ? state.s2?.body1Point : state.s2?.body2Point;
+  if (point?.trim()) {
+    out.claim = normalizeHandoffClaimForChain(point, body);
+  }
+  return out;
+}
+
 function setBodyChainPhase(
   state: SessionState,
   body: WorkshopBodyKey,
   phase: ChainPhase,
   proposal?: ChainProposal | null,
   workingSlots?: ParagraphSlots,
+  meta?: {
+    coverage?: ChainCoverageSnapshot;
+    workflow?: ChainWorkflowSnapshot;
+  },
 ): SessionState {
   if (!state.s2) return state;
   const key = body === "body1" ? "body1" : "body2";
   const seg = state.s2[key];
+  const slots = ensureClaimInSlots(workingSlots ?? seg.slots, state, body);
   return {
     ...state,
     s2: {
@@ -70,7 +96,9 @@ function setBodyChainPhase(
         ...seg,
         chainPhase: phase,
         chainProposal: proposal === undefined ? seg.chainProposal : proposal ?? undefined,
-        slots: workingSlots ?? seg.slots,
+        slots,
+        chainCoverage: meta?.coverage ?? seg.chainCoverage,
+        chainWorkflow: meta?.workflow ?? seg.chainWorkflow,
         status: phase === "locked" ? "ready" : "coaching",
       },
     },
@@ -141,7 +169,6 @@ export function postProcessStage2(
     buildStep === "ready"
       ? ""
       : getNextChainBuildStep(workingSlots, body, buildCtx).coachPrompt;
-  const progressBlock = formatChainProgress(workingSlots, buildStep);
 
   const proposalFromLlm = chainProposalFromResult(sanitized, body);
   const slotsForSubstance = mergeSlots(workingSlots, proposalFromLlm?.slots, body);
@@ -177,12 +204,45 @@ export function postProcessStage2(
     isChainProposalComplete(finalProposal, body) &&
     areChainSlotsSemanticallyValid(finalProposal.slots, body);
 
+  const coverageSnap: ChainCoverageSnapshot = {
+    claimEstablished: decision.coverage.claimEstablished,
+    causalExplained: decision.coverage.causalExplained,
+    concreteGrounding: decision.coverage.concreteGrounding,
+    argumentativeClosure: decision.coverage.argumentativeClosure,
+    missing: [...decision.coverage.missing],
+  };
+
+  const workflow = deriveChainWorkflowStatus({
+    body,
+    coverage: decision.coverage,
+    chainPhase: phase,
+    canPropose,
+    ringsReady,
+    rulesOk,
+    substanceGaps: substance.gaps,
+    hasProposalDraft: !!finalProposal,
+  });
+
+  const workflowSnap: ChainWorkflowSnapshot = {
+    kind: workflow.kind,
+    title: workflow.title,
+    detail: workflow.detail,
+    nextAction: workflow.nextAction,
+  };
+
+  const progressBlock = formatChainWorkshopPanel({
+    body,
+    coverage: decision.coverage,
+    workflow,
+  });
+
   nextState = setBodyChainPhase(
     nextState,
     body,
     phase === "locked" ? "locked" : "coaching",
     undefined,
     workingSlots,
+    { coverage: coverageSnap, workflow: workflowSnap },
   );
 
   if (detectCoachCounterQuestion(userMessage)) {
@@ -283,7 +343,22 @@ export function postProcessStage2(
       );
       const mirror = "抱歉，刚才重复问了举例；你的例子我记下了。";
       const coachQ = afterF.coachPrompt;
-      const progress = formatChainProgress(workingSlots, afterF.step);
+      const progress = formatChainWorkshopPanel({
+        body,
+        coverage: decision.coverage,
+        workflow: deriveChainWorkflowStatus({
+          body,
+          coverage: decision.coverage,
+          chainPhase: phase,
+          canPropose: false,
+          ringsReady:
+            afterF.step === "ready" ||
+            isParagraphCoverageComplete(decision.coverage),
+          rulesOk: substance.sufficient,
+          substanceGaps: substance.gaps,
+          hasProposalDraft: !!finalProposal,
+        }),
+      });
       return {
         result: {
           verdict: "coach",
@@ -370,6 +445,27 @@ export function postProcessStage2(
         finalProposal.draft ||
         userBlobForWorkshopBody(nextState, body).slice(0, 500),
     };
+    const finalizeWorkflow = deriveChainWorkflowStatus({
+      body,
+      coverage: decision.coverage,
+      chainPhase: "proposed",
+      canPropose: true,
+      ringsReady: true,
+      rulesOk: true,
+      substanceGaps: [],
+      hasProposalDraft: true,
+    });
+    const finalizeWorkflowSnap: ChainWorkflowSnapshot = {
+      kind: finalizeWorkflow.kind,
+      title: finalizeWorkflow.title,
+      detail: finalizeWorkflow.detail,
+      nextAction: finalizeWorkflow.nextAction,
+    };
+    const finalizeProgress = formatChainWorkshopPanel({
+      body,
+      coverage: decision.coverage,
+      workflow: finalizeWorkflow,
+    });
     const msg = formatChainProposalCoachMessage(
       finalProposalFull,
       sanitized.proposalSummary ||
@@ -380,7 +476,8 @@ export function postProcessStage2(
       body,
       "proposed",
       finalProposalFull,
-      finalProposalFull.slots,
+      ensureClaimInSlots(finalProposalFull.slots, nextState, body),
+      { coverage: coverageSnap, workflow: finalizeWorkflowSnap },
     );
     return {
       result: {
@@ -388,7 +485,7 @@ export function postProcessStage2(
         advance: false,
         mirror: "",
         coachQuestion: "",
-        userVisibleText: `${msg}\n\n${progressBlock}`,
+        userVisibleText: `${msg}\n\n${finalizeProgress}`,
         logicBreakdown: undefined,
       },
       state: {

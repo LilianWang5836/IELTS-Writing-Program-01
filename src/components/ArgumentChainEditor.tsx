@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  formatChainProgress,
-  type ChainBuildStep,
-} from "@/lib/domain/chain-scaffold";
+import { ChainWorkshopProgress } from "@/components/ChainWorkshopProgress";
 import { SLOT_LABELS_ORDER, slotLabel } from "@/lib/domain/chain-ui";
 import { formatSlotsBlock } from "@/lib/domain/logic-slots";
 import { HANDOFF_FIELD_LABELS } from "@/lib/domain/constants";
@@ -102,26 +99,6 @@ function ChainProposalCard({
   );
 }
 
-function ChainBuildProgress({
-  slots,
-  buildStep,
-}: {
-  slots?: ChainProposal["slots"];
-  buildStep?: ChainBuildStep;
-}) {
-  const step = buildStep ?? "claim";
-  return (
-    <div className="mb-3 rounded-md border border-amber-200/80 bg-amber-50/40 p-2">
-      <p className="mb-1 text-xs font-medium text-amber-900">
-        搭链进度（随右侧聊天更新）
-      </p>
-      <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-stone-800">
-        {formatChainProgress(slots ?? {}, step)}
-      </pre>
-    </div>
-  );
-}
-
 function LockedChain({
   title,
   draft,
@@ -214,9 +191,10 @@ function BodySection({
       ) : (
         <div>
           {active && seg.chainPhase === "coaching" && (
-            <ChainBuildProgress
-              slots={seg.slots}
-              buildStep={state.coachContext?.chainBuildStep}
+            <ChainWorkshopProgress
+              body={body}
+              coverage={seg.chainCoverage}
+              workflow={seg.chainWorkflow}
             />
           )}
           <p className="mb-1 text-xs font-medium text-stone-500">
@@ -226,9 +204,14 @@ function BodySection({
             {seg.draft?.trim() ||
               "尚未输入。请在右侧用中文写出本段论证（可乱序），勿与上方分论点栏混淆。"}
           </p>
-          {active && seg.chainPhase !== "proposed" && (
+          {active && seg.chainPhase === "proposed" && (
+            <p className="mt-2 text-xs font-medium text-sky-900">
+              Workflow: Ready to finalize — 请点上方「确认链条并填入」。
+            </p>
+          )}
+          {active && seg.chainPhase === "coaching" && (
             <p className="mt-2 text-xs text-amber-800/90">
-              教练会按 Claim→Reason→Example→Link 逐环引导；够齐后请点「确认链条并填入」。
+              以 Coverage 与 Workflow 为准；仅当显示 Ready to finalize 时可确认链条。
             </p>
           )}
         </div>

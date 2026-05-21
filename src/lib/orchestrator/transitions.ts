@@ -1,5 +1,5 @@
 import { mergeSlots } from "@/lib/domain/chain-scaffold";
-import { buildBlueprintFromStage2 } from "@/lib/domain/blueprint-from-s2";
+import { normalizeBlueprint } from "@/lib/domain/blueprint-from-s2";
 import { isMostlyEnglish } from "@/lib/domain/essay-substance";
 import { defaultBodySegment } from "@/lib/domain/handoff";
 import { MARKERS } from "@/lib/domain/constants";
@@ -156,9 +156,10 @@ export function applyBlueprint(
   state: SessionState,
   result: LlmTurnResult,
 ): SessionState {
-  const blueprint =
-    (result.blueprint as Blueprint | undefined) ??
-    buildBlueprintFromStage2(state);
+  const blueprint = normalizeBlueprint(
+    state,
+    result.blueprint as Blueprint | undefined,
+  );
   const planFromLlm = result.modulePlan;
   const qType = (state.s1?.questionType ?? "unknown") as QuestionType;
   const modulePlan = planFromLlm ?? compileModulePlan(qType);

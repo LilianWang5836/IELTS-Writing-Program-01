@@ -3,6 +3,7 @@ import { applyHandoffToState, validateHandoff } from "@/lib/domain/handoff";
 import { getCurrentModule } from "@/lib/domain/module-compiler";
 import { buildRuleHintsBlock, ruleHintsForHandoff } from "@/lib/domain/rule-hints";
 import { resolvePromptModule, stageLabel } from "@/lib/domain/router";
+import { normalizeBlueprint } from "@/lib/domain/blueprint-from-s2";
 import { migrateSessionState } from "@/lib/domain/migrate-state";
 import { appendChat, stateSummary } from "@/lib/domain/state";
 import { validateUserSentence } from "@/lib/domain/validate";
@@ -161,17 +162,20 @@ function buildVars(
     base.current_module = mod ?? "";
     base.module_label = mod ? MODULE_LABELS[mod] ?? mod : "";
     base.mode = state.s3.mode;
-    const bp = state.s3.blueprint;
-    if (bp && body !== "conclusion" && mod) {
+    const bp = normalizeBlueprint(state, state.s3.blueprint);
+    if (body !== "conclusion" && mod) {
       const b = bp[body as "body1" | "body2"];
-      const dir =
-        mod === "claim"
-          ? b.logicFlow.claimDirection
-          : mod === "reason"
-            ? b.logicFlow.reasonDirection
-            : b.logicFlow.supportDirection;
-      base.module_direction = dir;
-    } else if (bp?.conclusion) {
+      const flow = b?.logicFlow;
+      if (flow) {
+        const dir =
+          mod === "claim"
+            ? flow.claimDirection
+            : mod === "reason"
+              ? flow.reasonDirection
+              : flow.supportDirection;
+        base.module_direction = dir;
+      }
+    } else if (mod && bp.conclusion) {
       base.module_direction =
         mod === "conclusion_restate"
           ? bp.conclusion.restateDirection

@@ -6,6 +6,7 @@ import {
   MAIN_ERROR_PRIORITY,
   applyStudentAnchoredScaffolding,
   assessMeaningAlignment,
+  detectStage3SentenceIntent,
   diagnoseSentence,
   formatSentenceCoachFeedback,
 } from "../src/lib/domain/sentence-coach.ts";
@@ -33,6 +34,11 @@ ok(d2.kind === "subject_verb_broken" || d2.kind === "clause_attachment", "which 
 const badVerb = "Students practical skills for workplaces";
 const d2b = diagnoseSentence(badVerb, "reason");
 ok(d2b.kind === "missing_verb", "缺少核心谓语");
+
+const gerundSubject =
+  "Mastering practical skills through internships can help graduates get more interviews.";
+const dGerund = diagnoseSentence(gerundSubject, "impact");
+ok(dGerund.kind !== "missing_subject", "动名词主语不应误判为主语缺失");
 
 const badGap = "students join internships, competitive advantage";
 const d3 = diagnoseSentence(badGap, "example");
@@ -80,6 +86,10 @@ ok(d4.pass, "完整句 pass");
 const fuzzy = "Good for jobs.";
 const d5 = diagnoseSentence(fuzzy, "reason");
 ok(d5.kind === "unclear_wording", "未命中前置规则时走 unclear 兜底");
+ok(
+  detectStage3SentenceIntent("我觉得不一定要人做主语") === "meta",
+  "meta 讨论应识别为 meta intent",
+);
 
 const fb = formatSentenceCoachFeedback(d1, badSubject);
 ok(!/grammar issue|awkward/i.test(fb), "无笼统 grammar 评语");

@@ -60,6 +60,8 @@ export interface MeaningAlignmentResult {
   requiredConcepts: string[];
 }
 
+export type Stage3SentenceIntent = "content" | "meta";
+
 /** 单轮只修一个问题（由前到后匹配） */
 export const MAIN_ERROR_PRIORITY: Array<{
   priority: SentenceProblemPriority;
@@ -216,6 +218,8 @@ function detectMissingSubject(s: string): boolean {
     return true;
   }
   if (SUBJECT_STARTERS.test(s)) return false;
+  // 动名词短语可合法作主语：Mastering ... can help ...
+  if (/^\s*[A-Za-z]+ing\s+/i.test(s) && hasFiniteVerb(s)) return false;
   if (/^\s*[A-Za-z]+ing\s+/i.test(s)) return true;
   if (
     /^\s*(accumulate|accumulating|improving|joining|skills|projects|internships?|experiences?)\b/i.test(
@@ -228,6 +232,18 @@ function detectMissingSubject(s: string): boolean {
     return true;
   }
   return false;
+}
+
+export function detectStage3SentenceIntent(message: string): Stage3SentenceIntent {
+  const m = message.trim();
+  if (!m) return "content";
+  const metaRe =
+    /(我觉得|我认为|不一定|能不能|可不可以|是不是|对吗|为什么|语法|主语|谓语|动名词|从句|搭配|这个表达|这样写|这句行吗|grammar|subject|predicate|gerund|clause)/i;
+  const contentRe =
+    /\b(for instance|for example|because|which|therefore|students?|graduates?|companies?|workplace|internships?|projects?)\b/i;
+  if (metaRe.test(m) && !contentRe.test(m)) return "meta";
+  if (metaRe.test(m) && /[？?]/.test(m)) return "meta";
+  return "content";
 }
 
 function detectMissingVerb(s: string): boolean {
@@ -819,6 +835,36 @@ export function postProcessStage3Sentence(
 
   const sentence = userMessage?.trim() ?? s3.pendingSentence?.trim() ?? "";
   if (!sentence) return { result: next, state: nextState };
+
+  const intent = detectStage3SentenceIntent(sentence);
+  if (intent === "meta") {
+    const clarification =
+      /动名词|gerund|主语/.test(sentence)
+        ? "你说得对，动名词短语可以做主语，不一定必须换成人称主语。这里更该修的是搭配和连接。"
+        : "这是一个表达/语法层面的讨论点，我们先澄清判断，再继续修句。";
+    next = {
+      ...next,
+      verdict: "coach",
+      advance: false,
+      userVisibleText: `${clarification}\n\n请在保留原意的前提下，再发一版英文句子。`,
+      mirror: clarification,
+      coachQuestion: "继续改原句即可，不需要整句重写。",
+      moduleComplete: false,
+      syntaxHint: undefined,
+    };
+    return {
+      result: next,
+      state: {
+        ...nextState,
+        s3: { ...s3, mode: "coach", pendingSentence: s3.pendingSentence },
+        coachContext: {
+          ...nextState.coachContext,
+          lastQuestion: next.coachQuestion,
+          openIssue: "表达讨论（meta）",
+        },
+      },
+    };
+  }
 
   const meaning = assessMeaningAlignment(state, sentence, mod ?? undefined);
   if (!meaning.aligned) {

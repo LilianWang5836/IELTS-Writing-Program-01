@@ -49,6 +49,35 @@ function normalizeReplies(raw: unknown): string[] {
   return [];
 }
 
+function sanitizePersistedStore(raw: unknown): Partial<WritingStore> {
+  const s = (raw ?? {}) as Partial<WritingStore> & {
+    messages?: unknown;
+    questions?: unknown;
+  };
+  const safeMessages = Array.isArray(s.messages)
+    ? s.messages.filter(
+        (m): m is { role: "user" | "assistant"; text: string } =>
+          !!m &&
+          typeof m === "object" &&
+          ((m as { role?: unknown }).role === "user" ||
+            (m as { role?: unknown }).role === "assistant") &&
+          typeof (m as { text?: unknown }).text === "string",
+      )
+    : [];
+  const safeQuestions = Array.isArray(s.questions)
+    ? s.questions.filter((q): q is Question => !!q && typeof q === "object")
+    : [];
+
+  return {
+    ...s,
+    messages: safeMessages,
+    questions: safeQuestions,
+    leftPanel: typeof s.leftPanel === "string" ? s.leftPanel : "",
+    requiresConfirm: !!s.requiresConfirm,
+    canSubmit: !!s.canSubmit,
+  };
+}
+
 const safeStorage = createJSONStorage(() => {
   if (typeof window === "undefined") {
     return {
@@ -371,6 +400,8 @@ export const useWritingStore = create<WritingStore>()(
     {
       name: STORAGE_KEY,
       storage: safeStorage,
+      version: 2,
+      migrate: (persistedState) => sanitizePersistedStore(persistedState),
       skipHydration: true,
       partialize: (s) => ({
         selectedQuestionId: s.selectedQuestionId,

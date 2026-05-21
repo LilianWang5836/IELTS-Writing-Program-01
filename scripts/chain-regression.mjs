@@ -8,10 +8,14 @@ import {
   resolveChainTurnDecision,
 } from "../src/lib/domain/chain-turn-decision.ts";
 import {
+  aggregateCoverage,
   assessParagraphCoverage,
   buildDiscourseMemory,
+  detectFunctionsFromSentence,
+  getNextNeed,
   hasFunctionalClosure,
   isParagraphCoverageComplete,
+  needToBuildStep,
 } from "../src/lib/domain/chain-discourse.ts";
 import { detectChainUserIntent } from "../src/lib/domain/stage2-context.ts";
 import {
@@ -314,6 +318,52 @@ ok(
   "reason 不被收束句覆盖",
 );
 
+const reasonFns = detectFunctionsFromSentence(reason, "body1");
+ok(
+  reasonFns.some((f) => f.type === "causal" && f.strength >= 0.7),
+  "课本句含 causal ≥0.7",
+);
+ok(
+  reasonFns.some((f) => f.type === "grounding" && f.strength < 0.6),
+  "课本句 grounding 未达标（仅提到项目）",
+);
+const reasonCov = aggregateCoverage(
+  buildDiscourseMemory([reason], "body1", "大学应教授实用技能"),
+  "body1",
+);
+ok(getNextNeed(reasonCov) === "grounding", "reason 句后 next need 为 grounding");
+ok(needToBuildStep("grounding") === "example", "grounding need → example 步");
+
+const reasonOnlyDecision = resolveChainTurnDecision({
+  baselineSlots: {
+    claim: "大学应教授实用技能，使毕业生能迅速找到工作并贡献社会",
+  },
+  result: {
+    mirror: "你说明了课本与实践的差异。",
+    chainTurnRole: "reason",
+    chainTurnQuality: "ok",
+    coachQuestion: "请写段末收束",
+  },
+  body: "body1",
+  buildCtx: {
+    bodyPoint: "大学应教授实用技能，使毕业生能迅速找到工作",
+    bodyAngle: "就业市场与职场技能",
+  },
+  userMessage: reason,
+  prevStep: "reason",
+  prevAskCount: 0,
+  sameStepAsPrev: false,
+  lastQuestion: "",
+});
+ok(
+  reasonOnlyDecision.advanceTo === "example",
+  "仅 reason 句时 advanceTo 为 example（要补 grounding）",
+);
+ok(
+  !/段末收束|Link/i.test(reasonOnlyDecision.coach.ask || ""),
+  "grounding 不足时不追问 Link",
+);
+
 ok(detectChainUserIntent("所以呢") === "clarify", "所以呢 走 clarify intent");
 const clarifyDecision = resolveChainTurnDecision({
   baselineSlots: b2SoftBaseline,
@@ -374,13 +424,14 @@ ok(
     body: "body2",
     coverage: b2SoftCov,
     workflow: wfDraft,
-  }).includes("Reasoning"),
+  }).includes("Why It Matters"),
   "面板含 Coverage 维度",
 );
 
 const wfMissing = deriveChainWorkflowStatus({
   body: "body2",
   coverage: {
+    scores: { claim: 1, causal: 0.8, grounding: 0.2, closure: 0 },
     claimEstablished: true,
     causalExplained: true,
     concreteGrounding: false,

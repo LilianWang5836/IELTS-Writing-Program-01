@@ -1,11 +1,17 @@
 /**
- * Stage2 左栏 / 聊天进度：功能覆盖度 + 工作流状态（与 canPropose 对齐，非 ✓✓✓✓）。
+ * Stage2 左栏 / 聊天进度：话语功能分数 + 工作流（与 canPropose 对齐）。
  */
-import type { ParagraphCoverage, CoverageGap } from "./chain-discourse";
-import { isParagraphCoverageComplete } from "./chain-discourse";
+import {
+  type CoverageState,
+  type ParagraphCoverage,
+  type CoverageGap,
+  getNextNeed,
+  isCoverageReady,
+  isParagraphCoverageComplete,
+} from "./chain-discourse";
 import type { ChainPhase, WorkshopBodyKey } from "./types";
 
-export type CoverageLevel = "missing" | "acceptable" | "strong";
+export type CoverageLevel = "missing" | "partial" | "strong";
 
 export type ChainWorkflowKind =
   | "locked"
@@ -17,31 +23,56 @@ export type ChainWorkflowKind =
 
 export interface ChainWorkflowStatus {
   kind: ChainWorkflowKind;
-  /** 主标题（中文） */
   title: string;
-  /** 副说明 */
   detail?: string;
-  /** 建议下一步 */
   nextAction?: string;
 }
 
 export interface CoverageDimensionDisplay {
-  key: "claim" | "reasoning" | "grounding" | "closure";
+  key: "claim" | "causal" | "grounding" | "closure";
   labelEn: string;
   labelZh: string;
   level: CoverageLevel;
+  symbol: "✓" | "△" | "○";
+  score: number;
   bar: string;
 }
 
-const BAR_STRONG = "█████";
-const BAR_ACCEPTABLE = "███░░";
-const BAR_MISSING = "░░░░░";
+const THRESHOLD = {
+  claim: 0.7,
+  causal: 0.7,
+  grounding: 0.6,
+  closure: 0.5,
+} as const;
 
-function levelToBar(level: CoverageLevel): string {
-  if (level === "strong") return BAR_STRONG;
-  if (level === "acceptable") return BAR_ACCEPTABLE;
-  return BAR_MISSING;
+const PARTIAL_FLOOR = 0.3;
+
+function scoreToLevel(score: number, threshold: number): CoverageLevel {
+  if (score >= threshold) return "strong";
+  if (score > PARTIAL_FLOOR) return "partial";
+  return "missing";
 }
+
+function levelToSymbol(level: CoverageLevel): "✓" | "△" | "○" {
+  if (level === "strong") return "✓";
+  if (level === "partial") return "△";
+  return "○";
+}
+
+function scoreToBar(score: number): string {
+  const filled = Math.round(Math.max(0, Math.min(1, score)) * 5);
+  return "█".repeat(filled) + "░".repeat(5 - filled);
+}
+
+const DISCOURSE_LABELS: Record<
+  "claim" | "causal" | "grounding" | "closure",
+  { en: string; zh: string }
+> = {
+  claim: { en: "Main Position", zh: "核心立场" },
+  causal: { en: "Why It Matters", zh: "为何重要（因果）" },
+  grounding: { en: "Real-world Support", zh: "现实支撑（举例）" },
+  closure: { en: "Final Evaluation", zh: "段末评价（收束）" },
+};
 
 function gapLabel(gap: CoverageGap, body: WorkshopBodyKey): string {
   if (gap === "causal") {
@@ -57,47 +88,41 @@ function gapLabel(gap: CoverageGap, body: WorkshopBodyKey): string {
     : "收束扣题（学术深造/长期积累）";
 }
 
-export function buildCoverageDimensions(
-  coverage: ParagraphCoverage,
-  body: WorkshopBodyKey,
-  opts?: { closureAcceptable?: boolean },
-): CoverageDimensionDisplay[] {
-  const closureLevel: CoverageLevel = coverage.argumentativeClosure
-    ? opts?.closureAcceptable
-      ? "acceptable"
-      : "strong"
-    : "missing";
+function resolveScores(coverage: ParagraphCoverage | CoverageState): CoverageState {
+  if ("scores" in coverage && coverage.scores) return coverage.scores;
+  return coverage as CoverageState;
+}
 
-  return [
-    {
-      key: "claim",
-      labelEn: "Claim (handoff)",
-      labelZh: "论点（审题）",
-      level: coverage.claimEstablished ? "strong" : "missing",
-      bar: levelToBar(coverage.claimEstablished ? "strong" : "missing"),
-    },
-    {
-      key: "reasoning",
-      labelEn: "Reasoning",
-      labelZh: "因果机制",
-      level: coverage.causalExplained ? "strong" : "missing",
-      bar: levelToBar(coverage.causalExplained ? "strong" : "missing"),
-    },
-    {
-      key: "grounding",
-      labelEn: "Grounding",
-      labelZh: "具体支撑",
-      level: coverage.concreteGrounding ? "strong" : "missing",
-      bar: levelToBar(coverage.concreteGrounding ? "strong" : "missing"),
-    },
-    {
-      key: "closure",
-      labelEn: "Closure",
-      labelZh: "收束扣题",
-      level: closureLevel,
-      bar: levelToBar(closureLevel),
-    },
+export function buildCoverageDimensions(
+  coverage: ParagraphCoverage | CoverageState,
+  _body: WorkshopBodyKey,
+): CoverageDimensionDisplay[] {
+  const scores = resolveScores(coverage);
+
+  const dims: Array<{
+    key: "claim" | "causal" | "grounding" | "closure";
+    threshold: number;
+  }> = [
+    { key: "claim", threshold: THRESHOLD.claim },
+    { key: "causal", threshold: THRESHOLD.causal },
+    { key: "grounding", threshold: THRESHOLD.grounding },
+    { key: "closure", threshold: THRESHOLD.closure },
   ];
+
+  return dims.map(({ key, threshold }) => {
+    const score = scores[key];
+    const level = scoreToLevel(score, threshold);
+    const labels = DISCOURSE_LABELS[key];
+    return {
+      key,
+      labelEn: labels.en,
+      labelZh: labels.zh,
+      level,
+      symbol: levelToSymbol(level),
+      score,
+      bar: scoreToBar(score),
+    };
+  });
 }
 
 export interface DeriveWorkflowInput {
@@ -153,6 +178,15 @@ export function deriveChainWorkflowStatus(
   }
 
   const complete = isParagraphCoverageComplete(coverage);
+  const scores =
+    coverage.scores ??
+    ({
+      claim: coverage.claimEstablished ? 1 : 0,
+      causal: coverage.causalExplained ? 0.75 : 0,
+      grounding: coverage.concreteGrounding ? 0.65 : 0,
+      closure: coverage.argumentativeClosure ? 0.55 : 0,
+    } satisfies CoverageState);
+  const need = getNextNeed(scores);
 
   if (complete && ringsReady && !canPropose) {
     return {
@@ -160,30 +194,39 @@ export function deriveChainWorkflowStatus(
       title: "Ready to draft chain",
       detail: hasProposalDraft
         ? "论证已齐，正在核对链条提案是否完整。"
-        : "论证功能已齐，尚未生成可确认的链条提案。",
+        : "论证功能已齐，本回合将生成可确认的链条提案。",
       nextAction: "可说「整理链条」或再发一句，触发左侧提案卡片。",
     };
   }
 
-  if (coverage.missing.length > 0) {
+  if (need !== "ready" && coverage.missing.length > 0) {
     const primary = coverage.missing[0]!;
     const label = gapLabel(primary, body);
+    const score = coverage.scores[primary];
     const needsTitle =
       primary === "closure"
         ? "Needs stronger closure"
         : primary === "grounding"
           ? "Needs stronger grounding"
           : "Needs stronger reasoning";
+    if (score > PARTIAL_FLOOR && score < THRESHOLD[primary]) {
+      return {
+        kind: "needs_stronger",
+        title: needsTitle,
+        detail: `${label}（已有部分，${Math.round(score * 100)}%，须加强）`,
+        nextAction:
+          primary === "grounding"
+            ? "请用「例如/比如」补一个具体实习、项目或岗位场景。"
+            : primary === "closure"
+              ? "请用「因此/所以」写一句段末收束到结果。"
+              : `请补：${label}（一句即可）。`,
+      };
+    }
     if (coverage.missing.length === 1 && !complete) {
       return {
         kind: "needs_stronger",
         title: needsTitle,
-        detail:
-          primary === "closure"
-            ? body === "body1"
-              ? "已有因果与例子，收束须落到就业/求职结果。"
-              : "已有因果与例子，收束须接到学术深造或长期积累。"
-            : `还缺：${label}`,
+        detail: `还缺：${label}`,
         nextAction:
           primary === "closure"
             ? "用「因此/所以」写一句段末收束（勿重复全文立场）。"
@@ -215,21 +258,17 @@ export function deriveChainWorkflowStatus(
   };
 }
 
-/** 聊天区 / 左栏共用的进度文本 */
 export function formatChainWorkshopPanel(input: {
   body: WorkshopBodyKey;
   coverage: ParagraphCoverage;
   workflow: ChainWorkflowStatus;
-  closureAcceptable?: boolean;
 }): string {
-  const dims = buildCoverageDimensions(input.coverage, input.body, {
-    closureAcceptable: input.closureAcceptable,
-  });
+  const dims = buildCoverageDimensions(input.coverage, input.body);
   const lines: string[] = [
     "【论证功能完成度 / Coverage】",
     ...dims.map(
       (d) =>
-        `${d.labelEn} ${d.bar}  ${d.level === "strong" ? "Strong" : d.level === "acceptable" ? "Acceptable" : "Missing"}  (${d.labelZh})`,
+        `${d.symbol} ${d.labelEn} ${d.bar}  ${d.level === "strong" ? "Strong" : d.level === "partial" ? "Partial" : "Missing"}  (${d.labelZh})`,
     ),
     "",
     "【工作流 / Workflow】",
@@ -238,4 +277,13 @@ export function formatChainWorkshopPanel(input: {
   if (input.workflow.detail) lines.push(input.workflow.detail);
   if (input.workflow.nextAction) lines.push(`Next: ${input.workflow.nextAction}`);
   return lines.join("\n");
+}
+
+export function isCoverageReadySnapshot(
+  snap: { scores?: CoverageState } | ParagraphCoverage,
+): boolean {
+  if ("scores" in snap && snap.scores && !("claimEstablished" in snap)) {
+    return isCoverageReady(snap.scores);
+  }
+  return isParagraphCoverageComplete(snap as ParagraphCoverage);
 }

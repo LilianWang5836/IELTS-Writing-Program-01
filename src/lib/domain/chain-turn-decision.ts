@@ -28,14 +28,19 @@ import {
 } from "./chain-understanding";
 import {
   appendDiscourseTurn,
-  assessParagraphCoverage,
+  aggregateCoverage,
   buildDiscourseMemory,
-  coverageToBuildStep,
-  isClosurePrimarySentence,
-  isParagraphCoverageComplete,
-  mergeDiscourseWithRingSlots,
+  buildParagraphWorkflowState,
+  coverageCoachHint,
+  coverageToParagraphCoverage,
+  getNextNeed,
+  needToBuildStep,
   projectDiscourseToSlots,
+  seedClaimOnSlots,
+  type BodyDiscourseMemory,
+  type CoverageNeed,
   type ParagraphCoverage,
+  type ParagraphWorkflowState,
 } from "./chain-discourse";
 import {
   detectChainProcessQuestion,
@@ -55,14 +60,25 @@ export interface ChainTurnDecision {
   understanding: ChainTurnUnderstanding;
   workingSlots: ParagraphSlots;
   coverage: ParagraphCoverage;
+  workflow: ParagraphWorkflowState;
+  memory: BodyDiscourseMemory;
+  currentNeed: CoverageNeed;
   coach: { mirror: string; ask: string };
 }
 
 const STEP_HINT: Record<Exclude<ChainBuildStep, "ready">, string> = {
-  claim: "论点",
-  reason: "原因",
-  example: "举例",
-  link: "段末收束",
+  claim: "核心立场",
+  reason: "为何重要",
+  example: "现实支撑",
+  link: "段末评价",
+};
+
+const NEED_STEP_HINT: Record<CoverageNeed, string> = {
+  claim: "核心立场",
+  causal: "为何重要",
+  grounding: "现实支撑",
+  closure: "段末评价",
+  ready: "链条将齐",
 };
 
 const RING_DETECT_ORDER: ChainRing[] = ["link", "example", "reason"];
@@ -330,6 +346,121 @@ function buildProcessMetaCoach(input: {
   return { mirror, ask };
 }
 
+function buildCoverageCoachMessage(input: {
+  currentNeed: CoverageNeed;
+  advanceTo: ChainBuildStep;
+  coverage: ParagraphCoverage;
+  workingSlots: ParagraphSlots;
+  body: WorkshopBodyKey;
+  ctx: ChainBuildContext;
+  understanding: ChainTurnUnderstanding;
+  sanitized: LlmTurnResult;
+  userMessage?: string;
+  lastQuestion: string;
+}): { mirror: string; ask: string } {
+  const {
+    currentNeed,
+    advanceTo,
+    coverage,
+    workingSlots,
+    body,
+    ctx,
+    understanding,
+    sanitized,
+    userMessage,
+    lastQuestion,
+  } = input;
+
+  const llmMirror =
+    sanitized.mirror?.trim() && sanitized.mirror !== userMessage?.trim()
+      ? sanitized.mirror
+      : "";
+
+  if (understanding.role === "meta") {
+    return buildProcessMetaCoach({
+      advanceTo,
+      workingSlots,
+      body,
+      ctx,
+      userMessage,
+      llmMirror,
+    });
+  }
+
+  if (advanceTo === "ready") {
+    return {
+      mirror:
+        llmMirror ||
+        "原因、举例和段末收束都齐了，请看左侧链条与下方进度；要改哪一环直接说。",
+      ask: "",
+    };
+  }
+
+  const hint = coverageCoachHint(currentNeed, body);
+  const scores = coverage.scores;
+  const partial =
+    currentNeed !== "ready" &&
+    currentNeed !== "claim" &&
+    scores[currentNeed] > 0.3 &&
+    scores[currentNeed] < 0.7;
+
+  if (partial && understanding.quality === "weak") {
+    if (currentNeed === "grounding") {
+      const attempt =
+        workingSlots.example?.trim() || understanding.slotText || userMessage || "";
+      return {
+        mirror: llmMirror || "方向对，再具体一点即可（建议用例如/比如）。",
+        ask: exampleFollowUpCoachPrompt(attempt, body),
+      };
+    }
+    if (currentNeed === "causal") {
+      return {
+        mirror: llmMirror || "机制方向对，再写清差异或因果。",
+        ask: hint,
+      };
+    }
+    if (currentNeed === "closure") {
+      return {
+        mirror: llmMirror || "收束方向对，再明确落到结果一句。",
+        ask:
+          body === "body1"
+            ? "再补一句：面试/上岗/对口工作，三选一即可。"
+            : "再补一句：用「因此」接到分论点，点明对深造/研究基础的作用。",
+      };
+    }
+  }
+
+  const stepRing = ringFromStep(advanceTo);
+  const fullPrompt = stepRing
+    ? shortPromptForStep(advanceTo, body, ctx, workingSlots)
+    : "";
+  const llmQ = sanitized.coachQuestion?.trim() ?? "";
+  const llmOffNeed =
+    (currentNeed === "grounding" &&
+      /段末|收束|Link|面试|上岗|对口/i.test(llmQ)) ||
+    (currentNeed === "causal" && /段末|收束|Link|举例|例子/i.test(llmQ)) ||
+    (currentNeed === "closure" &&
+      /举例|例子|实习|项目|课程名/i.test(llmQ) &&
+      !/因此|所以|收束|段末/i.test(llmQ));
+  if (
+    llmQ &&
+    !llmOffNeed &&
+    !isSameCoachPrompt(llmQ, lastQuestion) &&
+    shouldUseLlmCoachQuestion(llmQ, advanceTo, workingSlots, body)
+  ) {
+    return {
+      mirror: llmMirror || `请补${NEED_STEP_HINT[currentNeed] ?? "下一层"}。`,
+      ask: clipCoachAsk(llmQ),
+    };
+  }
+
+  return {
+    mirror: llmMirror || `请补${NEED_STEP_HINT[currentNeed] ?? "下一层"}。`,
+    ask: clipCoachAsk(fullPrompt || hint),
+  };
+}
+
+/** @deprecated 角色环教练；推进已改 coverage */
 function buildCoachMessage(input: {
   understanding: ChainTurnUnderstanding;
   expectedStep: ChainBuildStep;
@@ -542,14 +673,13 @@ export function resolveChainTurnDecision(
     body,
     buildCtx,
     userMessage,
-    prevAskCount,
-    sameStepAsPrev,
     lastQuestion,
     state,
   } = input;
 
   const msg = userMessage?.trim() ?? "";
   const claim = baselineSlots.claim?.trim() || buildCtx.bodyPoint?.trim();
+  const intent = msg ? detectChainUserIntent(msg) : "content";
 
   const historyMsgs = state
     ? stage2UserMessages(state, body)
@@ -561,114 +691,50 @@ export function resolveChainTurnDecision(
         .map((s) => s?.trim())
         .filter((s): s is string => !!s);
 
-  let discourse = buildDiscourseMemory(historyMsgs, body, claim);
-  if (msg && detectChainUserIntent(msg) === "content") {
-    discourse = appendDiscourseTurn(discourse, msg, body);
+  let memory = buildDiscourseMemory(historyMsgs, body, claim);
+  if (msg && intent === "content") {
+    memory = appendDiscourseTurn(memory, msg, body);
   }
 
-  const coverage = assessParagraphCoverage(discourse, body);
-  const coverageStep = coverageToBuildStep(coverage);
+  const coverageScores = aggregateCoverage(memory, body);
+  const coverage = coverageToParagraphCoverage(coverageScores);
+  const currentNeed = getNextNeed(coverageScores);
+  const advanceTo = needToBuildStep(currentNeed);
+  const expectedStep = advanceTo;
 
-  let { step: expectedStep } = getNextChainBuildStep(
-    baselineSlots,
-    body,
-    buildCtx,
-  );
-  if (coverageStep !== "ready" && expectedStep !== "ready") {
-    expectedStep = coverageStep;
-  }
-
-  const understanding = parseUnderstandingForStep(
+  let understanding = parseUnderstandingForStep(
     result,
     userMessage,
     expectedStep,
     body,
   );
-
-  let ringSlots = { ...baselineSlots };
-  const primaryRing =
-    understanding.role === "reason" ||
-    understanding.role === "example" ||
-    understanding.role === "link"
-      ? understanding.role
-      : ringFromStep(expectedStep);
-
-  if (
-    primaryRing &&
-    msg &&
-    understanding.quality !== "off_topic" &&
-    understanding.role !== "meta"
-  ) {
-    const writeText = understanding.slotText || msg;
-    const closurePrimary = isClosurePrimarySentence(writeText, body, claim);
-    if (!(primaryRing === "reason" && closurePrimary)) {
-      ringSlots = applyPrimaryRingWrite(ringSlots, primaryRing, writeText, body);
-    }
-    if (closurePrimary) {
-      const projectedClosure = projectDiscourseToSlots(
-        appendDiscourseTurn(
-          buildDiscourseMemory(historyMsgs, body, claim),
-          writeText,
-          body,
-        ),
-        body,
-      );
-      if (projectedClosure.link?.trim()) {
-        ringSlots = { ...ringSlots, link: projectedClosure.link };
-      }
-    }
+  if (intent !== "content") {
+    understanding = { role: "meta", quality: "none", slotText: msg };
   }
 
-  const projected = projectDiscourseToSlots(discourse, body);
-  let workingSlots = mergeDiscourseWithRingSlots(ringSlots, projected, body);
-
-  let { step: advanceTo } = getNextChainBuildStep(
+  let workingSlots = projectDiscourseToSlots(memory, body);
+  workingSlots = seedClaimOnSlots(
     workingSlots,
+    claim || buildCtx.bodyPoint,
     body,
-    buildCtx,
   );
 
-  const canEscalateWeak =
-    (understanding.quality === "weak" ||
-      understanding.quality === "acceptable") &&
-    primaryRing === ringFromStep(expectedStep) &&
-    sameStepAsPrev &&
-    prevAskCount >= 1 &&
-    isChainStepFilled(workingSlots, primaryRing!, body);
+  const workflow = buildParagraphWorkflowState(coverageScores);
 
-  if (canEscalateWeak) {
-    const lenient = getNextChainBuildStepLenient(workingSlots, body, buildCtx);
-    if (lenient.step !== expectedStep) {
-      advanceTo = lenient.step;
-    }
-  }
-
-  if (isParagraphCoverageComplete(coverage)) {
-    advanceTo = "ready";
-  } else if (isChainStepFilled(workingSlots, "link", body)) {
-    advanceTo = "ready";
-  } else if (
-    areChainSlotsSemanticallyValid(workingSlots, body) &&
-    getNextChainBuildStep(workingSlots, body, buildCtx).step === "ready"
-  ) {
-    advanceTo = "ready";
-  } else if (coverageStep !== "ready") {
-    advanceTo = coverageStep;
-  }
-
-  const coach = buildCoachMessage({
-    understanding,
-    expectedStep,
+  const coach = buildCoverageCoachMessage({
+    currentNeed,
     advanceTo,
+    coverage,
     workingSlots,
     body,
     ctx: buildCtx,
+    understanding,
     sanitized: result,
     userMessage,
     lastQuestion,
-    prevAskCount,
-    sameStepAsPrev,
   });
+
+  const primaryRing = ringFromStep(advanceTo);
 
   return {
     expectedStep,
@@ -678,6 +744,9 @@ export function resolveChainTurnDecision(
     understanding,
     workingSlots,
     coverage,
+    workflow,
+    memory,
+    currentNeed,
     coach,
   };
 }

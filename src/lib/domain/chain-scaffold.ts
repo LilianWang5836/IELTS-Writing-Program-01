@@ -762,6 +762,22 @@ export function formatChainSkeleton(
   ].join("\n");
 }
 
+/** 同轮：用投影 slots 生成提案，不依赖 state commit */
+export function buildChainProposalFromSlots(
+  slots: ParagraphSlots,
+  body: WorkshopBodyKey,
+  draft?: string,
+): ChainProposal {
+  const chainSummary = [slots.claim, slots.reason, slots.example, slots.link]
+    .filter(Boolean)
+    .join(" → ");
+  return {
+    chainSummary: chainSummary || "论证链条",
+    slots,
+    draft: draft?.trim() || chainSummary || slots.claim || "",
+  };
+}
+
 export function buildChainProposalFromChat(
   state: SessionState,
   body: WorkshopBodyKey,

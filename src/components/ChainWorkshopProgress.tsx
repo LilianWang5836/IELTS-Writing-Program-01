@@ -40,19 +40,23 @@ function DimensionRow({ dim }: { dim: CoverageDimensionDisplay }) {
   const levelLabel =
     dim.level === "strong"
       ? "Strong"
-      : dim.level === "acceptable"
-        ? "Acceptable"
+      : dim.level === "partial"
+        ? "Partial"
         : "Missing";
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="font-mono text-[11px] text-stone-600">{dim.labelEn}</span>
+        <span className="text-[11px] font-medium text-stone-700">
+          <span className="mr-1 font-mono">{dim.symbol}</span>
+          {dim.labelEn}
+        </span>
         <span className="font-mono text-[11px] tracking-tight text-stone-800">
           {dim.bar}
         </span>
       </div>
       <p className="text-[11px] text-stone-600">
         {levelLabel} · {dim.labelZh}
+        {dim.level === "partial" ? ` (${Math.round(dim.score * 100)}%)` : ""}
       </p>
     </div>
   );
@@ -82,6 +86,7 @@ export function ChainWorkshopProgress({
       concreteGrounding: coverage.concreteGrounding,
       argumentativeClosure: coverage.argumentativeClosure,
       missing: coverage.missing,
+      scores: coverage.scores,
     },
     body,
   );

@@ -6,7 +6,7 @@ import {
 import { buildChainBaselineSlots } from "./chain-slot-pool";
 import {
   areChainSlotsSemanticallyValid,
-  buildChainProposalFromChat,
+  buildChainProposalFromSlots,
   buildSlotsFromChat,
   detectChainConfusion,
   detectChainMetaQuestion,
@@ -163,7 +163,11 @@ export function postProcessStage2(
     state: nextState,
   });
 
-  const workingSlots = decision.workingSlots;
+  const workingSlots = ensureClaimInSlots(
+    decision.workingSlots,
+    nextState,
+    body,
+  );
   const buildStep = decision.advanceTo;
   const stepPrompt =
     buildStep === "ready"
@@ -179,16 +183,17 @@ export function postProcessStage2(
     slotsForSubstance,
   );
 
+  const proposalDraft = userBlobForWorkshopBody(nextState, body).slice(0, 500);
   let finalProposal = proposalFromLlm;
   if (!finalProposal && substance.sufficient) {
-    finalProposal = buildChainProposalFromChat(nextState, body);
+    finalProposal = buildChainProposalFromSlots(workingSlots, body, proposalDraft);
   }
   if (
     substance.sufficient &&
     finalProposal &&
     !isChainProposalComplete(finalProposal, body)
   ) {
-    finalProposal = buildChainProposalFromChat(nextState, body);
+    finalProposal = buildChainProposalFromSlots(workingSlots, body, proposalDraft);
   }
 
   const llmOk = sanitized.paragraphSubstanceSufficient === true;
@@ -205,6 +210,7 @@ export function postProcessStage2(
     areChainSlotsSemanticallyValid(finalProposal.slots, body);
 
   const coverageSnap: ChainCoverageSnapshot = {
+    scores: { ...decision.coverage.scores },
     claimEstablished: decision.coverage.claimEstablished,
     causalExplained: decision.coverage.causalExplained,
     concreteGrounding: decision.coverage.concreteGrounding,

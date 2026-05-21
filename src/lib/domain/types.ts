@@ -82,8 +82,14 @@ export interface ChainProposal {
   draft: string;
 }
 
-/** Stage2 功能覆盖快照（内层 discourse） */
+/** Stage2 功能覆盖快照（内层 discourse，0–1 分数 + 阈值布尔） */
 export interface ChainCoverageSnapshot {
+  scores: {
+    claim: number;
+    causal: number;
+    grounding: number;
+    closure: number;
+  };
   claimEstablished: boolean;
   causalExplained: boolean;
   concreteGrounding: boolean;

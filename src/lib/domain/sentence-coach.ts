@@ -285,6 +285,153 @@ function buildDiagnosis(
   };
 }
 
+function dedupeKeepOrder(items: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const i of items) {
+    const key = i.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(i.trim());
+  }
+  return out;
+}
+
+function extractStudentKeywords(sentence: string): string[] {
+  const s = sentence.toLowerCase();
+  const picks: string[] = [];
+  const rules: Array<[RegExp, string]> = [
+    [/\bwork needs?\b/, "work needs"],
+    [/\bjob market\b/, "job market"],
+    [/\bcompetitive (edge|advantage)\b/, "competitive edge"],
+    [/\bintern experiences?\b/, "intern experiences"],
+    [/\binternships?\b/, "internships"],
+    [/\bprojects?\b/, "projects"],
+    [/\bskills?\b/, "skills"],
+    [/\bexperience\b/, "experience"],
+  ];
+  for (const [re, keyword] of rules) {
+    if (re.test(s)) picks.push(keyword);
+  }
+  return dedupeKeepOrder(picks);
+}
+
+function buildAnchoredFragments(
+  sentence: string,
+  kind: SentenceProblemKind,
+): { keywords: string[]; phraseFragments: string[]; starterStructures: string[] } {
+  const words = extractStudentKeywords(sentence);
+  const has = (w: string) => words.includes(w);
+  const skillWord = has("skills") ? "skills" : "";
+  const projectWord = has("projects") ? "projects" : "";
+  const internWord = has("intern experiences")
+    ? "intern experiences"
+    : has("internships")
+      ? "internships"
+      : "";
+  const marketWord = has("job market") ? "job market" : "";
+  const workNeedsWord = has("work needs") ? "work needs" : "";
+
+  if (kind === "noun_pile") {
+    const keywords = words.slice(0, 4);
+    const phraseFragments: string[] = [];
+    if (skillWord) {
+      phraseFragments.push(
+        `${skillWord} needed for ${workNeedsWord || marketWord || "..."}`,
+      );
+    }
+    if (projectWord || internWord) {
+      const exp = [projectWord, internWord].filter(Boolean).join(" and ");
+      phraseFragments.push(`experience such as ${exp || "..."}`);
+    }
+    if (marketWord) {
+      phraseFragments.push(`... in the ${marketWord}`);
+    }
+    return {
+      keywords: keywords.length ? keywords : ["skills", "projects", "experience"],
+      phraseFragments: phraseFragments.slice(0, 2),
+      starterStructures: ["X skills + Y experience + result in ..."],
+    };
+  }
+
+  if (kind === "cause_effect_gap") {
+    const keywords = dedupeKeepOrder([
+      ...words.slice(0, 3),
+      "which helps",
+      "as a result",
+    ]).slice(0, 4);
+    return {
+      keywords,
+      phraseFragments: [
+        `${projectWord || internWord || "this"} ... , which helps ...`,
+        `as a result, ... ${marketWord ? `in the ${marketWord}` : ""}`.trim(),
+      ],
+      starterStructures: [],
+    };
+  }
+
+  if (kind === "missing_subject" || kind === "missing_verb") {
+    return {
+      keywords: dedupeKeepOrder([...words.slice(0, 2), "students", "graduates"]).slice(
+        0,
+        4,
+      ),
+      phraseFragments: ["Students ...", "Graduates ..."],
+      starterStructures: ["Subject + Verb + Result"],
+    };
+  }
+
+  return { keywords: [], phraseFragments: [], starterStructures: [] };
+}
+
+export function applyStudentAnchoredScaffolding(
+  diagnosis: SentenceDiagnosis,
+  sentence: string,
+): SentenceDiagnosis {
+  const anchored = buildAnchoredFragments(sentence, diagnosis.kind);
+  const keywords = anchored.keywords.length ? anchored.keywords : diagnosis.keywords;
+  const phraseFragments = anchored.phraseFragments.length
+    ? anchored.phraseFragments
+    : diagnosis.phraseFragments;
+  const starterStructures = anchored.starterStructures.length
+    ? anchored.starterStructures
+    : diagnosis.starterStructures;
+  return {
+    ...diagnosis,
+    keywords: keywords.slice(0, 4),
+    phraseFragments: phraseFragments.slice(0, 2),
+    starterStructures: starterStructures.slice(0, 1),
+  };
+}
+
+function locateProblemSnippet(
+  sentence: string,
+  diagnosis: SentenceDiagnosis,
+): string {
+  const s = sentence.trim();
+  if (!s) return "";
+  const low = s.toLowerCase();
+  const candidates: Array<[SentenceProblemKind, RegExp[]]> = [
+    ["noun_pile", [/\bskills?\s+work\s+needs?\b/i, /\bprojects?\s+even\s+intern/i]],
+    ["missing_subject", [/^\s*it is argued that\s+accumulate/i, /^\s*accumulate\s+skills?/i]],
+    ["missing_verb", [/\bstudents?\s+(practical\s+)?skills?\b/i]],
+    ["subject_verb_broken", [/\bwhich\s+can\s+improve\s+students?\s+get\b/i]],
+    ["clause_attachment", [/\b,\s*which\b/i, /\bwhich\b/i]],
+    ["cause_effect_gap", [/\binternships?,\s*competitive/i, /\bcompetitive (edge|advantage)\b/i]],
+    ["collocation", [/\b(a|an)\s+(employability|competitive|skills)\b/i]],
+  ];
+  const entry = candidates.find(([k]) => k === diagnosis.kind);
+  if (entry) {
+    for (const re of entry[1]) {
+      const m = s.match(re);
+      if (m?.[0]) return m[0];
+    }
+  }
+  const fromKeywords = diagnosis.keywords.find((k) => low.includes(k.toLowerCase()));
+  if (fromKeywords) return fromKeywords;
+  return s.split(/[,;，；]/)[0]?.trim() ?? s.slice(0, 28);
+}
+
 /** 检测当前句最影响成立的单一结构问题（优先级 P1 > P2 > P3） */
 export function diagnoseSentence(
   sentence: string,
@@ -406,16 +553,21 @@ export function stripBannedSentenceFeedback(text: string): string {
 
 export function formatSentenceCoachFeedback(
   diagnosis: SentenceDiagnosis,
+  sentence?: string,
   opts?: { pass?: boolean },
 ): string {
   if (opts?.pass || diagnosis.pass) {
     return "这句结构已经清楚，可以写入。请点击「确认写入」进入下一句。";
   }
 
+  const snippet = locateProblemSnippet(sentence ?? "", diagnosis);
   const block1 = [
     `【${diagnosis.priority} · ${diagnosis.labelZh}】`,
+    snippet ? `问题位置：${snippet}` : "",
     diagnosis.repairQuestionZh,
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   const support: string[] = [];
   if (diagnosis.hintZh) support.push(diagnosis.hintZh);
@@ -498,8 +650,9 @@ export function postProcessStage3Sentence(
   const sentence = userMessage?.trim() ?? s3.pendingSentence?.trim() ?? "";
   if (!sentence) return { result: next, state: nextState };
 
-  const diagnosis = diagnoseSentence(sentence, mod ?? undefined);
-  const feedbackText = formatSentenceCoachFeedback(diagnosis);
+  const diagnosisRaw = diagnoseSentence(sentence, mod ?? undefined);
+  const diagnosis = applyStudentAnchoredScaffolding(diagnosisRaw, sentence);
+  const feedbackText = formatSentenceCoachFeedback(diagnosis, sentence);
 
   if (diagnosis.pass) {
     next = {

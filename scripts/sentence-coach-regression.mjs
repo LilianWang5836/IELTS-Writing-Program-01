@@ -4,6 +4,7 @@
  */
 import {
   MAIN_ERROR_PRIORITY,
+  applyStudentAnchoredScaffolding,
   diagnoseSentence,
   formatSentenceCoachFeedback,
 } from "../src/lib/domain/sentence-coach.ts";
@@ -41,9 +42,25 @@ const good =
 const d4 = diagnoseSentence(good, "claim");
 ok(d4.pass, "完整句 pass");
 
-const fb = formatSentenceCoachFeedback(d1);
+const fb = formatSentenceCoachFeedback(d1, badSubject);
 ok(!/grammar issue|awkward/i.test(fb), "无笼统 grammar 评语");
 ok(/Keywords/.test(fb), "含 scaffolding");
+ok(/问题位置：/.test(fb), "反馈标注问题位置");
+
+const nounPileSentence =
+  "it is argued that accumulate skills work needs and projects even intern experiences, so that can get competitive edge in job market";
+const dn = diagnoseSentence(nounPileSentence, "reason");
+const anchored = applyStudentAnchoredScaffolding(dn, nounPileSentence);
+ok(
+  anchored.keywords.some((k) => /work needs|projects|intern|job market|skills/i.test(k)),
+  "scaffolding 优先复用学生原词",
+);
+ok(
+  !anchored.keywords.some((k) => /employability|workplace skills/i.test(k)),
+  "避免无必要引入新学术词",
+);
+const fbNoun = formatSentenceCoachFeedback(anchored, nounPileSentence);
+ok(/skills work needs|projects even intern/i.test(fbNoun), "问题位置锚定原句片段");
 ok(
   MAIN_ERROR_PRIORITY[0]?.kind === "missing_subject" &&
     MAIN_ERROR_PRIORITY[1]?.kind === "missing_verb",

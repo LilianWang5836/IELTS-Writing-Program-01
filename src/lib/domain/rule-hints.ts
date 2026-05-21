@@ -104,6 +104,9 @@ export function buildRuleHintsBlock(state: SessionState): string {
       "规则提示：Sentence Coaching——一次只修一个结构问题；反馈用中文修复问句；禁止 grammar issue/awkward 笼统评语。",
     );
     lines.push(
+      "规则提示：你是写作教练不是改写器；优先复用学生原词与原逻辑，先做最小必要结构修复。",
+    );
+    lines.push(
       "规则提示：assign 给 scaffolding 不给完整句；pass 后等用户点「确认写入」；未通过用 coach 进入修改再检。",
     );
     if (state.s3?.mode === "coach") {

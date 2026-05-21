@@ -54,6 +54,7 @@ export function stateSummary(state: SessionState): string {
             mode: state.s3.mode,
             modulePlan: state.s3.modulePlan,
             confirmedKeys: Object.keys(state.s3.confirmedSentences),
+            orchestrator: state.s3.orchestrator,
           }
         : undefined,
     },
@@ -146,6 +147,21 @@ export function buildLeftPanelText(state: SessionState): string {
   if (state.s3?.conclusionText) {
     parts.push("【Conclusion】");
     parts.push(state.s3.conclusionText);
+    parts.push("");
+  }
+
+  if (state.s3?.orchestrator) {
+    const o = state.s3.orchestrator;
+    parts.push(`【Orchestrator（${o.mode}）】`);
+    parts.push(
+      `Focus: ${o.focusLayer} | E-C: ${o.essayConfidence.toFixed(2)} | P-C: ${o.paragraphConfidence.toFixed(2)} | D-C: ${o.decisionConfidence.toFixed(2)}`,
+    );
+    parts.push(`Reason: ${o.reason}`);
+    parts.push(
+      `Signals: essay=${o.essayContradiction ? 1 : 0}, paragraph=${o.paragraphDrift ? 1 : 0}, sentence=${o.sentenceIssuesLikely ? 1 : 0}`,
+    );
+    if (o.conflict) parts.push("Signal: conflict=true");
+    if (o.fallbackApplied) parts.push("Fallback: sentence-layer");
     parts.push("");
   }
 

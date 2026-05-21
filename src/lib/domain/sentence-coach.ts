@@ -3,6 +3,7 @@
  */
 import { normalizeBlueprint } from "./blueprint-from-s2";
 import { getCurrentModule } from "./module-compiler";
+import { sampleStage3Task } from "./stage3-task-sampler";
 import type { LlmTurnResult, SessionState } from "./types";
 
 export function getModuleDirection(state: SessionState): string {
@@ -795,6 +796,46 @@ export function formatAssignPromptZh(
     .join("\n");
 }
 
+function getOrchestratorLayerHint(state: SessionState): string {
+  const o = state.s3?.orchestrator;
+  if (!o || o.focusLayer === "sentence") return "";
+  if (o.focusLayer === "essay") {
+    return "【Orchestrator建议：先修全局一致性】先确保该句不偏离整篇主论点，再做句内优化。";
+  }
+  return "【Orchestrator建议：先修段内角色】先让这句明确完成当前段功能，再做词法细修。";
+}
+
+function prependHint(hint: string, text: string): string {
+  if (!hint.trim()) return text;
+  if (!text.trim()) return hint;
+  return `${hint}\n\n${text}`;
+}
+
+function buildStage3OutputContract(input: {
+  state: SessionState;
+  module: string | null;
+  meaningOk: boolean;
+  meaningReason: string;
+  paragraphFit: boolean;
+  paragraphReason: string;
+  feedback: string;
+  suggestedRevision: string;
+  nextStep: string;
+}): string {
+  const o = input.state.s3?.orchestrator;
+  const essayLine = o
+    ? `thesis consistency: ${o.essayContradiction ? "risk" : "ok"} | structure: ${o.focusLayer} focus (${o.mode})`
+    : "thesis consistency: n/a | structure: n/a";
+  return [
+    `【Meaning Check】${input.meaningOk ? "yes" : "no"} - ${input.meaningReason}`,
+    `【Essay Check】${essayLine}`,
+    `【Paragraph Check】role=${input.module ?? "sentence"} | ${input.paragraphFit ? "fit" : "drift"} - ${input.paragraphReason}`,
+    `【Feedback】\n${input.feedback}`,
+    `【Suggested Revision】\n${input.suggestedRevision}`,
+    `【Next Step】${input.nextStep}`,
+  ].join("\n\n");
+}
+
 export function postProcessStage3Sentence(
   state: SessionState,
   result: LlmTurnResult,
@@ -805,22 +846,42 @@ export function postProcessStage3Sentence(
     return { result, state };
   }
 
-  const mod = getCurrentModule(s3.modulePlan, s3.currentBody, s3.moduleIndex);
+  const sampledTask = sampleStage3Task(state);
+  const mod = sampledTask?.taskType ?? null;
+  const orchestrator = s3.orchestrator;
+  const layerHint = getOrchestratorLayerHint(state);
 
   let next = { ...result };
   let nextState = state;
 
   if (next.verdict === "assign" || s3.mode === "assign") {
-    const assignZh = formatAssignPromptZh(mod ?? undefined, getModuleDirection(state));
+    const assignZh = formatAssignPromptZh(
+      mod ?? undefined,
+      getModuleDirection(state),
+    );
     const ls = next.languageSupport ?? {
       keywords: ["because", "which", "as a result", "therefore"],
       phraseFragments: ["This is because...", "..., which helps..."],
       starterStructures: [],
     };
+    const feedbackBody =
+      orchestrator?.mode === "soft"
+        ? prependHint(layerHint, assignZh)
+        : assignZh;
     next = {
       ...next,
       verdict: "assign",
-      userVisibleText: assignZh,
+      userVisibleText: buildStage3OutputContract({
+        state,
+        module: mod ?? null,
+        meaningOk: true,
+        meaningReason: "当前为任务布置轮",
+        paragraphFit: true,
+        paragraphReason: "先按当前模块产出一版句子",
+        feedback: feedbackBody,
+        suggestedRevision: "先写一句英文草稿（不必一次完美）。",
+        nextStep: "提交你的句子后，我会先看 meaning 与结构，再做细修。",
+      }),
       languageSupport: ls,
       syntaxHint: undefined,
     };
@@ -846,7 +907,20 @@ export function postProcessStage3Sentence(
       ...next,
       verdict: "coach",
       advance: false,
-      userVisibleText: `${clarification}\n\n请在保留原意的前提下，再发一版英文句子。`,
+      userVisibleText: buildStage3OutputContract({
+        state,
+        module: mod ?? null,
+        meaningOk: true,
+        meaningReason: "当前是表达讨论，不是内容偏题",
+        paragraphFit: true,
+        paragraphReason: "先澄清语法选择，再回到当前句",
+        feedback: prependHint(
+          layerHint,
+          `${clarification}\n\n请在保留原意的前提下，再发一版英文句子。`,
+        ),
+        suggestedRevision: "基于你原句改一版，不需要整句重写。",
+        nextStep: "继续提交英文句子，我会回到当前模块修句。",
+      }),
       mirror: clarification,
       coachQuestion: "继续改原句即可，不需要整句重写。",
       moduleComplete: false,
@@ -861,6 +935,58 @@ export function postProcessStage3Sentence(
           ...nextState.coachContext,
           lastQuestion: next.coachQuestion,
           openIssue: "表达讨论（meta）",
+        },
+      },
+    };
+  }
+
+  // Phase 2 minimal takeover: only hard-block essay contradiction.
+  if (
+    orchestrator?.mode === "hard" &&
+    (
+      (orchestrator.focusLayer === "essay" && orchestrator.essayContradiction) ||
+      (orchestrator.focusLayer === "paragraph" && orchestrator.paragraphDrift)
+    )
+  ) {
+    const hardGuide =
+      orchestrator.focusLayer === "essay"
+        ? "先修全篇一致性：当前存在论点冲突，先统一整篇方向，再做句内语法与词汇细修。"
+        : "先修段内角色一致性：当前句偏离本段功能，先补回该段应有的逻辑作用，再做句内细修。";
+    next = {
+      ...next,
+      verdict: "coach",
+      advance: false,
+      userVisibleText: buildStage3OutputContract({
+        state,
+        module: mod ?? null,
+        meaningOk: false,
+        meaningReason: "优先处理更高层矛盾",
+        paragraphFit: orchestrator.focusLayer !== "paragraph",
+        paragraphReason:
+          orchestrator.focusLayer === "essay"
+            ? "先修全篇一致性"
+            : "先修段内角色一致性",
+        feedback: prependHint(layerHint, hardGuide),
+        suggestedRevision:
+          orchestrator.focusLayer === "essay"
+            ? "先写一句与总论点同向的句子。"
+            : "先写一句明确承担当前段功能的句子。",
+        nextStep: "先完成上层修复，再进入句内细修。",
+      }),
+      mirror: hardGuide,
+      coachQuestion: "按这个方向改一版，再进入句内细修。",
+      moduleComplete: false,
+      syntaxHint: undefined,
+    };
+    return {
+      result: next,
+      state: {
+        ...nextState,
+        s3: { ...s3, mode: "coach", pendingSentence: sentence },
+        coachContext: {
+          ...nextState.coachContext,
+          lastQuestion: next.coachQuestion,
+          openIssue: `Orchestrator(${orchestrator.focusLayer})`,
         },
       },
     };
@@ -902,11 +1028,26 @@ export function postProcessStage3Sentence(
     );
 
     const feedbackText = formatSentenceCoachFeedback(meaningDiagnosis, sentence);
+    const feedbackBody =
+      orchestrator?.mode === "soft"
+        ? prependHint(layerHint, feedbackText)
+        : feedbackText;
     next = {
       ...next,
       verdict: "coach",
       advance: false,
-      userVisibleText: feedbackText,
+      userVisibleText: buildStage3OutputContract({
+        state,
+        module: mod ?? null,
+        meaningOk: false,
+        meaningReason: `缺失：${missingLabels}`,
+        paragraphFit: false,
+        paragraphReason: "当前句未完成本模块局部功能",
+        feedback: feedbackBody,
+        suggestedRevision:
+          meaningDiagnosis.phraseFragments[0] ?? "先补齐缺失 meaning，再微调语法。",
+        nextStep: "补齐上述 meaning 后再发一版句子。",
+      }),
       mirror: meaningDiagnosis.repairQuestionZh,
       coachQuestion: meaningDiagnosis.repairQuestionZh,
       languageSupport: {
@@ -937,11 +1078,22 @@ export function postProcessStage3Sentence(
   const feedbackText = formatSentenceCoachFeedback(diagnosis, sentence);
 
   if (diagnosis.pass) {
+    const passText = "这句结构已经清楚，可以写入。请点击「确认写入」进入下一句。";
     next = {
       ...next,
       verdict: "pass",
       advance: false,
-      userVisibleText: feedbackText,
+      userVisibleText: buildStage3OutputContract({
+        state,
+        module: mod ?? null,
+        meaningOk: true,
+        meaningReason: "已覆盖当前句目标含义",
+        paragraphFit: true,
+        paragraphReason: "句子功能与当前模块匹配",
+        feedback: passText,
+        suggestedRevision: "保持此框架，后续只做词汇/语法微调。",
+        nextStep: "点击确认写入，进入下一句。",
+      }),
       moduleComplete: next.moduleComplete ?? true,
       mirror: undefined,
       coachQuestion: undefined,
@@ -960,7 +1112,21 @@ export function postProcessStage3Sentence(
     ...next,
     verdict: "coach",
     advance: false,
-    userVisibleText: feedbackText,
+    userVisibleText: buildStage3OutputContract({
+      state,
+      module: mod ?? null,
+      meaningOk: true,
+      meaningReason: "核心含义可理解，进入结构/表达修复",
+      paragraphFit: true,
+      paragraphReason: "当前句仍在本模块范围内",
+      feedback:
+        orchestrator?.mode === "soft"
+          ? prependHint(layerHint, feedbackText)
+          : feedbackText,
+      suggestedRevision:
+        diagnosis.phraseFragments[0] ?? "按反馈只改一个问题，再发一版。",
+      nextStep: "保留原意，修改这一处后提交。",
+    }),
     mirror: diagnosis.repairQuestionZh,
     coachQuestion: diagnosis.repairQuestionZh,
     languageSupport: {

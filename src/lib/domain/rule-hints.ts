@@ -109,8 +109,16 @@ export function buildRuleHintsBlock(state: SessionState): string {
     lines.push(
       "规则提示：assign 给 scaffolding 不给完整句；pass 后等用户点「确认写入」；未通过用 coach 进入修改再检。",
     );
+    lines.push(
+      "规则提示：Stage3 仅负责 task 采样（claim/reason/example）；修复优先级由 Orchestrator 决定。",
+    );
     if (state.s3?.mode === "coach") {
       lines.push("规则提示：用户在修改本句，仅 re-check 当前句，勿推进下一 module。");
+    }
+    if (state.s3?.orchestrator) {
+      lines.push(
+        `规则提示：Orchestrator(${state.s3.orchestrator.mode}) 当前焦点=${state.s3.orchestrator.focusLayer}，原因=${state.s3.orchestrator.reason}。`,
+      );
     }
   }
   if (state.handoffLocked && state.s2) {

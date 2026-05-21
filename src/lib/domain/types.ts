@@ -190,6 +190,19 @@ export interface SessionState {
     body2Logic?: LogicFill;
   };
   s3?: {
+    orchestrator?: {
+      mode: "shadow" | "soft" | "hard";
+      focusLayer: "essay" | "paragraph" | "sentence";
+      reason: string;
+      essayConfidence: number;
+      paragraphConfidence: number;
+      decisionConfidence: number;
+      conflict: boolean;
+      fallbackApplied: boolean;
+      essayContradiction: boolean;
+      paragraphDrift: boolean;
+      sentenceIssuesLikely: boolean;
+    };
     blueprint?: Blueprint;
     modulePlan: Record<BodyKey, ModuleId[]>;
     currentBody: BodyKey;

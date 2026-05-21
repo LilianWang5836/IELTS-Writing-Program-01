@@ -1,10 +1,11 @@
 import { STAGE1_OPENING, MODULE_LABELS } from "@/lib/domain/constants";
 import { applyHandoffToState, validateHandoff } from "@/lib/domain/handoff";
-import { getCurrentModule } from "@/lib/domain/module-compiler";
+import { sampleStage3Task } from "@/lib/domain/stage3-task-sampler";
 import { buildRuleHintsBlock, ruleHintsForHandoff } from "@/lib/domain/rule-hints";
 import { resolvePromptModule, stageLabel } from "@/lib/domain/router";
 import { normalizeBlueprint } from "@/lib/domain/blueprint-from-s2";
 import { migrateSessionState } from "@/lib/domain/migrate-state";
+import { applyOrchestratorShadow } from "@/lib/domain/essay-orchestrator";
 import { appendChat, stateSummary } from "@/lib/domain/state";
 import { validateUserSentence } from "@/lib/domain/validate";
 import type {
@@ -157,12 +158,9 @@ function buildVars(
   }
 
   if (state.s3) {
-    const body = state.s3.currentBody;
-    const mod = getCurrentModule(
-      state.s3.modulePlan,
-      body,
-      state.s3.moduleIndex,
-    );
+    const sampledTask = sampleStage3Task(state);
+    const body = sampledTask?.body ?? state.s3.currentBody;
+    const mod = sampledTask?.taskType ?? null;
     base.current_body = body;
     base.current_module = mod ?? "";
     base.module_label = mod ? MODULE_LABELS[mod] ?? mod : "";
@@ -190,17 +188,13 @@ function buildVars(
       base.body_sentences = integrateBodySentences(state, body);
     }
     if (state.subStep === "S3_2_MODULE" && userMessage?.trim()) {
-      const mod = getCurrentModule(
-        state.s3.modulePlan,
-        state.s3.currentBody,
-        state.s3.moduleIndex,
-      );
+      const sentenceTask = sampledTask?.taskType ?? null;
       const meaning = assessMeaningAlignment(
         state,
         userMessage,
-        mod ?? undefined,
+        sentenceTask ?? undefined,
       );
-      const diagnosis = diagnoseSentence(userMessage, mod ?? undefined);
+      const diagnosis = diagnoseSentence(userMessage, sentenceTask ?? undefined);
       base.sentence_diagnosis = JSON.stringify({
         meaningAligned: meaning.aligned,
         meaningMissing: meaning.missing,
@@ -211,6 +205,10 @@ function buildVars(
         repairQuestionZh: diagnosis.repairQuestionZh,
         hintZh: diagnosis.hintZh,
       });
+    }
+    if (state.s3.orchestrator) {
+      base.orchestrator_snapshot = JSON.stringify(state.s3.orchestrator);
+      base.current_focus_layer = state.s3.orchestrator.focusLayer;
     }
   }
   return base;
@@ -504,6 +502,7 @@ export async function handleTurn(
 ): Promise<TurnResponse> {
   const replies: string[] = [];
   let s = ensureMigrated(state);
+  s = applyOrchestratorShadow(s, message);
   s = appendChat(s, "user", message);
   const moduleId = resolvePromptModule(s);
 

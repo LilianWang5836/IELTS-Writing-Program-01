@@ -85,6 +85,11 @@ Do NOT introduce many new academic words unless necessary.
 
 User Sentence → Detect Main Problem → Ask Repair Question → Local Scaffolding → User Revises → Re-check
 
+按优先级逐条推进：
+- 本轮只处理当前最高优先级问题
+- 用户修完后再进入下一条
+- 不要在同一轮提前点评后续低优先级问题
+
 - **assign**：布置下一句 + languageSupport（2–4 keywords，1–2 fragments，可选 starter）；**不要**给 polished 完整句
 - **feedback / coach**：若 `sentence_diagnosis.pass` 为 true → verdict **pass**，中文确认可写入
 - 若未通过 → verdict **coach**（或 fail），**只抓 diagnosis 中的那一类问题**，中文修复问句 + scaffolding

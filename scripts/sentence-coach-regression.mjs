@@ -51,16 +51,18 @@ const nounPileSentence =
   "it is argued that accumulate skills work needs and projects even intern experiences, so that can get competitive edge in job market";
 const dn = diagnoseSentence(nounPileSentence, "reason");
 const anchored = applyStudentAnchoredScaffolding(dn, nounPileSentence);
+ok(dn.kind === "missing_subject", "it is argued that ... 先判主语不清");
 ok(
-  anchored.keywords.some((k) => /work needs|projects|intern|job market|skills/i.test(k)),
-  "scaffolding 优先复用学生原词",
+  anchored.keywords.some((k) => /students|graduates|young people/i.test(k)),
+  "主语问题优先给 actor 选项",
 );
 ok(
-  !anchored.keywords.some((k) => /employability|workplace skills/i.test(k)),
-  "避免无必要引入新学术词",
+  !anchored.keywords.some((k) => /work needs|job market|competitive edge/i.test(k)),
+  "主语轮不引导到内容词堆叠",
 );
 const fbNoun = formatSentenceCoachFeedback(anchored, nounPileSentence);
-ok(/skills work needs|projects even intern/i.test(fbNoun), "问题位置锚定原句片段");
+ok(/问题位置：/.test(fbNoun), "问题位置锚定原句片段");
+ok(/谁/.test(fbNoun), "按优先级给出可执行修复问题");
 ok(
   MAIN_ERROR_PRIORITY[0]?.kind === "missing_subject" &&
     MAIN_ERROR_PRIORITY[1]?.kind === "missing_verb",

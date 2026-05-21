@@ -85,6 +85,10 @@ function hasFiniteVerb(s: string): boolean {
 }
 
 function detectMissingSubject(s: string): boolean {
+  // 形式主语句：it is + V-ed + that + 动作，但未出现明确执行者
+  if (/^\s*it\s+is\s+[a-z]+ed\s+that\s+[a-z]+\b/i.test(s)) {
+    return true;
+  }
   if (SUBJECT_STARTERS.test(s)) return false;
   if (/^\s*[A-Za-z]+ing\s+/i.test(s)) return true;
   if (
@@ -371,6 +375,22 @@ function buildAnchoredFragments(
   }
 
   if (kind === "missing_subject" || kind === "missing_verb") {
+    if (kind === "missing_subject") {
+      const keywords = ["students", "graduates", "young people"];
+      const phraseFragments = [
+        "students who ...",
+        "graduates with ...",
+        "people who have ...",
+      ];
+      if (has("intern experiences") || has("internships")) {
+        phraseFragments.push("graduates who have intern experience ...");
+      }
+      return {
+        keywords,
+        phraseFragments: phraseFragments.slice(0, 3),
+        starterStructures: ["明确主语 + 动词 + 结果"],
+      };
+    }
     return {
       keywords: dedupeKeepOrder([...words.slice(0, 2), "students", "graduates"]).slice(
         0,
@@ -398,6 +418,7 @@ export function applyStudentAnchoredScaffolding(
     : diagnosis.starterStructures;
   return {
     ...diagnosis,
+    repairQuestionZh: diagnosis.repairQuestionZh,
     keywords: keywords.slice(0, 4),
     phraseFragments: phraseFragments.slice(0, 2),
     starterStructures: starterStructures.slice(0, 1),
@@ -411,22 +432,39 @@ function locateProblemSnippet(
   const s = sentence.trim();
   if (!s) return "";
   const low = s.toLowerCase();
-  const candidates: Array<[SentenceProblemKind, RegExp[]]> = [
-    ["noun_pile", [/\bskills?\s+work\s+needs?\b/i, /\bprojects?\s+even\s+intern/i]],
-    ["missing_subject", [/^\s*it is argued that\s+accumulate/i, /^\s*accumulate\s+skills?/i]],
-    ["missing_verb", [/\bstudents?\s+(practical\s+)?skills?\b/i]],
-    ["subject_verb_broken", [/\bwhich\s+can\s+improve\s+students?\s+get\b/i]],
-    ["clause_attachment", [/\b,\s*which\b/i, /\bwhich\b/i]],
-    ["cause_effect_gap", [/\binternships?,\s*competitive/i, /\bcompetitive (edge|advantage)\b/i]],
-    ["collocation", [/\b(a|an)\s+(employability|competitive|skills)\b/i]],
-  ];
-  const entry = candidates.find(([k]) => k === diagnosis.kind);
-  if (entry) {
-    for (const re of entry[1]) {
-      const m = s.match(re);
-      if (m?.[0]) return m[0];
-    }
+
+  if (diagnosis.kind === "missing_subject") {
+    const afterThat = s.match(/\bthat\s+([^,.;，；]+)/i)?.[1]?.trim();
+    if (afterThat) return afterThat.split(/\s+/).slice(0, 6).join(" ");
+    return s.split(/[,;，；]/)[0]?.trim() ?? s.slice(0, 28);
   }
+
+  if (diagnosis.kind === "missing_verb") {
+    return s.split(/[,;，；]/)[0]?.trim() ?? s.slice(0, 28);
+  }
+
+  if (diagnosis.kind === "subject_verb_broken" || diagnosis.kind === "clause_attachment") {
+    const whichChunk = s.match(/\bwhich\b[^,.;，；]{0,40}/i)?.[0];
+    if (whichChunk) return whichChunk.trim();
+  }
+
+  if (diagnosis.kind === "cause_effect_gap") {
+    const causeChunk = s.split(/[,;，；]/).map((x) => x.trim())[0];
+    if (causeChunk) return causeChunk;
+  }
+
+  if (diagnosis.kind === "noun_pile") {
+    const nounPile = s.match(
+      /\b[a-z]+(?:\s+[a-z]+){1,4}\b/i,
+    )?.[0];
+    if (nounPile) return nounPile;
+  }
+
+  if (diagnosis.kind === "collocation") {
+    const articleChunk = s.match(/\b(a|an)\s+[a-z]+\b/i)?.[0];
+    if (articleChunk) return articleChunk;
+  }
+
   const fromKeywords = diagnosis.keywords.find((k) => low.includes(k.toLowerCase()));
   if (fromKeywords) return fromKeywords;
   return s.split(/[,;，；]/)[0]?.trim() ?? s.slice(0, 28);
@@ -462,68 +500,55 @@ export function diagnoseSentence(
     };
   }
 
-  if (detectMissingSubject(s)) {
-    return buildDiagnosis(
-      "missing_subject",
-      "P1",
-      "主语缺失",
-      "谁在做这件事？请补一个明确主语（如 students / graduates / universities）。",
-      module,
-    );
-  }
-  if (detectMissingVerb(s)) {
-    return buildDiagnosis(
-      "missing_verb",
-      "P1",
-      "缺少核心谓语",
-      "这句话有主语，但缺少核心动作。谁在做什么？请先补一个主谓结构。",
-      module,
-    );
-  }
-  if (detectBrokenWhich(s)) {
-    return buildDiagnosis(
-      "subject_verb_broken",
-      "P1",
-      "主谓/从句断裂",
-      "「which」后面这部分，主语和动词是否配对了？哪一部分在修饰哪一部分？",
-      module,
-    );
-  }
-  if (detectClauseAttachment(s)) {
-    return buildDiagnosis(
-      "clause_attachment",
-      "P1",
-      "从句挂错",
-      "「which」具体指代前面的哪一个名词？请把指代写清楚。",
-      module,
-    );
-  }
-  if (detectCauseEffectGap(s)) {
-    return buildDiagnosis(
-      "cause_effect_gap",
-      "P1",
-      "因果断裂",
-      "实习/项目带来了什么结果？请用 which helps / as a result 等把因果连起来。",
-      module,
-    );
-  }
-  if (detectNounPile(s)) {
-    return buildDiagnosis(
-      "noun_pile",
-      "P2",
-      "中文式堆叠",
-      "信息堆在一起了。请先分组：这是哪类技能/经历？它们之间是什么关系？",
-      module,
-    );
-  }
-  if (detectCollocation(s)) {
-    return buildDiagnosis(
-      "collocation",
-      "P2",
-      "搭配/冠词",
-      "这里的名词搭配或冠词（a/the）可能需要调整。你想表达的是「一种优势」还是「他们的就业力」？",
-      module,
-    );
+  const detector: Record<Exclude<SentenceProblemKind, "none" | "unclear_wording">, () => boolean> = {
+    missing_subject: () => detectMissingSubject(s),
+    missing_verb: () => detectMissingVerb(s),
+    subject_verb_broken: () => detectBrokenWhich(s),
+    clause_attachment: () => detectClauseAttachment(s),
+    cause_effect_gap: () => detectCauseEffectGap(s),
+    collocation: () => detectCollocation(s),
+    noun_pile: () => detectNounPile(s),
+  };
+
+  const diagnosticMeta: Record<
+    Exclude<SentenceProblemKind, "none" | "unclear_wording">,
+    { label: string; q: string }
+  > = {
+    missing_subject: {
+      label: "主语缺失",
+      q: "现在看不出来“谁”在做这个动作。先明确主语是谁？",
+    },
+    missing_verb: {
+      label: "缺少核心谓语",
+      q: "这句话有信息，但缺少核心动作。谁在做什么？",
+    },
+    subject_verb_broken: {
+      label: "主谓/从句断裂",
+      q: "「which」后面的主语和动词没配上。你要表达的动作是什么？",
+    },
+    clause_attachment: {
+      label: "从句挂错",
+      q: "这里的从句指代不清。`which` 具体指前面的哪一部分？",
+    },
+    cause_effect_gap: {
+      label: "因果断裂",
+      q: "原因和结果还没连起来。这会导致什么结果？",
+    },
+    collocation: {
+      label: "搭配/冠词",
+      q: "这里有一个小搭配问题。先想想这个名词前需要什么限定词？",
+    },
+    noun_pile: {
+      label: "中文式堆叠",
+      q: "现在词组堆在一起了。先分出：动作、经历、结果各是哪一块？",
+    },
+  };
+
+  for (const step of MAIN_ERROR_PRIORITY) {
+    const kind = step.kind as Exclude<SentenceProblemKind, "none" | "unclear_wording">;
+    if (!detector[kind]()) continue;
+    const meta = diagnosticMeta[kind];
+    return buildDiagnosis(kind, step.priority, meta.label, meta.q, module);
   }
 
   return buildDiagnosis(

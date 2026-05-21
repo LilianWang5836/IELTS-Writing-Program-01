@@ -41,6 +41,14 @@ interface WritingStore {
 
 const STORAGE_KEY = "ielts-writing-tutor-v2";
 
+function normalizeReplies(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((x): x is string => typeof x === "string");
+  }
+  if (typeof raw === "string" && raw.trim()) return [raw.trim()];
+  return [];
+}
+
 const safeStorage = createJSONStorage(() => {
   if (typeof window === "undefined") {
     return {
@@ -106,11 +114,12 @@ export const useWritingStore = create<WritingStore>()(
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "Init failed");
+          const replies = normalizeReplies(data.replies);
           set({
             state: data.state,
             handoffDraft: data.state.handoff ?? { ...EMPTY_HANDOFF },
             insertTarget: defaultHandoffTarget(data.state),
-            messages: data.replies.map((t: string) => ({
+            messages: replies.map((t: string) => ({
               role: "assistant" as const,
               text: t,
             })),
@@ -162,11 +171,12 @@ export const useWritingStore = create<WritingStore>()(
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "Confirm failed");
+          const replies = normalizeReplies(data.replies);
           set({
             state: data.state,
             messages: [
               ...get().messages,
-              ...data.replies.map((t: string) => ({
+              ...replies.map((t: string) => ({
                 role: "assistant" as const,
                 text: t,
               })),
@@ -199,12 +209,13 @@ export const useWritingStore = create<WritingStore>()(
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "Confirm failed");
+          const replies = normalizeReplies(data.replies);
           set({
             state: data.state,
             handoffDraft: data.state.handoff ?? state.handoffProposal,
             messages: [
               ...get().messages,
-              ...data.replies.map((t: string) => ({
+              ...replies.map((t: string) => ({
                 role: "assistant" as const,
                 text: t,
               })),
@@ -239,6 +250,7 @@ export const useWritingStore = create<WritingStore>()(
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "Submit failed");
+          const replies = normalizeReplies(data.replies);
           set({
             state: data.state,
             handoffDraft: data.state.handoff
@@ -246,7 +258,7 @@ export const useWritingStore = create<WritingStore>()(
               : { ...handoff },
             messages: [
               ...get().messages,
-              ...data.replies.map((t: string) => ({
+              ...replies.map((t: string) => ({
                 role: "assistant" as const,
                 text: t,
               })),
@@ -279,6 +291,7 @@ export const useWritingStore = create<WritingStore>()(
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "Request failed");
+          const replies = normalizeReplies(data.replies);
           set({
             state: data.state,
             handoffDraft:
@@ -290,7 +303,7 @@ export const useWritingStore = create<WritingStore>()(
               : defaultHandoffTarget(data.state),
             messages: [
               ...get().messages,
-              ...data.replies.map((t: string) => ({
+              ...replies.map((t: string) => ({
                 role: "assistant" as const,
                 text: t,
               })),
@@ -320,11 +333,12 @@ export const useWritingStore = create<WritingStore>()(
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "Confirm failed");
+          const replies = normalizeReplies(data.replies);
           set({
             state: data.state,
             messages: [
               ...get().messages,
-              ...data.replies.map((t: string) => ({
+              ...replies.map((t: string) => ({
                 role: "assistant" as const,
                 text: t,
               })),

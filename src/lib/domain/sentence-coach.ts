@@ -63,6 +63,14 @@ export interface MeaningAlignmentResult {
 }
 
 export type Stage3SentenceIntent = "content" | "meta";
+type DetectableProblemKind = Exclude<
+  SentenceProblemKind,
+  "none" | "unclear_wording" | "meaning_gap"
+>;
+type IssueLifecycle = NonNullable<SessionState["coachContext"]>["sentenceIssue"];
+type IssueLedgerItem = NonNullable<
+  NonNullable<SessionState["coachContext"]>["sentenceIssues"]
+>[number];
 
 /** 单轮只修一个问题（由前到后匹配） */
 export const MAIN_ERROR_PRIORITY: Array<{
@@ -77,6 +85,13 @@ export const MAIN_ERROR_PRIORITY: Array<{
   { priority: "P2", kind: "collocation" },
   { priority: "P2", kind: "noun_pile" },
 ];
+
+const ISSUE_PRIORITY_RANK: Record<SentenceProblemPriority, number> = {
+  P0: 0,
+  P1: 1,
+  P2: 2,
+  P3: 3,
+};
 
 const BANNED_FEEDBACK_RE =
   /grammar\s+issue|grammatical\s+issues?|awkward\s+sentence|improve\s+clarity|word\s+choice|article\s+error|tense\s+error/i;
@@ -312,11 +327,89 @@ function detectCauseEffectGap(s: string): boolean {
 }
 
 function detectNounPile(s: string): boolean {
-  const pile =
-    /\b(skills?|work|needs?|projects?|internships?|experiences?)\b.*\b(skills?|work|needs?|projects?|internships?)\b.*\b(skills?|work|needs?|projects?|internships?)\b/i;
-  if (pile.test(s)) return true;
+  const normalized = s.toLowerCase().replace(/[^a-z\s]/g, " ");
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  const nounLike = (w: string): boolean =>
+    /^(skills?|knowledge|experience|experiences|projects?|internships?|work|workplace|jobs?|career|market|needs?)$/.test(
+      w,
+    ) || /(tion|ment|ness|ity|ship|ance|ence)s?$/.test(w);
+  const breaker = (w: string): boolean =>
+    /^(and|or|with|through|by|for|to|at|in|on|from|that|which|who|because|therefore|thus|so|as|while|but)$/.test(
+      w,
+    );
+
+  let run = 0;
+  for (const t of tokens) {
+    if (nounLike(t)) {
+      run += 1;
+      if (run >= 3) return true;
+      continue;
+    }
+    if (breaker(t)) {
+      run = 0;
+      continue;
+    }
+    run = 0;
+  }
+
   if (wordCount(s) >= 8 && !hasFiniteVerb(s)) return true;
   return false;
+}
+
+function buildDetectorMap(s: string): Record<DetectableProblemKind, () => boolean> {
+  return {
+    missing_subject: () => detectMissingSubject(s),
+    missing_verb: () => detectMissingVerb(s),
+    subject_verb_broken: () => detectBrokenWhich(s),
+    clause_attachment: () => detectClauseAttachment(s),
+    cause_effect_gap: () => detectCauseEffectGap(s),
+    collocation: () => detectCollocation(s),
+    noun_pile: () => detectNounPile(s),
+  };
+}
+
+const DIAGNOSTIC_META: Record<
+  DetectableProblemKind,
+  { label: string; q: string }
+> = {
+  missing_subject: {
+    label: "主语缺失",
+    q: "现在看不出来“谁”在做这个动作。先明确主语是谁？",
+  },
+  missing_verb: {
+    label: "缺少核心谓语",
+    q: "这句话有信息，但缺少核心动作。谁在做什么？",
+  },
+  subject_verb_broken: {
+    label: "主谓/从句断裂",
+    q: "「which」后面的主语和动词没配上。你要表达的动作是什么？",
+  },
+  clause_attachment: {
+    label: "从句挂错",
+    q: "这里的从句指代不清。`which` 具体指前面的哪一部分？",
+  },
+  cause_effect_gap: {
+    label: "因果断裂",
+    q: "原因和结果还没连起来。这会导致什么结果？",
+  },
+  collocation: {
+    label: "搭配/冠词",
+    q: "这里有一个小搭配问题。先想想这个名词前需要什么限定词？",
+  },
+  noun_pile: {
+    label: "中文式堆叠",
+    q: "现在词组堆在一起了。先分出：动作、经历、结果各是哪一块？",
+  },
+};
+
+function buildDiagnosisFromKind(
+  kind: DetectableProblemKind,
+  module?: string,
+): SentenceDiagnosis {
+  const step = MAIN_ERROR_PRIORITY.find((s) => s.kind === kind);
+  const priority = (step?.priority ?? "P3") as SentenceProblemPriority;
+  const meta = DIAGNOSTIC_META[kind];
+  return buildDiagnosis(kind, priority, meta.label, meta.q, module);
 }
 
 function detectCollocation(s: string): boolean {
@@ -656,62 +749,13 @@ export function diagnoseSentence(
     };
   }
 
-  const detector: Record<
-    Exclude<SentenceProblemKind, "none" | "unclear_wording" | "meaning_gap">,
-    () => boolean
-  > = {
-    missing_subject: () => detectMissingSubject(s),
-    missing_verb: () => detectMissingVerb(s),
-    subject_verb_broken: () => detectBrokenWhich(s),
-    clause_attachment: () => detectClauseAttachment(s),
-    cause_effect_gap: () => detectCauseEffectGap(s),
-    collocation: () => detectCollocation(s),
-    noun_pile: () => detectNounPile(s),
-  };
-
-  const diagnosticMeta: Record<
-    Exclude<SentenceProblemKind, "none" | "unclear_wording" | "meaning_gap">,
-    { label: string; q: string }
-  > = {
-    missing_subject: {
-      label: "主语缺失",
-      q: "现在看不出来“谁”在做这个动作。先明确主语是谁？",
-    },
-    missing_verb: {
-      label: "缺少核心谓语",
-      q: "这句话有信息，但缺少核心动作。谁在做什么？",
-    },
-    subject_verb_broken: {
-      label: "主谓/从句断裂",
-      q: "「which」后面的主语和动词没配上。你要表达的动作是什么？",
-    },
-    clause_attachment: {
-      label: "从句挂错",
-      q: "这里的从句指代不清。`which` 具体指前面的哪一部分？",
-    },
-    cause_effect_gap: {
-      label: "因果断裂",
-      q: "原因和结果还没连起来。这会导致什么结果？",
-    },
-    collocation: {
-      label: "搭配/冠词",
-      q: "这里有一个小搭配问题。先想想这个名词前需要什么限定词？",
-    },
-    noun_pile: {
-      label: "中文式堆叠",
-      q: "现在词组堆在一起了。先分出：动作、经历、结果各是哪一块？",
-    },
-  };
+  const detector = buildDetectorMap(s);
 
   for (const step of MAIN_ERROR_PRIORITY) {
-    const kind = step.kind as Exclude<
-      SentenceProblemKind,
-      "none" | "unclear_wording" | "meaning_gap"
-    >;
+    const kind = step.kind as DetectableProblemKind;
     const probe = detector[kind];
     if (!probe || !probe()) continue;
-    const meta = diagnosticMeta[kind];
-    return buildDiagnosis(kind, step.priority, meta.label, meta.q, module);
+    return buildDiagnosisFromKind(kind, module);
   }
 
   return buildDiagnosis(
@@ -812,6 +856,166 @@ function prependHint(hint: string, text: string): string {
   return `${hint}\n\n${text}`;
 }
 
+function resolveIssueLifecycle(
+  prev: IssueLifecycle | undefined,
+  diagnosis: SentenceDiagnosis,
+  sentence: string,
+): NonNullable<IssueLifecycle> {
+  if (diagnosis.pass) {
+    return {
+      kind: diagnosis.kind,
+      status: "resolved",
+      lastSnippet: "",
+      consecutiveTurns: 0,
+    };
+  }
+
+  const snippet = locateProblemSnippet(sentence, diagnosis);
+  const nextTurns =
+    prev?.kind === diagnosis.kind ? (prev?.consecutiveTurns ?? 0) + 1 : 1;
+  if (!prev?.kind) {
+    return {
+      kind: diagnosis.kind,
+      status: "active",
+      lastSnippet: snippet,
+      consecutiveTurns: nextTurns,
+    };
+  }
+  if (prev.status === "resolved" && diagnosis.kind !== "none") {
+    return {
+      kind: diagnosis.kind,
+      status: "regressed",
+      lastSnippet: snippet,
+      consecutiveTurns: nextTurns,
+    };
+  }
+  if (prev.kind !== diagnosis.kind) {
+    return {
+      kind: diagnosis.kind,
+      status: "improving",
+      lastSnippet: snippet,
+      consecutiveTurns: nextTurns,
+    };
+  }
+  if (
+    prev.lastSnippet &&
+    snippet &&
+    prev.lastSnippet.trim().toLowerCase() !== snippet.trim().toLowerCase()
+  ) {
+    return {
+      kind: diagnosis.kind,
+      status: "improving",
+      lastSnippet: snippet,
+      consecutiveTurns: nextTurns,
+    };
+  }
+  if (nextTurns >= 3) {
+    return {
+      kind: diagnosis.kind,
+      status: "regressed",
+      lastSnippet: snippet,
+      consecutiveTurns: nextTurns,
+    };
+  }
+  return {
+    kind: diagnosis.kind,
+    status: "active",
+    lastSnippet: snippet,
+    consecutiveTurns: nextTurns,
+  };
+}
+
+function applyLifecycleHint(
+  feedback: string,
+  lifecycle: IssueLifecycle | undefined,
+): string {
+  if (!lifecycle) return feedback;
+  if (lifecycle.status === "improving") {
+    return `进展：比上一版更接近目标，当前只改这一处。\n\n${feedback}`;
+  }
+  if (lifecycle.status === "regressed") {
+    return `进展：这一类问题连续出现，我们改成更小步只修一个片段。\n\n${feedback}`;
+  }
+  return feedback;
+}
+
+function updateIssueLedger(
+  prevItems: IssueLedgerItem[] | undefined,
+  diagnosis: SentenceDiagnosis,
+  sentence: string,
+): IssueLedgerItem[] {
+  const prev = Array.isArray(prevItems) ? prevItems : [];
+  if (diagnosis.pass) {
+    return prev
+      .map((it) => ({ ...it, status: "resolved" as const, consecutiveTurns: 0 }))
+      .sort(
+        (a, b) =>
+          ISSUE_PRIORITY_RANK[a.priority] - ISSUE_PRIORITY_RANK[b.priority] ||
+          b.hits - a.hits,
+      );
+  }
+
+  const snippet = locateProblemSnippet(sentence, diagnosis);
+  const found = prev.find((it) => it.kind === diagnosis.kind);
+  const nextTurns = found ? found.consecutiveTurns + 1 : 1;
+  const status: IssueLedgerItem["status"] = !found
+    ? "active"
+    : found.lastSnippet &&
+        snippet &&
+        found.lastSnippet.trim().toLowerCase() !== snippet.trim().toLowerCase()
+      ? "improving"
+      : nextTurns >= 3
+        ? "regressed"
+        : "active";
+
+  const currentItem: IssueLedgerItem = {
+    kind: diagnosis.kind,
+    priority: diagnosis.priority,
+    status,
+    lastSnippet: snippet,
+    hits: (found?.hits ?? 0) + 1,
+    consecutiveTurns: nextTurns,
+  };
+
+  const currentRank = ISSUE_PRIORITY_RANK[diagnosis.priority];
+  const updatedOthers = prev
+    .filter((it) => it.kind !== diagnosis.kind)
+    .map((it) => {
+      if (it.status === "resolved") return it;
+      const rank = ISSUE_PRIORITY_RANK[it.priority];
+      if (rank > currentRank) {
+        return { ...it, status: "improving" as const, consecutiveTurns: 0 };
+      }
+      return it;
+    });
+
+  return [currentItem, ...updatedOthers].sort(
+    (a, b) =>
+      (a.status === "resolved" ? 1 : 0) - (b.status === "resolved" ? 1 : 0) ||
+      ISSUE_PRIORITY_RANK[a.priority] - ISSUE_PRIORITY_RANK[b.priority] ||
+      b.hits - a.hits,
+  );
+}
+
+function chooseFocusKind(
+  current: SentenceDiagnosis,
+  items: IssueLedgerItem[],
+  detector: Record<DetectableProblemKind, () => boolean>,
+): DetectableProblemKind | null {
+  if (current.pass) return null;
+  const currentKind = current.kind as DetectableProblemKind;
+  const currentRank = ISSUE_PRIORITY_RANK[current.priority];
+  const candidate = items.find((it) => {
+    const kind = it.kind as DetectableProblemKind;
+    const probe = detector[kind];
+    if (!probe) return false;
+    if (it.status === "resolved" || !probe()) return false;
+    return ISSUE_PRIORITY_RANK[it.priority] <= currentRank;
+  });
+  if (!candidate) return currentKind;
+  return candidate.kind as DetectableProblemKind;
+}
+
 export function postProcessStage3Sentence(
   state: SessionState,
   result: LlmTurnResult,
@@ -872,6 +1076,8 @@ export function postProcessStage3Sentence(
 
   const sentence = userMessage?.trim() ?? s3.pendingSentence?.trim() ?? "";
   if (!sentence) return { result: next, state: nextState };
+  const prevIssue = nextState.coachContext?.sentenceIssue;
+  const prevIssues = nextState.coachContext?.sentenceIssues;
 
   const intent = detectStage3SentenceIntent(sentence);
   if (intent === "meta") {
@@ -911,6 +1117,8 @@ export function postProcessStage3Sentence(
           ...nextState.coachContext,
           lastQuestion: next.coachQuestion,
           openIssue: "表达讨论（meta）",
+          sentenceIssue: prevIssue,
+          sentenceIssues: prevIssues,
         },
       },
     };
@@ -963,6 +1171,8 @@ export function postProcessStage3Sentence(
           ...nextState.coachContext,
           lastQuestion: next.coachQuestion,
           openIssue: `Orchestrator(${orchestrator.focusLayer})`,
+          sentenceIssue: prevIssue,
+          sentenceIssues: prevIssues,
         },
       },
     };
@@ -1003,7 +1213,16 @@ export function postProcessStage3Sentence(
       sentence,
     );
 
-    const feedbackText = formatSentenceCoachFeedback(meaningDiagnosis, sentence);
+    const meaningLifecycle = resolveIssueLifecycle(
+      prevIssue,
+      meaningDiagnosis,
+      sentence,
+    );
+    const meaningIssues = updateIssueLedger(prevIssues, meaningDiagnosis, sentence);
+    const feedbackText = applyLifecycleHint(
+      formatSentenceCoachFeedback(meaningDiagnosis, sentence),
+      meaningLifecycle,
+    );
     const feedbackBody =
       orchestrator?.mode === "soft"
         ? prependHint(layerHint, feedbackText)
@@ -1044,14 +1263,28 @@ export function postProcessStage3Sentence(
           ...nextState.coachContext,
           lastQuestion: meaningDiagnosis.repairQuestionZh,
           openIssue: "Meaning 未对齐",
+          sentenceIssue: meaningLifecycle,
+          sentenceIssues: meaningIssues,
         },
       },
     };
   }
 
   const diagnosisRaw = diagnoseSentence(sentence, mod ?? undefined);
-  const diagnosis = applyStudentAnchoredScaffolding(diagnosisRaw, sentence);
-  const feedbackText = formatSentenceCoachFeedback(diagnosis, sentence);
+  const detectorMap = buildDetectorMap(sentence);
+  const tentativeIssues = updateIssueLedger(prevIssues, diagnosisRaw, sentence);
+  const focusKind = chooseFocusKind(diagnosisRaw, tentativeIssues, detectorMap);
+  const focusedRaw =
+    focusKind && focusKind !== diagnosisRaw.kind
+      ? buildDiagnosisFromKind(focusKind, mod ?? undefined)
+      : diagnosisRaw;
+  const diagnosis = applyStudentAnchoredScaffolding(focusedRaw, sentence);
+  const issues = updateIssueLedger(prevIssues, focusedRaw, sentence);
+  const lifecycle = resolveIssueLifecycle(prevIssue, diagnosis, sentence);
+  const feedbackText = applyLifecycleHint(
+    formatSentenceCoachFeedback(diagnosis, sentence),
+    lifecycle,
+  );
 
   if (diagnosis.pass) {
     const passText = "这句结构已经清楚，可以写入。请点击「确认写入」进入下一句。";
@@ -1080,6 +1313,11 @@ export function postProcessStage3Sentence(
       state: {
         ...nextState,
         s3: { ...s3, mode: "feedback", pendingSentence: sentence },
+        coachContext: {
+          ...nextState.coachContext,
+          sentenceIssue: lifecycle,
+          sentenceIssues: issues,
+        },
       },
     };
   }
@@ -1123,6 +1361,8 @@ export function postProcessStage3Sentence(
         ...nextState.coachContext,
         lastQuestion: diagnosis.repairQuestionZh,
         openIssue: diagnosis.labelZh,
+        sentenceIssue: lifecycle,
+        sentenceIssues: issues,
       },
     },
   };

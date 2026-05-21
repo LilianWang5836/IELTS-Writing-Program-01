@@ -118,5 +118,13 @@ ok(
   "主错误优先级表存在且顺序正确",
 );
 
+const notNounPileSentence =
+  "therefore, students can grasp useful skills and knowledge needed at workplace through projects and internships, which enable them to get more interviews and adapt to jobs more quickly";
+const dNotPile = diagnoseSentence(notNounPileSentence, "impact");
+ok(
+  dNotPile.kind !== "noun_pile",
+  "结构完整句不应被误判为中文式堆叠",
+);
+
 if (fail) process.exit(1);
 console.log("\nAll sentence coach checks passed.");

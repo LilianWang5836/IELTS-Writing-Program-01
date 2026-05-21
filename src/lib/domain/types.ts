@@ -145,6 +145,20 @@ export interface Blueprint {
 export type HandoffPhase = "exploring" | "proposed" | "editing" | "locked";
 
 export interface CoachContext {
+  sentenceIssue?: {
+    kind: string;
+    status: "active" | "improving" | "resolved" | "regressed";
+    lastSnippet?: string;
+    consecutiveTurns: number;
+  };
+  sentenceIssues?: Array<{
+    kind: string;
+    priority: "P0" | "P1" | "P2" | "P3";
+    status: "active" | "improving" | "resolved" | "regressed";
+    lastSnippet?: string;
+    hits: number;
+    consecutiveTurns: number;
+  }>;
   orchestratorGate?: {
     totalHits: number;
     consecutiveHits: number;

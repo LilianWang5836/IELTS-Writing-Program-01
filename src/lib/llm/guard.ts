@@ -179,6 +179,7 @@ export function formatStage2CoachDisplay(result: LlmTurnResult): string {
 export function formatStage3SentenceDisplay(result: LlmTurnResult): string {
   const parts: string[] = [];
   const uv = result.userVisibleText?.trim();
+  if (isOutputContractText(uv)) return uv;
   if (uv) parts.push(uv);
 
   const mirror = result.mirror?.trim();

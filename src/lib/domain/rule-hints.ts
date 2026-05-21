@@ -99,6 +99,17 @@ export function buildRuleHintsBlock(state: SessionState): string {
       lines.push("规则提示：论点与「原因」表述可能同义重复。");
     }
   }
+  if (state.subStep === "S3_2_MODULE") {
+    lines.push(
+      "规则提示：Sentence Coaching——一次只修一个结构问题；反馈用中文修复问句；禁止 grammar issue/awkward 笼统评语。",
+    );
+    lines.push(
+      "规则提示：assign 给 scaffolding 不给完整句；pass 后等用户点「确认写入」；未通过用 coach 进入修改再检。",
+    );
+    if (state.s3?.mode === "coach") {
+      lines.push("规则提示：用户在修改本句，仅 re-check 当前句，勿推进下一 module。");
+    }
+  }
   if (state.handoffLocked && state.s2) {
     if (
       state.s2.body1Angle &&

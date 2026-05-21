@@ -36,6 +36,10 @@ import {
   applyChainProposalToState,
   postProcessStage2,
 } from "@/lib/domain/stage2-coach";
+import {
+  diagnoseSentence,
+  postProcessStage3Sentence,
+} from "@/lib/domain/sentence-coach";
 import type { BodyKey, WorkshopBodyKey } from "@/lib/domain/types";
 import { formatCoachDisplay } from "@/lib/llm/guard";
 import { callLlm } from "@/lib/llm/client";
@@ -184,6 +188,22 @@ function buildVars(
     if (state.subStep === "S3_3_BODY_CHECK") {
       base.body_sentences = integrateBodySentences(state, body);
     }
+    if (state.subStep === "S3_2_MODULE" && userMessage?.trim()) {
+      const mod = getCurrentModule(
+        state.s3.modulePlan,
+        state.s3.currentBody,
+        state.s3.moduleIndex,
+      );
+      const diagnosis = diagnoseSentence(userMessage, mod ?? undefined);
+      base.sentence_diagnosis = JSON.stringify({
+        pass: diagnosis.pass,
+        priority: diagnosis.priority,
+        kind: diagnosis.kind,
+        labelZh: diagnosis.labelZh,
+        repairQuestionZh: diagnosis.repairQuestionZh,
+        hintZh: diagnosis.hintZh,
+      });
+    }
   }
   return base;
 }
@@ -223,6 +243,15 @@ async function processLlmTurn(
     return { reply, state: nextState, autoContinue: false };
   }
 
+  if (prevSubStep === "S3_2_MODULE") {
+    const processed = postProcessStage3Sentence(state, result, userMessage);
+    result = processed.result;
+    nextState = processed.state;
+    const reply = formatCoachDisplay(result, { stage3Sentence: true });
+    nextState = appendChat(nextState, "assistant", reply);
+    return { reply, state: nextState, autoContinue: false };
+  }
+
   let reply = formatCoachDisplay(result);
   const advance = shouldAdvance(state, prevSubStep, result);
 
@@ -234,20 +263,6 @@ async function processLlmTurn(
   if (prevSubStep === "S3_1_BLUEPRINT" && advance) {
     nextState = applyBlueprint(nextState, result);
     autoContinue = true;
-  } else if (prevSubStep === "S3_2_MODULE" && nextState.s3) {
-    const s3 = { ...nextState.s3 };
-    if (result.verdict === "assign") {
-      s3.mode = "assign";
-      s3.lastAssignText = result.userVisibleText;
-      s3.pendingSentence = undefined;
-    } else if (result.verdict === "pass") {
-      s3.mode = "feedback";
-      s3.pendingSentence = userMessage ?? s3.pendingSentence;
-    } else {
-      s3.mode = result.verdict === "coach" ? "coach" : "assign";
-      s3.pendingSentence = undefined;
-    }
-    nextState = { ...nextState, s3 };
   } else if (prevSubStep === "S3_3_BODY_CHECK") {
     if (result.verdict === "pass" && advance) {
       const integrated =
@@ -565,7 +580,10 @@ export async function handleTurn(
     };
   }
 
-  if (s.subStep === "S3_2_MODULE" && s.s3?.mode === "feedback") {
+  if (
+    s.subStep === "S3_2_MODULE" &&
+    (s.s3?.mode === "feedback" || s.s3?.mode === "coach")
+  ) {
     const v = validateUserSentence(message);
     if (!v.ok) {
       return {
@@ -575,6 +593,14 @@ export async function handleTurn(
         canSubmit: true,
       };
     }
+    s = {
+      ...s,
+      s3: {
+        ...s.s3!,
+        pendingSentence: message,
+        mode: "coach",
+      },
+    };
   }
 
   let auto = true;

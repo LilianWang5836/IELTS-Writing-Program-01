@@ -31,12 +31,15 @@ export function getStepHint(state: SessionState, requiresConfirm: boolean): stri
       return "→ 写出 Body2 论证；注意与 Body1 不同角度。";
     case "S3_2_MODULE":
       if (state.s3?.mode === "assign") {
-        return "→ 按教练要求写一句英文，点「提交」。";
+        return "→ 按教练要求写一句英文，点「提交」；一次只写一句。";
+      }
+      if (state.s3?.mode === "feedback") {
+        return "→ 结构已够：请点击「确认写入」进入下一句。";
       }
       if (state.s3?.mode === "coach") {
-        return "→ 根据反馈修改本句后重新提交。";
+        return "→ 根据中文修复问句改本句后重新提交（一次只修一个问题）。";
       }
-      return "→ 根据反馈修改后重新提交。";
+      return "→ 写一句英文或按反馈修改后提交。";
     default:
       return "";
   }

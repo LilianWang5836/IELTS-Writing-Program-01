@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:chain": "npx tsx scripts/chain-regression.mjs"
+    "test:chain": "npx tsx scripts/chain-regression.mjs",
+    "test:sentence": "npx tsx scripts/sentence-coach-regression.mjs"
   },
   "dependencies": {
     "jsonrepair": "^3.14.0",

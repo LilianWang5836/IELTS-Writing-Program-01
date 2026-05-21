@@ -475,26 +475,51 @@ export function mockLlmResponse(
         },
       };
 
-    case "P3_2":
+    case "P3_2": {
+      const raw = context.userMessage?.trim() ?? "";
       if (hasUserText && context.subStep.includes("S3_2")) {
+        if (
+          /accumulate\s+skills\s+can/i.test(raw) ||
+          /^\s*skills\s+work\s+needs/i.test(raw) ||
+          /which\s+can\s+improve\s+students\s+get/i.test(raw)
+        ) {
+          return {
+            verdict: "coach",
+            advance: false,
+            userVisibleText:
+              "【P1 · 主语缺失】\n\n谁在做这件事？请补一个明确主语（如 students / graduates）。\n\nKeywords: students | graduates\nPatterns: Students can... / Graduates who...",
+            moduleComplete: false,
+          };
+        }
+        if (/students?\s+join\s+internships?,\s*competitive/i.test(raw)) {
+          return {
+            verdict: "coach",
+            advance: false,
+            userVisibleText:
+              "【P1 · 因果断裂】\n\n实习带来了什么结果？请用 which helps / as a result 把因果连起来。",
+            moduleComplete: false,
+          };
+        }
         return {
           verdict: "pass",
           advance: false,
-          userVisibleText: "这句功能到位。请点击「确认写入」。",
-          syntaxHint: "可尝试用 because / which 明确因果。",
+          userVisibleText:
+            "这句结构已经清楚，可以写入。请点击「确认写入」进入下一句。",
           moduleComplete: true,
         };
       }
       return {
         verdict: "assign",
         advance: false,
-        userVisibleText: "请写本句英文（按功能要求，可参考 Keywords）。",
+        userVisibleText:
+          "请写一句英文（立场/因果/举例按当前环节）。一次只写一句；可参考 Keywords。",
         languageSupport: {
-          keywords: ["prioritize", "employability", "graduates"],
+          keywords: ["students", "graduates", "employability", "because"],
           phraseFragments: ["Universities should...", "This is because..."],
-          starterStructures: ["Universities should prioritize... because..."],
+          starterStructures: ["Students can... because..."],
         },
       };
+    }
 
     case "P3_3":
       return {

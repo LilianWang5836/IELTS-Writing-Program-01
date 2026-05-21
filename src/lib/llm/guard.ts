@@ -168,16 +168,40 @@ export function formatStage2CoachDisplay(result: LlmTurnResult): string {
   return guardUserVisibleText(parts.join("\n\n"), 8);
 }
 
+/** Stage 3 逐句：中文修复反馈 + 英文 scaffolding */
+export function formatStage3SentenceDisplay(result: LlmTurnResult): string {
+  const parts: string[] = [];
+  const uv = result.userVisibleText?.trim();
+  if (uv) parts.push(uv);
+
+  const mirror = result.mirror?.trim();
+  if (
+    mirror &&
+    !uv?.includes(mirror.slice(0, Math.min(14, mirror.length)))
+  ) {
+    parts.push(mirror);
+  }
+
+  const withSupport = appendLanguageSupport(
+    parts.join("\n\n"),
+    result.languageSupport,
+  );
+  return guardUserVisibleText(withSupport, 5);
+}
+
 /** Assign 模式保留 keywords；Stage 2 链条在左侧展示 */
 export function formatCoachDisplay(
   result: LlmTurnResult,
-  opts?: { stage1?: boolean; stage2?: boolean },
+  opts?: { stage1?: boolean; stage2?: boolean; stage3Sentence?: boolean },
 ): string {
   if (opts?.stage1) {
     return formatStage1CoachDisplay(result);
   }
   if (opts?.stage2) {
     return formatStage2CoachDisplay(result);
+  }
+  if (opts?.stage3Sentence) {
+    return formatStage3SentenceDisplay(result);
   }
 
   const withSupport = appendLanguageSupport(

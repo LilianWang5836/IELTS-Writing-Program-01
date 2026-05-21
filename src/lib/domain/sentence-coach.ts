@@ -133,22 +133,64 @@ export function assessMeaningAlignment(
   const required = concepts.slice(0, 3);
   const missing: string[] = [];
 
+  const hasConcept = (c: string) => hasAnyCue(sentence, CONCEPT_CUES[c] ?? []);
+  const hasScene = /\b(at school|in class|in companies|at work|in workplace|during internship|in internships?)\b/i.test(
+    sentence,
+  );
+  const hasConnector = hasCauseOrContrast(sentence);
+
+  // Sentence-level local function checks (not full-body completion).
+  if (module === "example") {
+    // Example: scene + realism/relevance, not final impact/closure.
+    if (!hasScene) missing.push("example_scene");
+    const hasDomainObject =
+      required.some((c) => hasConcept(c)) ||
+      /\b(school|class|company|companies|workplace|technology|language|languages)\b/i.test(
+        sentence,
+      );
+    if (!hasDomainObject) missing.push("core_object");
+    const hasRelevance =
+      /\b(work|workplace|job|company|companies|employer|employers)\b/i.test(sentence) ||
+      hasConnector;
+    if (!hasRelevance) missing.push("claim_relevance");
+    return {
+      aligned: missing.length === 0,
+      missing,
+      requiredConcepts: required,
+    };
+  }
+
+  if (module === "reason") {
+    // Reason: cause-effect/contrast path + relevant object.
+    const hasReasonObject = required.some((c) => hasConcept(c));
+    if (!hasReasonObject) missing.push("core_object");
+    if (!hasConnector) missing.push("logic_link");
+    return {
+      aligned: missing.length === 0,
+      missing,
+      requiredConcepts: required,
+    };
+  }
+
+  if (module === "claim" || module === "conclusion_restate" || module === "conclusion_summary") {
+    const hasClaimObject = required.some((c) => hasConcept(c));
+    if (!hasClaimObject) missing.push("core_object");
+    return {
+      aligned: missing.length === 0,
+      missing,
+      requiredConcepts: required,
+    };
+  }
+
+  // Fallback for unknown modules.
   for (const c of required) {
-    if (!hasAnyCue(sentence, CONCEPT_CUES[c] ?? [])) {
+    if (!hasConcept(c)) {
       missing.push(c);
     }
   }
 
-  if (moduleNeedsConnector(module) && !hasCauseOrContrast(sentence)) {
+  if (moduleNeedsConnector(module) && !hasConnector) {
     missing.push("logic_link");
-  }
-
-  if (module === "example" && !/\b(for example|for instance|such as|e\.g\.)\b/i.test(sentence)) {
-    // Example 句可以没有显式标记，但至少要有场景词；若都没有，视为 meaning 风险
-    const hasScene = /\b(at school|in class|in companies|at work|in workplace|during internship)\b/i.test(
-      sentence,
-    );
-    if (!hasScene) missing.push("example_scene");
   }
 
   return {
@@ -783,18 +825,22 @@ export function postProcessStage3Sentence(
     const missingLabels = meaning.missing
       .map((m) =>
         m === "job"
-          ? "求职/工作结果"
+          ? "求职/工作相关对象"
           : m === "practice"
-            ? "实践/实习经历"
+            ? "实践/实习对象"
             : m === "skill"
               ? "技能/技术对象"
               : m === "adapt"
-                ? "适应工作"
+                ? "适应工作相关对象"
                 : m === "academic"
-                  ? "学术/研究目标"
+                  ? "学术/研究对象"
                   : m === "logic_link"
                     ? "因果/对比连接"
-                    : "例子场景",
+                    : m === "example_scene"
+                      ? "具体场景"
+                      : m === "claim_relevance"
+                        ? "与论点关联"
+                        : "核心对象",
       )
       .join("、");
 

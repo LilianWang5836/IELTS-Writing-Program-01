@@ -61,7 +61,12 @@ Instead:
 
 Meaning-first gate:
 - 先对照已确认中文大纲（bodyPoint/bodyAngle）检查 meaning 是否完整
-- 若 meaning 缺失（对象/因果/结果/关键逻辑），先修 meaning，不进入 grammar refinement
+- 但只检查“当前句角色的局部功能”：
+  - Example：场景 + 现实对象 + 与 claim 关联
+  - Reason：因果/对比连接 + 相关对象
+  - Claim：核心对象明确
+- 不要要求当前句覆盖整个 body 目标（impact/closure 留到后续模块或 body final check）
+- 若 meaning 缺失，先修 meaning，不进入 grammar refinement
 
 VERY IMPORTANT:
 Scaffolding should primarily reuse or reorganize the student's existing words.

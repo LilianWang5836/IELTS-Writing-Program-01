@@ -57,7 +57,20 @@ const m1 = assessMeaningAlignment(
   "example",
 );
 ok(!m1.aligned, "meaning 缺失时先拦截");
-ok(m1.missing.includes("job") || m1.missing.includes("logic_link"), "能指出缺失 meaning");
+ok(
+  m1.missing.includes("claim_relevance") || m1.missing.includes("logic_link"),
+  "example 句缺关联/连接会被指出",
+);
+
+const m2 = assessMeaningAlignment(
+  mockState,
+  "For instance, students learn C++ at school, but companies hardly use it in real workplace.",
+  "example",
+);
+ok(
+  m2.aligned,
+  "example 局部功能成立时应通过（不强求同句含 internship/job result）",
+);
 
 const good =
   "Universities should prioritize practical skills because this helps graduates adapt to workplace demands.";

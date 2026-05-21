@@ -32,6 +32,7 @@ export type SentenceProblemPriority = "P1" | "P2" | "P3";
 
 export type SentenceProblemKind =
   | "missing_subject"
+  | "missing_verb"
   | "subject_verb_broken"
   | "clause_attachment"
   | "cause_effect_gap"
@@ -52,6 +53,21 @@ export interface SentenceDiagnosis {
   pass: boolean;
 }
 
+/** 单轮只修一个问题（由前到后匹配） */
+export const MAIN_ERROR_PRIORITY: Array<{
+  priority: SentenceProblemPriority;
+  kind: SentenceProblemKind;
+}> = [
+  { priority: "P1", kind: "missing_subject" },
+  { priority: "P1", kind: "missing_verb" },
+  { priority: "P1", kind: "subject_verb_broken" },
+  { priority: "P1", kind: "clause_attachment" },
+  { priority: "P1", kind: "cause_effect_gap" },
+  { priority: "P2", kind: "collocation" },
+  { priority: "P2", kind: "noun_pile" },
+  { priority: "P3", kind: "unclear_wording" },
+];
+
 const BANNED_FEEDBACK_RE =
   /grammar\s+issue|grammatical\s+issues?|awkward\s+sentence|improve\s+clarity|word\s+choice|article\s+error|tense\s+error/i;
 
@@ -63,7 +79,7 @@ function wordCount(text: string): number {
 }
 
 function hasFiniteVerb(s: string): boolean {
-  return /\b(is|are|was|were|am|be|been|being|have|has|had|do|does|did|can|could|will|would|should|may|might|must|need|needs|help|helps|allow|allows|enable|enables|make|makes|improve|improves|lead|leads|provide|provides|offer|offers|give|gives|get|gets|become|becomes)\b/i.test(
+  return /\b(is|are|was|were|am|be|been|being|have|has|had|do|does|did|can|could|will|would|should|may|might|must|need|needs|help|helps|allow|allows|enable|enables|make|makes|improve|improves|lead|leads|provide|provides|offer|offers|give|gives|get|gets|become|becomes|join|joins)\b/i.test(
     s,
   );
 }
@@ -79,6 +95,23 @@ function detectMissingSubject(s: string): boolean {
     return true;
   }
   if (/^\s*(can|will|may|could|should)\s+\w+/i.test(s) && !SUBJECT_STARTERS.test(s)) {
+    return true;
+  }
+  return false;
+}
+
+function detectMissingVerb(s: string): boolean {
+  if (hasFiniteVerb(s)) return false;
+  const words = wordCount(s);
+  if (words < 4) return false;
+  // 有主语但无谓语时，优先判定为 missing verb
+  if (SUBJECT_STARTERS.test(s)) return true;
+  // 中文式名词堆叠也经常表现为无谓语
+  if (
+    /\b(students?|graduates?|universities|skills?|projects?|internships?|work experience)\b/i.test(
+      s,
+    )
+  ) {
     return true;
   }
   return false;
@@ -188,6 +221,14 @@ function scaffoldingFor(
         phraseFragments: ["..., which helps...", "..., which leads to...", "As a result, ..."],
         starterStructures: ["主句 + , which + 动词 + 结果"],
       };
+    case "missing_verb":
+      return {
+        ...base,
+        hintZh: "先把动作动词补出来，再接结果。",
+        keywords: ["need", "help", "improve", "lead to"],
+        phraseFragments: ["Students need...", "... helps them ..."],
+        starterStructures: ["主语 + 动词 + 结果"],
+      };
     case "cause_effect_gap":
       return {
         ...base,
@@ -280,6 +321,15 @@ export function diagnoseSentence(
       "P1",
       "主语缺失",
       "谁在做这件事？请补一个明确主语（如 students / graduates / universities）。",
+      module,
+    );
+  }
+  if (detectMissingVerb(s)) {
+    return buildDiagnosis(
+      "missing_verb",
+      "P1",
+      "缺少核心谓语",
+      "这句话有主语，但缺少核心动作。谁在做什么？请先补一个主谓结构。",
       module,
     );
   }
@@ -418,7 +468,6 @@ export function postProcessStage3Sentence(
   }
 
   const mod = getCurrentModule(s3.modulePlan, s3.currentBody, s3.moduleIndex);
-  const varsDir = state.s3?.blueprint; // direction from buildVars - use module from state
 
   let next = { ...result };
   let nextState = state;
@@ -472,19 +521,11 @@ export function postProcessStage3Sentence(
     };
   }
 
-  const cleaned = stripBannedSentenceFeedback(
-    next.userVisibleText ?? next.coachQuestion ?? "",
-  );
-  const useLlm =
-    cleaned.length > 12 &&
-    !BANNED_FEEDBACK_RE.test(cleaned) &&
-    !/grammar|awkward|clarity/i.test(cleaned);
-
   next = {
     ...next,
     verdict: "coach",
     advance: false,
-    userVisibleText: useLlm ? `${feedbackText}\n\n${cleaned}`.slice(0, 900) : feedbackText,
+    userVisibleText: feedbackText,
     mirror: diagnosis.repairQuestionZh,
     coachQuestion: diagnosis.repairQuestionZh,
     languageSupport: {

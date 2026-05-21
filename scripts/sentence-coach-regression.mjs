@@ -3,6 +3,7 @@
  * npm run test:sentence
  */
 import {
+  MAIN_ERROR_PRIORITY,
   diagnoseSentence,
   formatSentenceCoachFeedback,
 } from "../src/lib/domain/sentence-coach.ts";
@@ -27,6 +28,10 @@ const badWhich = "which can improve students get jobs faster";
 const d2 = diagnoseSentence(badWhich, "reason");
 ok(d2.kind === "subject_verb_broken" || d2.kind === "clause_attachment", "which 断裂");
 
+const badVerb = "Students practical skills for workplaces";
+const d2b = diagnoseSentence(badVerb, "reason");
+ok(d2b.kind === "missing_verb", "缺少核心谓语");
+
 const badGap = "students join internships, competitive advantage";
 const d3 = diagnoseSentence(badGap, "example");
 ok(d3.kind === "cause_effect_gap", "因果断裂");
@@ -39,6 +44,11 @@ ok(d4.pass, "完整句 pass");
 const fb = formatSentenceCoachFeedback(d1);
 ok(!/grammar issue|awkward/i.test(fb), "无笼统 grammar 评语");
 ok(/Keywords/.test(fb), "含 scaffolding");
+ok(
+  MAIN_ERROR_PRIORITY[0]?.kind === "missing_subject" &&
+    MAIN_ERROR_PRIORITY[1]?.kind === "missing_verb",
+  "主错误优先级表存在且顺序正确",
+);
 
 if (fail) process.exit(1);
 console.log("\nAll sentence coach checks passed.");

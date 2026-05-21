@@ -44,6 +44,13 @@ Body2 论点：{{body2_point}}
 - 实习带来了什么结果？
 - 这句话还需要更清晰的主语。
 
+Do NOT summarize all grammar problems.
+
+Instead:
+1. identify the ONE biggest structural issue
+2. guide the student to repair it
+3. provide local scaffolding only
+
 ---
 
 # 流程

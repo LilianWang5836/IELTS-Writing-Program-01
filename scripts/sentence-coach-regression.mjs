@@ -5,10 +5,13 @@
 import {
   MAIN_ERROR_PRIORITY,
   applyStudentAnchoredScaffolding,
+  assessLocalViability,
   assessMeaningAlignment,
+  decideSentenceState,
   detectStage3SentenceIntent,
   diagnoseSentence,
   formatSentenceCoachFeedback,
+  looksStructurallyWorkable,
 } from "../src/lib/domain/sentence-coach.ts";
 
 let fail = 0;
@@ -124,6 +127,85 @@ const dNotPile = diagnoseSentence(notNounPileSentence, "impact");
 ok(
   dNotPile.kind !== "noun_pile",
   "结构完整句不应被误判为中文式堆叠",
+);
+
+// === SentenceTrainingState 决策回归 =======================================
+// 1. stabilizable：meaning + 结构 + 可用性都通过
+const stableSentence =
+  "Universities should prioritize practical skills because this helps graduates adapt to workplace demands.";
+ok(
+  looksStructurallyWorkable(stableSentence),
+  "稳态句应通过结构层（looksStructurallyWorkable）",
+);
+const stableViab = assessLocalViability(stableSentence);
+ok(stableViab.issues.length === 0, "稳态句不应触发 viability issue");
+ok(
+  decideSentenceState({
+    meaningAligned: true,
+    structuralWorkable: true,
+    viability: stableViab,
+  }) === "stabilizable",
+  "三层全通过 → stabilizable（可 confirm write-in）",
+);
+
+// 2. refine_needed：结构成立但可用性扣分
+const refineSentence =
+  "Students should pursue sustainable studying so that they can adapt to workplace demands.";
+ok(
+  looksStructurallyWorkable(refineSentence),
+  "refine_needed 句结构应成立",
+);
+const refineViab = assessLocalViability(refineSentence);
+ok(
+  refineViab.issues.some((i) => /sustainable studying/i.test(i.note)),
+  "refine_needed 句应触发 collocation 提示",
+);
+ok(
+  decideSentenceState({
+    meaningAligned: true,
+    structuralWorkable: true,
+    viability: refineViab,
+  }) === "refine_needed",
+  "结构成立 + 可用性扣分 → refine_needed（不可 confirm）",
+);
+
+// 3. workable：结构成立、无可用性问题、但置信不足（LLM 兜底场景）
+const workableState = decideSentenceState({
+  meaningAligned: true,
+  structuralWorkable: true,
+  viability: { score: 0.7, confidence: 0.6, issues: [] },
+});
+ok(
+  workableState === "workable",
+  "无 issue 但 score/confidence 不足 → workable（继续打磨）",
+);
+
+// 4. repair_needed（meaning 未对齐）
+const repairMeaning = decideSentenceState({
+  meaningAligned: false,
+  structuralWorkable: true,
+  viability: { score: 1, confidence: 0.9, issues: [] },
+});
+ok(
+  repairMeaning === "repair_needed",
+  "meaning 未对齐 → 直接 repair_needed（即便结构/可用性 OK）",
+);
+
+// 5. repair_needed（结构不成立）
+const repairStructure = decideSentenceState({
+  meaningAligned: true,
+  structuralWorkable: false,
+  viability: { score: 1, confidence: 0.9, issues: [] },
+});
+ok(
+  repairStructure === "repair_needed",
+  "结构不成立 → 直接 repair_needed",
+);
+
+const brokenStructure = "accumulate skills can improve employability";
+ok(
+  !looksStructurallyWorkable(brokenStructure),
+  "缺主语句不应通过结构层",
 );
 
 if (fail) process.exit(1);

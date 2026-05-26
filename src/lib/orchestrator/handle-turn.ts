@@ -6,6 +6,7 @@ import { resolvePromptModule, stageLabel } from "@/lib/domain/router";
 import { normalizeBlueprint } from "@/lib/domain/blueprint-from-s2";
 import { migrateSessionState } from "@/lib/domain/migrate-state";
 import { applyOrchestratorShadow } from "@/lib/domain/essay-orchestrator";
+import { buildStage3OutputContract } from "@/lib/domain/output-contract";
 import {
   applyOrchestratorHardGate,
   observeOrchestratorHardGate,
@@ -694,7 +695,18 @@ export async function handleTurn(
     const v = validateUserSentence(message);
     if (!v.ok) {
       return {
-        replies: [v.error!],
+        replies: [
+          buildStage3OutputContract({
+            module: sampleStage3Task(s)?.taskType ?? null,
+            meaningOk: false,
+            meaningReason: "未进入判定（输入未通过基本规则）",
+            paragraphFit: false,
+            paragraphReason: v.error!,
+            feedback: `输入有限制：${v.error!}\n请把这一句拆成一条不超过 45 词的英文句，再发一次。`,
+            suggestedRevision: "把核心一句保留，把展开/解释拆到下一句。",
+            nextStep: "改成单句（≤45 词）后重新发送。",
+          }),
+        ],
         state: s,
         requiresConfirm: false,
         canSubmit: true,
@@ -726,7 +738,18 @@ export async function handleTurn(
     const v = validateUserSentence(message);
     if (!v.ok) {
       return {
-        replies: [v.error!],
+        replies: [
+          buildStage3OutputContract({
+            module: sampleStage3Task(s)?.taskType ?? null,
+            meaningOk: false,
+            meaningReason: "未进入判定（输入未通过基本规则）",
+            paragraphFit: false,
+            paragraphReason: v.error!,
+            feedback: `输入有限制：${v.error!}\n请把这一句拆成一条不超过 45 词的英文句，再发一次。`,
+            suggestedRevision: "把核心一句保留，把展开/解释拆到下一句。",
+            nextStep: "改成单句（≤45 词）后重新发送。",
+          }),
+        ],
         state: s,
         requiresConfirm: false,
         canSubmit: true,

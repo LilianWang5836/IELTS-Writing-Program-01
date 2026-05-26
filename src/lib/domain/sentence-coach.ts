@@ -181,17 +181,33 @@ export function assessMeaningAlignment(
 
   // Sentence-level local function checks (not full-body completion).
   if (module === "example") {
-    // Example: scene + realism/relevance, not final impact/closure.
-    if (!hasScene) missing.push("example_scene");
-    const hasDomainObject =
-      required.some((c) => hasConcept(c)) ||
-      /\b(school|class|company|companies|workplace|technology|language|languages)\b/i.test(
+    // Example: any concrete actor + outline-aligned object + relevance,
+    // not necessarily school/workplace.
+    const hasExampleMarker =
+      /\b(for example|for instance|such as|e\.g\.)\b/i.test(sentence) ||
+      /\b\d+\s*(?:to\s*\d+\s*)?(years?|months?)\b/i.test(sentence) ||
+      /\b(takes?|requires?|spends?)\b\s+\b(\d+|long|several|many|years?|long-term)\b/i.test(
         sentence,
       );
-    if (!hasDomainObject) missing.push("core_object");
+    const hasConcreteActor =
+      /\b(students?|graduates?|doctors?|lawyers?|engineers?|researchers?|teachers?|nurses?|patients?|trainees?|interns?|apprentices?|professionals?|workers?|employees?|companies|firms?)\b/i.test(
+        sentence,
+      ) ||
+      /\b(medical|engineering|legal|business|technical|academic)\s+(students?|graduates?|trainees?|professionals?)\b/i.test(
+        sentence,
+      );
+    if (!hasExampleMarker && !hasConcreteActor) missing.push("example_scene");
+    const hasOutlineObject =
+      required.length === 0 ||
+      required.some((c) => hasConcept(c)) ||
+      hasConcreteActor;
+    if (!hasOutlineObject) missing.push("core_object");
     const hasRelevance =
-      /\b(work|workplace|job|company|companies|employer|employers)\b/i.test(sentence) ||
-      hasConnector;
+      hasConnector ||
+      /\b(takes?|requires?|needs?|years?|long-term|systematic|foundation|long\s+time|train|training|cultivat|develop|build)\b/i.test(
+        sentence,
+      ) ||
+      required.some((c) => hasConcept(c));
     if (!hasRelevance) missing.push("claim_relevance");
     return {
       aligned: missing.length === 0,
@@ -534,7 +550,7 @@ function buildExecutionCard(input: {
     .join("\n");
 }
 
-function decideSentenceState(input: {
+export function decideSentenceState(input: {
   meaningAligned: boolean;
   structuralWorkable: boolean;
   viability: LocalViabilityResult;
@@ -575,12 +591,45 @@ function scaffoldingFor(
 
   switch (kind) {
     case "meaning_gap":
+      if (module === "example") {
+        return {
+          ...base,
+          hintZh: "围绕一个具体角色或场景，把例子说完整。",
+          keywords: ["for example", "such as", "takes ... years", "requires"],
+          phraseFragments: [
+            "For example, X takes ... years to ...",
+            "..., which shows that ...",
+          ],
+          starterStructures: ["For example, ... + 具体过程/年限 + 结论关联"],
+        };
+      }
+      if (module === "reason") {
+        return {
+          ...base,
+          hintZh: "用因果连接，把「原因」和「结果」串起来。",
+          keywords: ["because", "which", "as a result", "requires"],
+          phraseFragments: [
+            "This is because ..., which ...",
+            "..., which leads to ...",
+          ],
+          starterStructures: ["原因句 + , which / because + 结果"],
+        };
+      }
+      if (module === "claim" || module === "conclusion_restate" || module === "conclusion_summary") {
+        return {
+          ...base,
+          hintZh: "用立场动词+目标角色+方向，把主张说清。",
+          keywords: ["should", "must", "need to"],
+          phraseFragments: ["X should ...", "X need(s) to ... so that ..."],
+          starterStructures: ["主语 + should/must + 动作 + 目的"],
+        };
+      }
       return {
         ...base,
         hintZh: "先把核心中文逻辑说完整，再做语法细修。",
-        keywords: ["contrast", "result", "workplace", "internship"],
-        phraseFragments: ["X at school, but Y at work", "..., which helps ..."],
-        starterStructures: ["先保留核心对比 + 再补结果"],
+        keywords: ["because", "which", "result"],
+        phraseFragments: ["..., which helps ...", "As a result, ..."],
+        starterStructures: ["主语 + 动词 + 结果"],
       };
     case "missing_subject":
       return {
@@ -808,7 +857,7 @@ function locateProblemSnippet(
   const low = s.toLowerCase();
 
   if (diagnosis.kind === "meaning_gap") {
-    return s.split(/[,;，；]/)[0]?.trim() ?? s.slice(0, 28);
+    return "";
   }
 
   if (diagnosis.kind === "missing_subject") {
@@ -1000,9 +1049,11 @@ function resolveIssueLifecycle(
   }
 
   const snippet = locateProblemSnippet(sentence, diagnosis);
-  const nextTurns =
-    prev?.kind === diagnosis.kind ? (prev?.consecutiveTurns ?? 0) + 1 : 1;
-  if (!prev?.kind) {
+  const sameKind = prev?.kind === diagnosis.kind;
+  const nextTurns = sameKind ? (prev?.consecutiveTurns ?? 0) + 1 : 1;
+
+  if (!prev?.kind || !sameKind) {
+    // 跨问题类型不算 improving/regressed，避免噪声文案。
     return {
       kind: diagnosis.kind,
       status: "active",
@@ -1010,18 +1061,10 @@ function resolveIssueLifecycle(
       consecutiveTurns: nextTurns,
     };
   }
-  if (prev.status === "resolved" && diagnosis.kind !== "none") {
+  if (prev.status === "resolved") {
     return {
       kind: diagnosis.kind,
       status: "regressed",
-      lastSnippet: snippet,
-      consecutiveTurns: nextTurns,
-    };
-  }
-  if (prev.kind !== diagnosis.kind) {
-    return {
-      kind: diagnosis.kind,
-      status: "improving",
       lastSnippet: snippet,
       consecutiveTurns: nextTurns,
     };
@@ -1059,11 +1102,13 @@ function applyLifecycleHint(
   lifecycle: IssueLifecycle | undefined,
 ): string {
   if (!lifecycle) return feedback;
+  // 仅在“同类问题持续多轮”才显示进展文案，避免跨问题误导。
+  if (lifecycle.consecutiveTurns < 2) return feedback;
   if (lifecycle.status === "improving") {
     return `进展：比上一版更接近目标，当前只改这一处。\n\n${feedback}`;
   }
   if (lifecycle.status === "regressed") {
-    return `进展：这一类问题连续出现，我们改成更小步只修一个片段。\n\n${feedback}`;
+    return `进展：同类问题连续出现，我们改成更小步只修一个片段。\n\n${feedback}`;
   }
   return feedback;
 }
@@ -1357,14 +1402,19 @@ export function postProcessStage3Sentence(
       sentence,
     );
     const meaningIssues = updateIssueLedger(prevIssues, meaningDiagnosis, sentence);
+    const meaningExecutionCard = buildExecutionCard({
+      module: mod ?? null,
+      moduleDirection: getModuleDirection(state),
+      diagnosis: meaningDiagnosis,
+    });
     const feedbackText = applyLifecycleHint(
       formatSentenceCoachFeedback(meaningDiagnosis, sentence),
       meaningLifecycle,
     );
     const feedbackBody =
       orchestrator?.mode === "soft"
-        ? prependHint(layerHint, feedbackText)
-        : feedbackText;
+        ? prependHint(layerHint, [meaningExecutionCard, feedbackText].join("\n\n"))
+        : [meaningExecutionCard, feedbackText].join("\n\n");
     next = {
       ...next,
       verdict: "coach",

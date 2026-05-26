@@ -306,10 +306,46 @@ function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+/**
+ * 检测句子是否包含有限动词。
+ *
+ * 不再依赖固定白名单（永远列不完），改用两层检测：
+ *  1. 助动词/情态动词（高可信度，少量列举足够覆盖）
+ *  2. 主语后跟动词位置的结构模式：明确主语（代词/名词）后接任意词
+ *     作为"动词存在"的代理信号——若主语后能接上任何 word，基本就有谓语。
+ *  3. 常见实义动词兜底（覆盖最高频的、不被结构模式捕获的情形）
+ */
 function hasFiniteVerb(s: string): boolean {
-  return /\b(is|are|was|were|am|be|been|being|have|has|had|do|does|did|can|could|will|would|should|may|might|must|need|needs|help|helps|allow|allows|enable|enables|make|makes|improve|improves|lead|leads|provide|provides|offer|offers|give|gives|get|gets|become|becomes|join|joins)\b/i.test(
-    s,
-  );
+  // 1. 助动词 / 情态动词 / be 系列
+  if (
+    /\b(is|are|was|were|am|be|been|being|have|has|had|do|does|did|can|could|will|would|should|may|might|must)\b/i.test(
+      s,
+    )
+  ) {
+    return true;
+  }
+  // 2. 明确主语后紧接动词形态词（排除纯形容词：practical/academic/important 等）。
+  //    使用负向前瞻：主语后面的词不是纯修饰性形容词，才算命中。
+  //    "students learn", "companies use", "they need", "universities offer" 等全部覆盖；
+  //    "Students practical skills" 不命中（practical 是形容词）。
+  const SUBJECT_NOUN_RE =
+    /\b(I|you|we|they|he|she|it|students?|graduates?|universities?|companies?|firms?|employers?|people|workers?|learners?|governments?|researchers?|professors?|schools?)\s+/i;
+  const ADJ_ONLY =
+    /^(practical|academic|important|necessary|essential|helpful|useful|professional|technical|relevant|significant|effective|efficient|critical|beneficial|additional|various|different|certain|specific|general|major|minor|primary|secondary|positive|negative|potential|current|recent|common|traditional|modern|global|local|individual|social|economic|educational|cultural|personal|physical|mental|financial|competitive|innovative|creative|flexible|reliable|suitable|appropriate|adequate|sufficient|necessary|required)\b/i;
+  const subjectMatch = SUBJECT_NOUN_RE.exec(s);
+  if (subjectMatch) {
+    const afterSubject = s.slice(subjectMatch.index + subjectMatch[0].length).trim();
+    if (!ADJ_ONLY.test(afterSubject)) return true;
+  }
+  // 3. 高频实义动词兜底（含常见学术/IELTS 场景动词，不再依赖穷举）
+  if (
+    /\b(learn|use|study|work|develop|acquire|apply|prepare|gain|earn|seek|find|build|focus|need|require|allow|enable|make|help|improve|lead|provide|offer|give|get|become|join|show|suggest|argue|explain|demonstrate|indicate|involve|include|support|affect|influence|change|increase|decrease|grow|reduce|achieve|succeed|choose|decide|believe|think|know|understand|consider|practice|adapt|compete|graduate|enter|create|design|write|read|speak|tend|seem|appear|ensure|promote|hinder|reflect|highlight)\b/i.test(
+      s,
+    )
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function detectMissingSubject(s: string): boolean {
@@ -337,6 +373,8 @@ function detectMissingSubject(s: string): boolean {
 export function detectStage3SentenceIntent(message: string): Stage3SentenceIntent {
   const m = message.trim();
   if (!m) return "content";
+  // 单独一个"提示"字（消息体只有1-2字）也应识别为 scaffold
+  if (/^提示[一下]?$/.test(m) || /^hint$/.test(m.toLowerCase())) return "scaffold";
   const scaffoldRe =
     /(给(个|一个|点|我个)?\s*(提示|句型|开头|starter|帮助)|提示一下|不会写|怎么写|不知道(怎么|如何)|无从下手|没思路|来个(提示|句型|开头)|句型怎么|hint|scaffold)/i;
   const metaRe =
@@ -1497,6 +1535,7 @@ export function postProcessStage3Sentence(
   result: LlmTurnResult,
   userMessage?: string,
   viabilityOverride?: LocalViabilityResult,
+  structuralWorkableOverride?: boolean,
 ): { result: LlmTurnResult; state: SessionState } {
   const s3 = state.s3;
   if (!s3 || state.subStep !== "S3_2_MODULE") {
@@ -1796,7 +1835,8 @@ export function postProcessStage3Sentence(
   }
 
   const moduleDirection = getModuleDirection(state);
-  const structuralWorkable = looksStructurallyWorkable(sentence);
+  const structuralWorkable =
+    structuralWorkableOverride ?? looksStructurallyWorkable(sentence);
   const viability = viabilityOverride ?? assessLocalViability(sentence);
   const diagnosisRaw = diagnoseSentence(sentence, mod ?? undefined);
   const detectorMap = buildDetectorMap(sentence);

@@ -455,6 +455,26 @@ ok(
   "无替换建议时仍可指出原句片段",
 );
 
+// === hasFiniteVerb / looksStructurallyWorkable 回归 ======================
+// 含明确主语+动词的句子不应被误判为缺谓语（原 bug：白名单里没有 learn/use）
+ok(
+  looksStructurallyWorkable(
+    "for example, students learn c++ at school while companies rarely use it these days",
+  ),
+  "含 learn/use 的句子应通过结构层（之前因白名单漏掉这两个动词误判）",
+);
+ok(
+  looksStructurallyWorkable(
+    "This is because knowledge in textbooks is academic, which differs from skills required at the workplace",
+  ),
+  "含 is/differs 的 reason 句应通过结构层",
+);
+// 纯名词堆叠仍应失败
+ok(
+  !looksStructurallyWorkable("Students practical skills for workplaces"),
+  "无动词的名词堆叠句仍应被结构层拦截",
+);
+
 // === competition advantage viability rule ================================
 const compViab = assessLocalViability(
   "Students should accumulate work skills in advance, so that they can gain competition advantage",

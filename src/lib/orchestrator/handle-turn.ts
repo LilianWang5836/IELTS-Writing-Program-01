@@ -201,6 +201,28 @@ function normalizeViabilityFromLlm(raw: unknown): LocalViabilityResult | null {
   };
 }
 
+/**
+ * 当规则判定句子结构不可用时，用 LLM 二次确认。
+ * 返回 true 表示 LLM 认为句子有完整的主谓结构（规则误判），可覆盖规则结论。
+ * 返回 false / null 时保留规则结论。
+ */
+async function confirmStructuralWithLlm(sentence: string): Promise<boolean> {
+  const prompt = [
+    "You are checking whether an English sentence has a grammatically complete main clause.",
+    "A complete main clause requires: a subject (noun/pronoun/gerund phrase) and a finite verb (any tense).",
+    'Return JSON only: {"hasCompleteClause": true|false, "reason": "one sentence"}',
+    "Do NOT evaluate grammar quality, word choice, or argument logic — only check for subject+finite-verb.",
+    `Sentence: ${sentence}`,
+  ].join("\n");
+
+  try {
+    const raw = await callLlmJson<{ hasCompleteClause?: unknown }>(prompt);
+    return raw?.hasCompleteClause === true;
+  } catch {
+    return false;
+  }
+}
+
 async function reviewViabilityWithLlm(
   sentence: string,
 ): Promise<LocalViabilityResult | null> {
@@ -411,10 +433,17 @@ async function processLlmTurn(
       userMessage?.trim() ?? nextState.s3?.pendingSentence?.trim() ?? "";
     const sampledTask = sampleStage3Task(nextState);
     const sentenceTask = sampledTask?.taskType ?? undefined;
+    let structuralOverride: boolean | undefined;
     if (sentenceInput) {
       const meaning = assessMeaningAlignment(nextState, sentenceInput, sentenceTask);
       const structuralWorkable = looksStructurallyWorkable(sentenceInput);
-      if (meaning.aligned && structuralWorkable) {
+      if (meaning.aligned && !structuralWorkable) {
+        // 规则判定结构不可用时，LLM 二次确认，防止误判。
+        const llmConfirm = await confirmStructuralWithLlm(sentenceInput);
+        if (llmConfirm) structuralOverride = true;
+      }
+      const effectiveStructural = structuralOverride ?? structuralWorkable;
+      if (meaning.aligned && effectiveStructural) {
         const local = assessLocalViability(sentenceInput);
         if (!(local.score >= 0.75 && local.confidence >= 0.8)) {
           const llmReviewed = await reviewViabilityWithLlm(sentenceInput);
@@ -427,6 +456,7 @@ async function processLlmTurn(
       result,
       userMessage,
       viabilityOverride,
+      structuralOverride,
     );
     result = processed.result;
     nextState = processed.state;

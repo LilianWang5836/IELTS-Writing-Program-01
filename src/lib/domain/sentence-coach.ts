@@ -532,6 +532,22 @@ export function buildAssignContextPrefix(state: SessionState): string {
 }
 
 /**
+ * 当前模块的"现在请写..."一行（不包含 Pattern/Keywords，只给任务）。
+ * 用于：assign 模块布置；以及 discussion 兜底（用户回头讨论上一句后，
+ * 把当前要写的句子指令拉回来）。
+ */
+export function buildCurrentAssignmentLine(state: SessionState): string {
+  const mod = resolveStage3Module(state);
+  const moduleLabel = MODULE_LABEL_ZH[mod ?? ""] ?? "本句";
+  const moduleDir = getModuleDirection(state);
+  const ctxPrefix = buildAssignContextPrefix(state);
+  const taskLine = moduleDir
+    ? `现在请写${moduleLabel}：${moduleDir}`
+    : `现在请写${moduleLabel}。`;
+  return ctxPrefix ? `${ctxPrefix} ${taskLine}` : taskLine;
+}
+
+/**
  * 为当前模块生成 on-demand 句型提示（prose 形式）。
  * 默认不主动推；只有当用户输入命中 scaffold intent 才调用。
  */

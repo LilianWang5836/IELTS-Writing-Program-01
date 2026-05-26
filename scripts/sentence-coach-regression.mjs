@@ -9,6 +9,7 @@ import {
   assessLocalViability,
   assessMeaningAlignment,
   buildAssignContextPrefix,
+  buildCurrentAssignmentLine,
   buildScaffoldResponse,
   classifyViabilityKind,
   decideSentenceState,

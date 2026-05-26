@@ -45,6 +45,7 @@ import {
 import {
   assessMeaningAlignment,
   assessLocalViability,
+  buildCurrentAssignmentLine,
   buildScaffoldResponse,
   classifyViabilityKind,
   detectStage3SentenceIntent,
@@ -392,6 +393,13 @@ async function buildDiscussionLlmResponse(
   const moduleDir = getModuleDirection(state) ?? "";
   const pending = state.s3?.pendingSentence ?? "";
   const lastIssues = state.coachContext?.lastViabilityIssues ?? [];
+  // 系统是否在"等学生写新一句"——上一句已写入、当前模块还没拿到 pendingSentence。
+  // 这种情况下 discussion 回完，需要代码层把当前模块的 assignment 拉回末尾，
+  // 否则学生会失去导航（前一句已经过去，新一句的指令早已被这一轮讨论冲掉）。
+  const awaitingNewSentence = !pending;
+  const assignmentTailLine = awaitingNewSentence
+    ? buildCurrentAssignmentLine(state)
+    : "";
   const issuesBlock = lastIssues
     .slice(0, 4)
     .map((it, i) => {
@@ -409,7 +417,9 @@ async function buildDiscussionLlmResponse(
     "",
     `当前模块：${mod}`,
     moduleDir ? `这一句要表达的意思：${moduleDir}` : "",
-    pending ? `学生上一版提交的句子：${pending}` : "",
+    pending
+      ? `学生上一版提交的句子（还在打磨中）：${pending}`
+      : "（上一句已经写入；学生现在应该写下一句，但还在回头讨论。）",
     lastIssues.length
       ? `你上一轮指出的问题（按出现顺序）：\n${issuesBlock}`
       : "（上一轮没有未解决的具体问题。）",
@@ -420,24 +430,26 @@ async function buildDiscussionLlmResponse(
     "",
     "① 学生在问「哪里有问题 / 错在哪 / 打磨哪里 / 还要改吗」这种回顾类问题：",
     "   → 把上面列出的「上一轮指出的问题」逐条复述给学生（用 1. 2. 3. 编号），",
-    "     先列硬错（必须自己改），再列可打磨（不强求）。结尾让他改完整句发上来。",
+    "     先列硬错（必须自己改），再列可打磨（不强求）。",
     "   → 如果上一轮没有未解决问题，直接说「上一句没有需要改的地方，已经可以写下一句了」。",
     "",
     "② 学生在问语法或用法（如「为什么要加 that」「能不能用 X」「这样对吗」）：",
     "   → 用大白话回答能或不能 + 一句解释「为什么」（讲意思，不讲语法术语）。",
-    "   → 然后让他把整句改好发上来。",
     "",
     "③ 学生只给了一个短语/片段（如「students are genuinely interested in」）：",
-    "   → 别当成完整句来评。指出这个片段在原句里要接到哪个动作上，让他把整句接完整。",
+    "   → 别当成完整句来评。指出这个片段在原句里要接到哪个动作上。",
     "",
     "④ 学生在做开放讨论（「我觉得…」「不一定要…」「这样也行吧」）：",
-    "   → 简短回应他的想法，然后引导他写出完整新一版。",
+    "   → 简短回应他的想法。",
     "",
     "硬性要求：",
     "- 中文回复，大白话，不要语法术语（系动词/定语从句/主动语态/被动语态/不定式作主语/过去分词 等禁用）。",
     "- 不要直接给整句改写、不要给候选短语清单——启发式让学生自己改。",
     "- 不要重新去评估当前这条短消息本身的语法；只回应学生在说什么。",
     "- 整体控制在 3-6 行以内。",
+    awaitingNewSentence
+      ? "- 【重要】上一句已写入、教练正等学生写下一句。你**只需回答学生的问题**，不要重复布置下一句的任务——系统会在你回复末尾自动追加当前模块的指令。"
+      : "- 上一句还在打磨中：你只需回答学生的问题，不要重复布置任务，也不要重复列出上一版句子。",
     "",
     "输出 JSON 严格如下：",
     '{"reply": "<中文回复正文>"}',
@@ -445,31 +457,14 @@ async function buildDiscussionLlmResponse(
     .filter(Boolean)
     .join("\n");
 
-  try {
-    const raw = await callLlmJson<{ reply?: unknown }>(prompt);
-    const text =
-      raw && typeof raw.reply === "string" ? raw.reply.trim() : "";
-    debugLogLlm("discussion", { sentence: userMessage, raw, parsed: text });
-    if (!text) {
-      // LLM 返回空且本地有上一轮 issues 时，兜底用模板回放，保证 anchor 不丢。
-      if (lastIssues.length) {
-        const lines: string[] = [];
-        if (pending) lines.push(`针对你上一版：「${pending}」`);
-        lines.push("需要再调整的位置：");
-        lastIssues.slice(0, 4).forEach((it, i) => {
-          const anchor = it.anchor ? `「${it.anchor}」` : "";
-          const note = it.guideZh ?? it.note ?? "";
-          lines.push(`${i + 1}. ${anchor} ${note}`.trim());
-        });
-        lines.push("把这几处改好后，整句再发我看。");
-        return lines.join("\n");
-      }
-      return "试着把你想加的部分接回原句的核心动作里，再发一版完整句子上来。";
-    }
-    return text;
-  } catch (e) {
-    debugLogLlm("discussion", { sentence: userMessage, raw: `<error> ${String(e)}` });
-    // 失败时也走兜底模板，保证学生能看到上一轮的 anchor。
+  // 把当前模块的 assignment line 拼到回复末尾（仅当学生跨过上一句、在等新指令时）。
+  const appendAssignment = (body: string): string =>
+    awaitingNewSentence && assignmentTailLine
+      ? `${body}\n\n${assignmentTailLine}`
+      : body;
+
+  // 兜底模板：LLM 返空/失败时使用——保证 anchor 不丢。
+  const fallbackBody = (): string => {
     if (lastIssues.length) {
       const lines: string[] = [];
       if (pending) lines.push(`针对你上一版：「${pending}」`);
@@ -479,10 +474,25 @@ async function buildDiscussionLlmResponse(
         const note = it.guideZh ?? it.note ?? "";
         lines.push(`${i + 1}. ${anchor} ${note}`.trim());
       });
-      lines.push("把这几处改好后，整句再发我看。");
+      if (pending) lines.push("把这几处改好后，整句再发我看。");
       return lines.join("\n");
     }
-    return "我这边接不上 LLM，先按上一轮的提示，把改后整句完整发上来。";
+    if (pending) {
+      return "试着把你想加的部分接回原句的核心动作里，再发一版完整句子上来。";
+    }
+    // 上一句已写入，没有可回顾的 anchor——只靠下面的 assignment 拉回流程即可。
+    return "好的——";
+  };
+
+  try {
+    const raw = await callLlmJson<{ reply?: unknown }>(prompt);
+    const text =
+      raw && typeof raw.reply === "string" ? raw.reply.trim() : "";
+    debugLogLlm("discussion", { sentence: userMessage, raw, parsed: text });
+    return appendAssignment(text || fallbackBody());
+  } catch (e) {
+    debugLogLlm("discussion", { sentence: userMessage, raw: `<error> ${String(e)}` });
+    return appendAssignment(fallbackBody());
   }
 }
 

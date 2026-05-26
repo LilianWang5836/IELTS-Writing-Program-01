@@ -870,6 +870,40 @@ const VIABILITY_RULES: ViabilityRule[] = [
     note: "`compete + 名词` 词性错误，应用 competitive",
     buildReplacement: (m) => `competitive ${m[1]?.toLowerCase() ?? "advantage"}`,
   },
+  // P1 hard: if/when/although/while + 动词，从句缺主语
+  // 例：「if want to pursue」「when learn」「although study hard」
+  {
+    re: /(?:^|[\s,.;])(if|when|while|although|though|unless|once|whenever)\s+(want|need|study|learn|work|do|does|don't|doesn't|are|is|was|were|have|has|had|will|would|can|could|should|must|may|might)\b/i,
+    kind: "grammar_agreement",
+    severity: 0.6,
+    note: "if/when 从句缺少主语",
+    guideOnly: true,
+    buildGuide: (m) =>
+      `这里「${m[1]} ${m[2]}」从句没有主语——${m[1]} 引导的从句也必须有主语（如 they / students / one / people），把主语补上再发一版。`,
+  },
+  // P1 hard: interested + 复数名词（修饰被感兴趣的对象）
+  // 例：「their interested fields」「my interested topics」
+  // 正确：the fields they are interested in / fields of interest
+  {
+    re: /\b(their|my|her|his|our|your|its)?\s*interested\s+(field|fields|topic|topics|area|areas|subject|subjects|domain|domains|major|majors)\b/i,
+    kind: "collocation",
+    severity: 0.4,
+    note: "`interested + 名词` 用法不当",
+    guideOnly: true,
+    buildGuide: () =>
+      "`interested` 不能直接修饰被感兴趣的对象。换个说法：the fields they are interested in / fields of (one's) interest / one's areas of interest。",
+  },
+  // P1 hard: 单数可数名词缺冠词（高频名词搭配）
+  // 例：「pursue academic path」「choose career path」「enter academic career」
+  {
+    re: /\b(pursue|choose|follow|take|enter|start|begin)\s+(academic|career|professional|business|research)\s+(path|career|track|route|life|future)\b/i,
+    kind: "article",
+    severity: 0.45,
+    note: "单数可数名词前缺冠词",
+    guideOnly: true,
+    buildGuide: (m) =>
+      `「${m[1]} ${m[2]} ${m[3]}」前缺冠词——${m[2]} ${m[3]} 是单数可数名词短语，前面需要 a / an / the，先补上再发。`,
+  },
 ];
 
 function pickAnchor(match: RegExpMatchArray): string | undefined {

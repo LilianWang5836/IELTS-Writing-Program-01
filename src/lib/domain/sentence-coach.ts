@@ -706,6 +706,22 @@ const VIABILITY_RULES: ViabilityRule[] = [
       return `${verb} the ${noun}`;
     },
   },
+  // P2: competition advantage（应为 competitive advantage）
+  {
+    re: /\bcompetition\s+advantage\b/i,
+    kind: "collocation",
+    severity: 0.3,
+    note: "`competition advantage` 词性错误，应用形容词 competitive",
+    buildReplacement: () => "competitive advantage",
+  },
+  // P2: compete advantage / compete edge（动词形式用作修饰语）
+  {
+    re: /\bcompete\s+(advantage|edge|benefit)\b/i,
+    kind: "collocation",
+    severity: 0.3,
+    note: "`compete + 名词` 词性错误，应用 competitive",
+    buildReplacement: (m) => `competitive ${m[1]?.toLowerCase() ?? "advantage"}`,
+  },
 ];
 
 function pickAnchor(match: RegExpMatchArray): string | undefined {

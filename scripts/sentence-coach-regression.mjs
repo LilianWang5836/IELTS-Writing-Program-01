@@ -452,6 +452,25 @@ ok(
   "无替换建议时仍可指出原句片段",
 );
 
+// === competition advantage viability rule ================================
+const compViab = assessLocalViability(
+  "Students should accumulate work skills in advance, so that they can gain competition advantage",
+);
+ok(
+  compViab.issues.some((i) => /competition advantage/.test(i.anchor ?? "")),
+  "`competition advantage` anchor 应被命中",
+);
+ok(
+  compViab.issues.some((i) => i.replacement === "competitive advantage"),
+  "`competition advantage` 应给出 `competitive advantage` 替换建议",
+);
+
+const compViab2 = assessLocalViability("They can gain compete advantage in job market");
+ok(
+  compViab2.issues.some((i) => i.replacement === "competitive advantage"),
+  "`compete advantage` 应给出 competitive advantage 替换建议",
+);
+
 // === P3a：scaffold intent ================================================
 ok(
   detectStage3SentenceIntent("给个提示") === "scaffold",

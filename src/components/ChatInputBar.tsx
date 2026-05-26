@@ -13,7 +13,6 @@ export function ChatInputBar() {
     requiresConfirm,
     canSubmit,
     sendMessage,
-    confirmSentence,
     error,
   } = useWritingStore();
 
@@ -83,16 +82,6 @@ export function ChatInputBar() {
           >
             发送
           </button>
-          {stage3 && (
-            <button
-              type="button"
-              onClick={() => void confirmSentence()}
-              disabled={disabled || !requiresConfirm}
-              className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
-            >
-              确认写入
-            </button>
-          )}
         </div>
       </div>
     </div>

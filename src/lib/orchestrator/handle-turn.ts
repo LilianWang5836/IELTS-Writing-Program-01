@@ -45,6 +45,8 @@ import {
 import {
   assessMeaningAlignment,
   assessLocalViability,
+  buildScaffoldResponse,
+  detectStage3SentenceIntent,
   diagnoseSentence,
   looksStructurallyWorkable,
   type LocalViabilityResult,
@@ -76,6 +78,49 @@ export interface TurnResponse {
   state: SessionState;
   requiresConfirm: boolean;
   canSubmit: boolean;
+}
+
+/**
+ * 句子写入条件满足时自动推进：
+ * - stabilizable：完全通过，无 correction。
+ * - refine_needed：accept-with-correction，原句已写入，coach 上一条消息已贴 correction。
+ *
+ * 触发后调 advanceModuleAfterPass + 下一句 assign（或 body check）。
+ * 用户不再需要点「确认写入」按钮；handleConfirm 保留作兜底入口。
+ */
+async function autoAdvanceIfPassable(
+  state: SessionState,
+  replies: string[],
+): Promise<SessionState> {
+  const passable =
+    state.coachContext?.sentenceState === "stabilizable" ||
+    state.coachContext?.sentenceState === "refine_needed";
+  if (
+    state.subStep !== "S3_2_MODULE" ||
+    state.s3?.mode !== "feedback" ||
+    !state.s3?.pendingSentence ||
+    !passable
+  ) {
+    return state;
+  }
+
+  let s = advanceModuleAfterPass(state);
+
+  if (s.subStep === "S3_3_BODY_CHECK") {
+    const { reply, state: ns, autoContinue } = await processLlmTurn(s, "P3_3");
+    replies.push(reply);
+    s = ns;
+    if (autoContinue && s.subStep === "S3_2_MODULE") {
+      const next = await processLlmTurn(s, "P3_2");
+      replies.push(next.reply);
+      s = next.state;
+    }
+  } else if (s.subStep === "S3_2_MODULE") {
+    const { reply, state: ns } = await processLlmTurn(s, "P3_2");
+    replies.push(reply);
+    s = ns;
+  }
+  return s;
 }
 
 function ensureMigrated(state: SessionState): SessionState {
@@ -691,6 +736,22 @@ export async function handleTurn(
     }
   }
 
+  if (
+    s.subStep === "S3_2_MODULE" &&
+    (s.s3?.mode === "assign" ||
+      s.s3?.mode === "coach" ||
+      s.s3?.mode === "feedback") &&
+    detectStage3SentenceIntent(message) === "scaffold"
+  ) {
+    const reply = buildScaffoldResponse(s);
+    return {
+      replies: [reply],
+      state: appendChat(s, "assistant", reply),
+      requiresConfirm: false,
+      canSubmit: true,
+    };
+  }
+
   if (s.subStep === "S3_2_MODULE" && s.s3?.mode === "assign") {
     const v = validateUserSentence(message);
     if (!v.ok) {
@@ -718,16 +779,12 @@ export async function handleTurn(
     };
     const { reply, state: ns } = await processLlmTurn(s, "P3_2", message);
     replies.push(reply);
-    const requiresConfirm =
-      ns.subStep === "S3_2_MODULE" &&
-      ns.s3?.mode === "feedback" &&
-      !!ns.s3.pendingSentence &&
-      ns.coachContext?.sentenceState === "stabilizable";
+    const advanced = await autoAdvanceIfPassable(ns, replies);
     return {
       replies,
-      state: ns,
-      requiresConfirm,
-      canSubmit: !requiresConfirm,
+      state: advanced,
+      requiresConfirm: false,
+      canSubmit: advanced.subStep !== "COMPLETED",
     };
   }
 
@@ -804,11 +861,8 @@ export async function handleTurn(
     auto = autoContinue;
   }
 
-  const requiresConfirm =
-    s.subStep === "S3_2_MODULE" &&
-    s.s3?.mode === "feedback" &&
-    !!s.s3.pendingSentence &&
-    s.coachContext?.sentenceState === "stabilizable";
+  s = await autoAdvanceIfPassable(s, replies);
+  const requiresConfirm = false;
 
   return {
     replies,
@@ -820,10 +874,13 @@ export async function handleTurn(
 
 export async function handleConfirm(state: SessionState): Promise<TurnResponse> {
   const s0 = ensureMigrated(state);
+  const acceptable =
+    s0.coachContext?.sentenceState === "stabilizable" ||
+    s0.coachContext?.sentenceState === "refine_needed";
   if (
     s0.subStep !== "S3_2_MODULE" ||
     !s0.s3?.pendingSentence ||
-    s0.coachContext?.sentenceState !== "stabilizable"
+    !acceptable
   ) {
     return {
       replies: ["当前无需确认。"],

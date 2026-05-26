@@ -7,11 +7,15 @@ import {
   applyStudentAnchoredScaffolding,
   assessLocalViability,
   assessMeaningAlignment,
+  buildAssignContextPrefix,
+  buildScaffoldResponse,
   decideSentenceState,
   detectStage3SentenceIntent,
   diagnoseSentence,
   formatSentenceCoachFeedback,
+  formatViabilityProse,
   looksStructurallyWorkable,
+  postProcessStage3Sentence,
 } from "../src/lib/domain/sentence-coach.ts";
 
 let fail = 0;
@@ -213,18 +217,24 @@ ok(
 const apostropheSentence =
   "Universities should be aligned with students plan because they need clarity.";
 const apoViab = assessLocalViability(apostropheSentence);
+const apoIssue = apoViab.issues.find((i) => /students\s+plan/i.test(i.anchor ?? ""));
+ok(!!apoIssue, "复数群体+名词缺所有格应被识别");
 ok(
-  apoViab.issues.some((i) => /所有关系建议加 ’s/.test(i.note)),
-  "复数群体+名词缺所有格应被识别",
+  /students'\s+plan/i.test(apoIssue?.replacement ?? ""),
+  "缺所有格 issue 应给出 students' plan 替换建议",
 );
 
 // 2) 复合修饰词缺连字符
 const hyphenSentence =
   "Universities should offer them more work related skills.";
 const hyphenViab = assessLocalViability(hyphenSentence);
+const hyphenIssue = hyphenViab.issues.find((i) =>
+  /work\s+related\s+skills/i.test(i.anchor ?? ""),
+);
+ok(!!hyphenIssue, "复合修饰词缺连字符应被识别");
 ok(
-  hyphenViab.issues.some((i) => /连字符/.test(i.note)),
-  "复合修饰词缺连字符应被识别",
+  /work-related\s+skills/i.test(hyphenIssue?.replacement ?? ""),
+  "缺连字符 issue 应给出 work-related skills 替换",
 );
 
 // 3) vice versa 单独悬挂
@@ -232,8 +242,8 @@ const dangleSentence =
   "If they want to work, university should offer skills, vice versa.";
 const dangleViab = assessLocalViability(dangleSentence);
 ok(
-  dangleViab.issues.some((i) => /vice versa/.test(i.note)),
-  "vice versa 单独悬挂应被识别",
+  dangleViab.issues.some((i) => /vice\s+versa/i.test(i.anchor ?? "")),
+  "vice versa 单独悬挂应被识别（anchor 命中）",
 );
 
 // 4) 三类合并：原始用户句应直接落到 refine_needed（不再 stabilizable）
@@ -293,6 +303,153 @@ const restateDrift = assessMeaningAlignment(
 ok(
   !restateDrift.aligned,
   "conclusion_restate 缺立场动词/方向时应被拦截",
+);
+
+// === academic + 动名词 / enter + work 自然度规则 =========================
+const academicGerund =
+  "Students who pursue further education have to focus on academic studying.";
+const acViab = assessLocalViability(academicGerund);
+const acIssue = acViab.issues.find((i) =>
+  /academic\s+studying/i.test(i.anchor ?? ""),
+);
+ok(!!acIssue, "`academic + 动名词` anchor 应被命中");
+ok(
+  /academic\s+studies/i.test(acIssue?.replacement ?? ""),
+  "`academic studying` 应给出 academic studies 替换",
+);
+
+const enterWork = "Students need to enter work after graduation.";
+const ewViab = assessLocalViability(enterWork);
+const ewIssue = ewViab.issues.find((i) => /enter\s+work/i.test(i.anchor ?? ""));
+ok(!!ewIssue, "`enter + work` anchor 应被命中");
+ok(
+  /enter\s+the\s+workforce/i.test(ewIssue?.replacement ?? ""),
+  "`enter work` 应给出 enter the workforce 替换",
+);
+
+const realConclusionSentence =
+  "Students who want to enter work after graduation need to learn more work-related skills, while students who want to pursue further education have to focus on academic studying.";
+const realCViab = assessLocalViability(realConclusionSentence);
+ok(
+  realCViab.issues.length >= 2,
+  "用户给的 conclusion 句应至少触发 2 条 viability issue",
+);
+ok(
+  decideSentenceState({
+    meaningAligned: true,
+    structuralWorkable: true,
+    viability: realCViab,
+  }) === "refine_needed",
+  "用户给的 conclusion 句不应被判 stabilizable",
+);
+
+// === postProcessStage3Sentence: stabilizable / refine_needed 自动推进 ==
+const baseStateForBody1 = {
+  stage: 3,
+  subStep: "S3_2_MODULE",
+  s2: {
+    body1Point: "大学应教授实用技能，使毕业生能迅速找到工作",
+    body1Angle: "实习帮助适应职场",
+    body2Point: "学术深度",
+    body2Angle: "长期学习",
+  },
+  s3: {
+    currentBody: "body1",
+    modulePlan: { body1: ["claim"], body2: [], conclusion: [] },
+    moduleIndex: 0,
+    mode: "feedback",
+    pendingSentence: undefined,
+    confirmedSentences: {},
+  },
+  coachContext: {},
+};
+
+const cleanResult = {
+  verdict: "pass",
+  advance: false,
+  userVisibleText: "",
+  moduleComplete: false,
+};
+
+// 1) stabilizable：干净句 → mode=feedback，verdict=pass，sentenceState=stabilizable
+const stableProcessed = postProcessStage3Sentence(
+  baseStateForBody1,
+  { ...cleanResult },
+  "Universities should prioritize practical skills because this helps graduates adapt to workplace demands.",
+);
+ok(
+  stableProcessed.state.coachContext?.sentenceState === "stabilizable",
+  "stabilizable 路径正确标记 sentenceState",
+);
+ok(
+  stableProcessed.state.s3?.mode === "feedback",
+  "stabilizable 后 s3.mode 应为 feedback（auto-advance 前置）",
+);
+ok(
+  stableProcessed.result.verdict === "pass",
+  "stabilizable 出口 verdict=pass",
+);
+
+// 2) refine_needed：含表层瑕疵句 → mode=feedback，verdict=pass，sentenceState=refine_needed
+const refineProcessed = postProcessStage3Sentence(
+  baseStateForBody1,
+  { ...cleanResult },
+  "Universities should prioritize work related skills because students plan need clarity.",
+);
+ok(
+  refineProcessed.state.coachContext?.sentenceState === "refine_needed",
+  "refine_needed 路径正确标记 sentenceState",
+);
+ok(
+  refineProcessed.state.s3?.mode === "feedback",
+  "refine_needed 后 s3.mode 同样为 feedback（accept-with-correction）",
+);
+ok(
+  refineProcessed.result.verdict === "pass",
+  "refine_needed 出口 verdict=pass（不再阻塞）",
+);
+ok(
+  refineProcessed.state.coachContext?.openIssue === "accept-with-correction",
+  "refine_needed 路径标记 openIssue=accept-with-correction",
+);
+
+// 3) repair_needed：缺主语 → mode=coach，verdict=coach，仍然阻塞
+const repairProcessed = postProcessStage3Sentence(
+  baseStateForBody1,
+  { ...cleanResult },
+  "accumulate skills can improve employability quickly through internship.",
+);
+ok(
+  repairProcessed.state.coachContext?.sentenceState === "repair_needed",
+  "repair_needed 路径正确标记 sentenceState",
+);
+ok(
+  repairProcessed.state.s3?.mode === "coach",
+  "repair_needed 路径仍走 coach（阻塞重写）",
+);
+ok(
+  repairProcessed.result.verdict === "coach",
+  "repair_needed 出口 verdict=coach（保持阻塞）",
+);
+
+// === prose feedback 输出回归 ============================================
+const proseAcademic = formatViabilityProse(acIssue);
+ok(
+  /「academic studying」/.test(proseAcademic) &&
+    /「academic studies」/.test(proseAcademic),
+  "prose 反馈应同时含原句片段与替换建议",
+);
+ok(
+  !/【|】|主 Pattern|Keywords|修法/.test(proseAcademic),
+  "prose 反馈不再含标签字段",
+);
+
+const proseDangle = formatViabilityProse(
+  dangleViab.issues.find((i) => /vice\s+versa/i.test(i.anchor ?? "")),
+);
+ok(
+  /「.*vice\s+versa.*」/i.test(proseDangle),
+  "无替换建议时仍可指出原句片段",
 );
 
 if (fail) process.exit(1);

@@ -1,5 +1,8 @@
 import { jsonrepair } from "jsonrepair";
-import { isOutputContractText } from "@/lib/domain/output-contract";
+import {
+  isOutputContractText,
+  stripCompactSentinel,
+} from "@/lib/domain/output-contract";
 import type {
   LanguageSupport,
   LogicBreakdown,
@@ -116,7 +119,7 @@ function prependMirror(result: LlmTurnResult, coach: string): string {
 /** Stage 1：mirror + 单问，防重复拼接 */
 export function formatStage1CoachDisplay(result: LlmTurnResult): string {
   const uv = result.userVisibleText?.trim();
-  if (isOutputContractText(uv)) return uv;
+  if (isOutputContractText(uv)) return stripCompactSentinel(uv);
 
   const parts: string[] = [];
   const mirror = result.mirror?.trim();
@@ -147,7 +150,7 @@ export function formatStage1CoachDisplay(result: LlmTurnResult): string {
 /** Stage 2：口语反馈，链条不进聊天 */
 export function formatStage2CoachDisplay(result: LlmTurnResult): string {
   const uv = result.userVisibleText?.trim();
-  if (isOutputContractText(uv)) return uv;
+  if (isOutputContractText(uv)) return stripCompactSentinel(uv);
 
   const parts: string[] = [];
   const mirror = result.mirror?.trim();
@@ -179,7 +182,7 @@ export function formatStage2CoachDisplay(result: LlmTurnResult): string {
 export function formatStage3SentenceDisplay(result: LlmTurnResult): string {
   const parts: string[] = [];
   const uv = result.userVisibleText?.trim();
-  if (isOutputContractText(uv)) return uv;
+  if (isOutputContractText(uv)) return stripCompactSentinel(uv);
   if (uv) parts.push(uv);
 
   const mirror = result.mirror?.trim();

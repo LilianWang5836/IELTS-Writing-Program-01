@@ -13,7 +13,6 @@ export interface OutputContractInput {
 }
 
 const COMPACT_SENTINEL = "<!--stage3-compact-->";
-const DETAILS_HEADER = "【诊断详情】";
 
 export function isOutputContractText(text?: string): boolean {
   const t = text?.trim() ?? "";
@@ -26,6 +25,12 @@ export function isOutputContractText(text?: string): boolean {
     t.includes("【Suggested Revision】") &&
     t.includes("【Next Step】")
   );
+}
+
+/** 显示前去掉内部 marker（前端 markdown 不会过滤 HTML 注释，必须自己清）。 */
+export function stripCompactSentinel(text?: string): string {
+  if (!text) return "";
+  return text.replace(new RegExp(COMPACT_SENTINEL, "g"), "").trim();
 }
 
 export function buildOutputContract(input: OutputContractInput): string {
@@ -68,15 +73,8 @@ export interface Stage3CompactInput {
 }
 
 export function buildStage3CompactDisplay(input: Stage3CompactInput): string {
+  // 仅给用户展示「头部 + 主体」；六段合同保留在 contract 里供状态/调试使用，
+  // 不再进对话（避免重复 feedback）。
   const top = [input.headline.trim(), input.body?.trim()].filter(Boolean).join("\n\n");
-  const details = buildOutputContract(input.contract);
-  return [
-    COMPACT_SENTINEL,
-    top,
-    "---",
-    DETAILS_HEADER,
-    details,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  return [COMPACT_SENTINEL, top].filter(Boolean).join("\n");
 }

@@ -2,10 +2,10 @@
  * Stage 3 逐句写作：一次只修一个结构问题，反馈以中文修复问句为主。
  */
 import { normalizeBlueprint } from "./blueprint-from-s2";
-import { getCurrentModule } from "./module-compiler";
+import { getCurrentModule, moduleKey } from "./module-compiler";
 import { buildStage3CompactDisplay } from "./output-contract";
 import { sampleStage3Task } from "./stage3-task-sampler";
-import type { LlmTurnResult, SessionState } from "./types";
+import type { BodyKey, LlmTurnResult, SessionState } from "./types";
 
 export function getModuleDirection(state: SessionState): string {
   const s3 = state.s3;
@@ -69,7 +69,12 @@ export interface ViabilityIssue {
     | "semantic_plausibility"
     | "target_role";
   severity: number;
+  /** 抽象规则名（保留作日志/分类用）。 */
   note: string;
+  /** 用户原句里命中的具体片段，让反馈能指到位。 */
+  anchor?: string;
+  /** 建议替换写法（给用户可粘贴的修法）。 */
+  replacement?: string;
 }
 
 export interface LocalViabilityResult {
@@ -84,7 +89,7 @@ export type SentenceTrainingState =
   | "refine_needed"
   | "stabilizable";
 
-export type Stage3SentenceIntent = "content" | "meta";
+export type Stage3SentenceIntent = "content" | "meta" | "scaffold";
 type DetectableProblemKind = Exclude<
   SentenceProblemKind,
   "none" | "unclear_wording" | "meaning_gap"
@@ -332,13 +337,107 @@ function detectMissingSubject(s: string): boolean {
 export function detectStage3SentenceIntent(message: string): Stage3SentenceIntent {
   const m = message.trim();
   if (!m) return "content";
+  const scaffoldRe =
+    /(给(个|一个|点|我个)?\s*(提示|句型|开头|starter|帮助)|提示一下|不会写|怎么写|不知道(怎么|如何)|无从下手|没思路|来个(提示|句型|开头)|句型怎么|hint|scaffold)/i;
   const metaRe =
     /(我觉得|我认为|不一定|能不能|可不可以|是不是|对吗|为什么|语法|主语|谓语|动名词|从句|搭配|这个表达|这样写|这句行吗|grammar|subject|predicate|gerund|clause)/i;
   const contentRe =
     /\b(for instance|for example|because|which|therefore|students?|graduates?|companies?|workplace|internships?|projects?)\b/i;
+  if (scaffoldRe.test(m) && !contentRe.test(m)) return "scaffold";
   if (metaRe.test(m) && !contentRe.test(m)) return "meta";
   if (metaRe.test(m) && /[？?]/.test(m)) return "meta";
   return "content";
+}
+
+/** 取当前段内已写入的最后一条句子（按 modulePlan 顺序回溯）。 */
+function getLastWrittenSentenceInBody(
+  state: SessionState,
+  body: BodyKey,
+): { sentence: string; module: string } | null {
+  const s3 = state.s3;
+  if (!s3) return null;
+  const plan = s3.modulePlan?.[body] ?? [];
+  for (let i = Math.min(s3.moduleIndex - 1, plan.length - 1); i >= 0; i--) {
+    const mod = plan[i];
+    if (!mod) continue;
+    const list = s3.confirmedSentences?.[moduleKey(body, mod)];
+    if (list && list.length > 0) {
+      return { sentence: list[list.length - 1] ?? "", module: mod };
+    }
+  }
+  return null;
+}
+
+/** 是否任何 body 已经写入过句子。 */
+function hasAnyWrittenAcross(state: SessionState, bodies: BodyKey[]): boolean {
+  const s3 = state.s3;
+  if (!s3) return false;
+  return bodies.some((b) => {
+    const plan = s3.modulePlan?.[b] ?? [];
+    return plan.some((m) => (s3.confirmedSentences?.[moduleKey(b, m)] ?? []).length > 0);
+  });
+}
+
+/**
+ * Assign 上下文前缀：
+ * - 跨段（刚进入 body2 / conclusion）：明示「现在进入 Body 2 / Conclusion」+ 该段论点。
+ * - 同段内承接：「继续这一段，...」（不复述上一句，避免冗长）。
+ * - 段首且无前序：返回空。
+ */
+export function buildAssignContextPrefix(state: SessionState): string {
+  const s3 = state.s3;
+  const s2 = state.s2;
+  if (!s3 || !s2) return "";
+  const body = s3.currentBody;
+  const justEntered = s3.moduleIndex === 0;
+
+  if (justEntered) {
+    if (body === "body2" && hasAnyWrittenAcross(state, ["body1"])) {
+      const point = s2.body2Point?.trim();
+      return point
+        ? `现在进入 Body 2（按蓝图：${point}）。`
+        : "现在进入 Body 2，按蓝图给出反方/补充论点。";
+    }
+    if (body === "conclusion" && hasAnyWrittenAcross(state, ["body1", "body2"])) {
+      return "现在进入 Conclusion，把 Body 1 与 Body 2 的核心收束起来。";
+    }
+    return "";
+  }
+
+  // 同段内非首句：是否有上一句可承接
+  const prev = getLastWrittenSentenceInBody(state, body);
+  if (prev) {
+    return `继续这一段，承接上一句的 ${MODULE_LABEL_ZH[prev.module] ?? "上一步"}。`;
+  }
+  return "";
+}
+
+/**
+ * 为当前模块生成 on-demand 句型提示（prose 形式）。
+ * 默认不主动推；只有当用户输入命中 scaffold intent 才调用。
+ */
+export function buildScaffoldResponse(state: SessionState): string {
+  const sampledTask = sampleStage3Task(state);
+  const mod = sampledTask?.taskType ?? null;
+  const moduleDir = getModuleDirection(state);
+  const moduleLabel = MODULE_LABEL_ZH[mod ?? ""] ?? "本句";
+  const patterns = inferPatternByModule(mod);
+  const starter = patterns[0] ?? "Subject + Verb + Result";
+  const altStarter = patterns[1];
+
+  const lines: string[] = [];
+  lines.push(`好的，试试这个开头：${starter}`);
+  if (altStarter && altStarter !== starter) {
+    lines.push(`或者：${altStarter}`);
+  }
+  if (moduleDir) {
+    lines.push(
+      `把后半部分接上「${moduleDir}」的具体内容，一次只写一句。`,
+    );
+  } else {
+    lines.push(`把这一句围绕${moduleLabel}的核心信息接完整。`);
+  }
+  return lines.join("\n");
 }
 
 function detectMissingVerb(s: string): boolean {
@@ -500,57 +599,147 @@ type ViabilityRule = {
   re: RegExp;
   kind: ViabilityIssue["kind"];
   severity: number;
+  /** 规则简称，作日志/分类。 */
   note: string;
+  /**
+   * 把正则匹配转为「具体替换写法」。
+   * 没法精确给替换时返回 undefined，让反馈层走通用建议。
+   */
+  buildReplacement?: (match: RegExpMatchArray) => string | undefined;
 };
 
 const VIABILITY_RULES: ViabilityRule[] = [
-  // 既有的搭配/语义可疑表达
-  { re: /\bsustainable\s+studying\b/i, kind: "collocation", severity: 0.32, note: "`sustainable studying` 搭配不自然" },
-  { re: /\bknowledge\s+chances\b/i, kind: "semantic_plausibility", severity: 0.32, note: "`knowledge chances` 语义不自然" },
-  { re: /\bacademic\s+students\b/i, kind: "target_role", severity: 0.32, note: "`academic students` 指称不自然" },
-  { re: /\baccumulate\s+chances\b/i, kind: "semantic_plausibility", severity: 0.32, note: "`accumulate chances` 语义不成立" },
-  // P2 表层错误：缺所有格 's
+  {
+    re: /\bsustainable\s+studying\b/i,
+    kind: "collocation",
+    severity: 0.32,
+    note: "`sustainable studying` 搭配不自然",
+    buildReplacement: () => "long-term study",
+  },
+  {
+    re: /\bknowledge\s+chances\b/i,
+    kind: "semantic_plausibility",
+    severity: 0.32,
+    note: "`knowledge chances` 语义不自然",
+    buildReplacement: () => "opportunities to gain knowledge",
+  },
+  {
+    re: /\bacademic\s+students\b/i,
+    kind: "target_role",
+    severity: 0.32,
+    note: "`academic students` 指称不自然",
+    buildReplacement: () => "students in academic tracks",
+  },
+  {
+    re: /\baccumulate\s+chances\b/i,
+    kind: "semantic_plausibility",
+    severity: 0.32,
+    note: "`accumulate chances` 语义不成立",
+    buildReplacement: () => "build up opportunities",
+  },
+  // P2: 复数群体 + 名词，缺所有格
   {
     re: /\b(students?|graduates?|teachers?|workers?|companies|firms?|universities|schools?|employers?)\s+(plan|plans|skill|skills|career|careers?|future|futures?|needs?|interests?|opinions?|life|lives|salary|salaries|preferences?|choices?|goals?|expectations?)\b/i,
     kind: "phrase_naturalness",
     severity: 0.28,
-    note: "复数群体 + 名词的所有关系建议加 ’s 或重写：例如 `students' plan` 或 `the plan of students`",
+    note: "群体名词 + 名词缺所有格",
+    buildReplacement: (m) => {
+      const owner = m[1];
+      const obj = m[2];
+      if (!owner || !obj) return undefined;
+      const owners = owner.toLowerCase();
+      const apostrophe = owners.endsWith("s") ? `${owner}'` : `${owner}'s`;
+      return `${apostrophe} ${obj}`;
+    },
   },
-  // P2 表层错误：复合修饰词缺连字符
+  // P2: 复合修饰词缺连字符
   {
     re: /\b(work|long|short|high|low|self|world|family|home|full|part)\s+(related|term|level|made|aware|spread|wide|driven|oriented|based|focused|time)\s+([a-z]+)\b/i,
     kind: "phrase_naturalness",
     severity: 0.24,
-    note: "做修饰语的复合词建议加连字符：例如 `work-related skills`、`long-term goals`",
+    note: "复合修饰词缺连字符",
+    buildReplacement: (m) => {
+      if (!m[1] || !m[2] || !m[3]) return undefined;
+      return `${m[1]}-${m[2]} ${m[3]}`;
+    },
   },
-  // P2 表层错误：vice versa / and so on / etc 单独悬挂
+  // P2: vice versa / and so on / etc 单独悬挂
   {
     re: /,\s*(vice\s+versa|and\s+so\s+on|etc\.?)\s*\.?\s*$/i,
     kind: "phrase_naturalness",
     severity: 0.34,
-    note: "`vice versa / and so on / etc.` 不能单独承接，需要在前面给出可对应/可类推的并列结构",
+    note: "`vice versa / and so on / etc.` 单独悬挂",
+    // 没法机械替换，留给反馈层给"补完整对应结构"的引导。
+  },
+  // P3: academic / further + 动名词，偏不自然
+  {
+    re: /\b(academic|graduate|undergraduate|postgraduate|further)\s+(studying|learning|reading|teaching|researching)\b/i,
+    kind: "collocation",
+    severity: 0.22,
+    note: "academic 类形容词后接动名词偏不自然",
+    buildReplacement: (m) => {
+      if (!m[1]) return undefined;
+      // studying -> studies; learning -> studies/learning; researching -> research
+      const targetMap: Record<string, string> = {
+        studying: "studies",
+        learning: "studies",
+        reading: "reading materials",
+        teaching: "teaching",
+        researching: "research",
+      };
+      const tail = targetMap[m[2]?.toLowerCase() ?? ""] ?? "studies";
+      return `${m[1].toLowerCase()} ${tail}`;
+    },
+  },
+  // P3: enter / find + work / workforce / business 缺冠词
+  {
+    re: /\b(enter|find|seek|reach)\s+(work|workforce|business|career|profession)\b(?!\s*-?\s*(experience|culture|environment|life|skills?))/i,
+    kind: "collocation",
+    severity: 0.22,
+    note: "进入职场需要补冠词或更换表达",
+    buildReplacement: (m) => {
+      const verb = m[1]?.toLowerCase();
+      const noun = m[2]?.toLowerCase();
+      if (!verb || !noun) return undefined;
+      if (noun === "work") return "enter the workforce";
+      if (noun === "workforce") return `${verb} the workforce`;
+      return `${verb} the ${noun}`;
+    },
   },
 ];
+
+function pickAnchor(match: RegExpMatchArray): string | undefined {
+  const m = match[0]?.trim();
+  return m && m.length > 0 ? m : undefined;
+}
 
 export function assessLocalViability(sentence: string): LocalViabilityResult {
   const s = sentence.trim();
   const issues: ViabilityIssue[] = [];
   const seen = new Set<string>();
   for (const rule of VIABILITY_RULES) {
-    if (!rule.re.test(s)) continue;
+    const match = s.match(rule.re);
+    if (!match) continue;
     if (seen.has(rule.note)) continue;
     seen.add(rule.note);
-    issues.push({ kind: rule.kind, severity: rule.severity, note: rule.note });
+    issues.push({
+      kind: rule.kind,
+      severity: rule.severity,
+      note: rule.note,
+      anchor: pickAnchor(match),
+      replacement: rule.buildReplacement?.(match),
+    });
   }
   if (
     /\b(chance|chances)\b/i.test(s) &&
     /\b(knowledge|study|studying)\b/i.test(s) &&
-    !issues.some((i) => /knowledge chances/i.test(i.note))
+    !issues.some((i) => /chance/i.test(i.note))
   ) {
     issues.push({
       kind: "phrase_naturalness",
       severity: 0.26,
-      note: "知识相关表达与 `chances` 组合不自然",
+      note: "knowledge / study 相关表达与 `chances` 组合不自然",
+      replacement: "opportunities to learn / gain knowledge",
     });
   }
   const penalty = Math.min(
@@ -572,6 +761,22 @@ function formatViabilityFeedback(v: LocalViabilityResult): string {
     `问题说明：${top.note}`,
     `先只改这一处表达，再提交。`,
   ].join("\n\n");
+}
+
+/** Prose-form：直接告诉用户"原句片段哪里不对、改成什么"，无标签。 */
+export function formatViabilityProse(issue: ViabilityIssue): string {
+  const anchor = issue.anchor?.trim();
+  const replacement = issue.replacement?.trim();
+  if (anchor && replacement) {
+    return `这里「${anchor}」不太自然，改成「${replacement}」会更地道。`;
+  }
+  if (anchor) {
+    return `这里「${anchor}」表达上需要打磨：${issue.note}。`;
+  }
+  if (replacement) {
+    return `这一处可以改成「${replacement}」，会更自然。`;
+  }
+  return `这一处表达需要打磨：${issue.note}。`;
 }
 
 function inferPatternByModule(module: string | null): string[] {
@@ -1046,7 +1251,7 @@ export function formatSentenceCoachFeedback(
   opts?: { pass?: boolean },
 ): string {
   if (opts?.pass || diagnosis.pass) {
-    return "这句结构已经清楚，可以写入。请点击「确认写入」进入下一句。";
+    return "这句结构已经清楚，已写入。";
   }
 
   const snippet = locateProblemSnippet(sentence ?? "", diagnosis);
@@ -1296,20 +1501,17 @@ export function postProcessStage3Sentence(
       phraseFragments: ["This is because...", "..., which helps..."],
       starterStructures: [],
     };
-    const patterns =
-      ls.phraseFragments?.length ? ls.phraseFragments.slice(0, 2) : inferPatternByModule(mod);
-    const keywords = ls.keywords?.slice(0, 5) ?? [];
-    const headline = `【当前任务】${moduleLabel}`;
-    const bodyLines = [
-      moduleDir ? `【翻译目标】\n${moduleDir}` : "",
-      patterns.length ? `【主 Pattern】\n- ${patterns.join("\n- ")}` : "",
-      keywords.length ? `【Keywords】${keywords.join("、")}` : "",
-      "提示：一次只写一句英文。",
-    ].filter(Boolean);
+    // 默认 prose：「[上下文前缀] 现在请写：模块 + 翻译目标」。
+    // Pattern/Keywords 改为 on-demand：用户主动问"给个句型/提示一下"才推。
+    const ctxPrefix = buildAssignContextPrefix(state);
+    const taskLine = moduleDir
+      ? `现在请写${moduleLabel}：${moduleDir}`
+      : `现在请写${moduleLabel}。`;
+    const headline = ctxPrefix ? `${ctxPrefix} ${taskLine}` : taskLine;
     const body =
       orchestrator?.mode === "soft"
-        ? prependHint(layerHint, bodyLines.join("\n\n"))
-        : bodyLines.join("\n\n");
+        ? prependHint(layerHint, "一次只写一句英文。需要句型提示就直接说「给个提示」。")
+        : "一次只写一句英文。需要句型提示就直接说「给个提示」。";
     const userVisibleText = buildStage3CompactDisplay({
       mode: "assign",
       headline,
@@ -1521,25 +1723,11 @@ export function postProcessStage3Sentence(
       formatSentenceCoachFeedback(meaningDiagnosis, sentence),
       meaningLifecycle,
     );
-    const meaningHeadline = `需要先补齐：${missingLabels}`;
-    const meaningPatterns = meaningDiagnosis.phraseFragments?.length
-      ? meaningDiagnosis.phraseFragments.slice(0, 2)
-      : inferPatternByModule(mod);
-    const meaningBodyLines = [
-      meaningDiagnosis.repairQuestionZh
-        ? `修法：${meaningDiagnosis.repairQuestionZh}`
-        : "",
-      meaningPatterns.length
-        ? `主 Pattern：${meaningPatterns.join(" / ")}`
-        : "",
-      meaningDiagnosis.keywords?.length
-        ? `Keywords：${meaningDiagnosis.keywords.slice(0, 5).join("、")}`
-        : "",
-    ].filter(Boolean);
+    const meaningHeadline = `这一句还没把这层意思说清——缺：${missingLabels}。${meaningDiagnosis.repairQuestionZh ?? ""}`.trim();
     const meaningBody =
       orchestrator?.mode === "soft"
-        ? prependHint(layerHint, meaningBodyLines.join("\n"))
-        : meaningBodyLines.join("\n");
+        ? prependHint(layerHint, "把缺的部分补上，再发一版给我。")
+        : "把缺的部分补上，再发一版给我。";
     next = {
       ...next,
       verdict: "coach",
@@ -1620,7 +1808,7 @@ export function postProcessStage3Sentence(
   );
 
   if (sentenceState === "stabilizable") {
-    const headline = "这句没问题，可以写入。请点击「确认写入」进入下一句。";
+    const headline = "这句没问题，已写入。";
     next = {
       ...next,
       verdict: "pass",
@@ -1636,7 +1824,7 @@ export function postProcessStage3Sentence(
           paragraphReason: "句子功能与当前模块匹配",
           feedback: headline,
           suggestedRevision: "—",
-          nextStep: "点击确认写入，进入下一句。",
+          nextStep: "已写入，自动进入下一句。",
           orchestrator,
         },
       }),
@@ -1666,18 +1854,8 @@ export function postProcessStage3Sentence(
   if (sentenceState === "workable" || sentenceState === "refine_needed") {
     const top = viability.issues[0];
     const headline = top
-      ? `需要先修一处：${top.note}`
-      : "需要再打磨一处：表达自然度不足，先微调再提交。";
-    const patterns = inferPatternByModule(mod);
-    const dedupPattern = patterns.slice(0, 2).join(" / ");
-    const bodyLines = [
-      `修法：保留原意，只改这一处后再提交。`,
-      dedupPattern ? `主 Pattern：${dedupPattern}` : "",
-    ].filter(Boolean);
-    const body =
-      orchestrator?.mode === "soft"
-        ? prependHint(layerHint, bodyLines.join("\n"))
-        : bodyLines.join("\n");
+      ? formatViabilityProse(top)
+      : "这一处表达可以再自然一点，微调后再发一版。";
     const detailFeedback = [
       executionCard,
       sentenceState === "workable"
@@ -1687,6 +1865,64 @@ export function postProcessStage3Sentence(
     ]
       .filter(Boolean)
       .join("\n\n");
+
+    // refine_needed = accept-with-correction：原句已可写入，coach 同条消息指出小修。
+    // workable = 仍在 refine，置信度不足，让用户再发一版。
+    if (sentenceState === "refine_needed") {
+      const acceptBody =
+        orchestrator?.mode === "soft"
+          ? prependHint(layerHint, "（已写入这一句；下面给一处建议，写下一句时可以注意。）")
+          : "（已写入这一句；下面给一处建议，写下一句时可以注意。）";
+      next = {
+        ...next,
+        verdict: "pass",
+        advance: false,
+        userVisibleText: buildStage3CompactDisplay({
+          mode: "stabilizable",
+          headline,
+          body: acceptBody,
+          contract: {
+            module: mod ?? null,
+            meaningOk: true,
+            meaningReason: "核心含义可理解，结构已成立",
+            paragraphFit: true,
+            paragraphReason: "当前句仍在本模块范围内",
+            feedback: detailFeedback,
+            suggestedRevision: "保留原意，下次写时注意这一处。",
+            nextStep: "已写入，自动进入下一句。",
+            orchestrator,
+          },
+        }),
+        mirror: headline,
+        coachQuestion: undefined,
+        moduleComplete: next.moduleComplete ?? true,
+        syntaxHint: undefined,
+      };
+      return {
+        result: next,
+        state: {
+          ...nextState,
+          s3: { ...s3, mode: "feedback", pendingSentence: sentence },
+          coachContext: {
+            ...nextState.coachContext,
+            sentenceIssue: {
+              ...lifecycle,
+              status: "active",
+              confidenceDelta: viability.score - 0.75,
+            },
+            sentenceIssues: issues,
+            sentenceState: "refine_needed",
+            openIssue: "accept-with-correction",
+          },
+        },
+      };
+    }
+
+    // workable：阻塞重写（让用户再发一版），不自动 commit。
+    const body =
+      orchestrator?.mode === "soft"
+        ? prependHint(layerHint, "保留原意，再微调一版给我。")
+        : "保留原意，再微调一版给我。";
     next = {
       ...next,
       verdict: "coach",
@@ -1702,14 +1938,8 @@ export function postProcessStage3Sentence(
           paragraphFit: true,
           paragraphReason: "当前句仍在本模块范围内",
           feedback: detailFeedback,
-          suggestedRevision:
-            sentenceState === "workable"
-              ? "保持原意，微调表达后再提交。"
-              : "先修正这一处不自然搭配，再提交。",
-          nextStep:
-            sentenceState === "workable"
-              ? "继续 refinement，达到 stabilizable 后即可确认写入。"
-              : "保持原意，修正该片段后再发一版。",
+          suggestedRevision: "保持原意，微调表达后再提交。",
+          nextStep: "继续 refinement，达到 stabilizable 后会自动写入。",
           orchestrator,
         },
       }),
@@ -1729,30 +1959,24 @@ export function postProcessStage3Sentence(
           openIssue: "表达可用性",
           sentenceIssue: {
             ...lifecycle,
-            status: sentenceState === "refine_needed" ? "active" : "improving",
+            status: "improving",
             confidenceDelta: viability.score - 0.75,
           },
           sentenceIssues: issues,
-          sentenceState,
+          sentenceState: "workable",
         },
       },
     };
   }
 
-  const repairHeadline = `需要先修：${diagnosis.labelZh}`;
-  const repairBodyLines = [
-    diagnosis.repairQuestionZh ? `修法：${diagnosis.repairQuestionZh}` : "",
-    diagnosis.phraseFragments?.length
-      ? `主 Pattern：${diagnosis.phraseFragments.slice(0, 2).join(" / ")}`
-      : "",
-    diagnosis.keywords?.length
-      ? `Keywords：${diagnosis.keywords.slice(0, 5).join("、")}`
-      : "",
-  ].filter(Boolean);
+  const repairSnippet = locateProblemSnippet(sentence, diagnosis).trim();
+  const repairHeadline = repairSnippet
+    ? `这里「${repairSnippet}」${diagnosis.labelZh}。${diagnosis.repairQuestionZh ?? ""}`.trim()
+    : `${diagnosis.labelZh}：${diagnosis.repairQuestionZh ?? "先修这一处再发一版。"}`;
   const repairBody =
     orchestrator?.mode === "soft"
-      ? prependHint(layerHint, repairBodyLines.join("\n"))
-      : repairBodyLines.join("\n");
+      ? prependHint(layerHint, "保留原意，只改这一处后再发给我。")
+      : "保留原意，只改这一处后再发给我。";
   next = {
     ...next,
     verdict: "coach",

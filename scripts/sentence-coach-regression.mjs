@@ -85,6 +85,55 @@ ok(
   "example 局部功能成立时应通过（不强求同句含 internship/job result）",
 );
 
+// === C++ example 句：不传 module 参数，从 state 解析 ====================
+const body1ExampleState = {
+  stage: 3,
+  subStep: "S3_2_MODULE",
+  s2: {
+    body1Point: "对于就业导向的学生，大学应帮助其积累实践技能以获得求职竞争优势",
+    body1Angle: "实习帮助适应职场",
+    body2Point: "P2",
+    body2Angle: "A2",
+  },
+  s3: {
+    currentBody: "body1",
+    modulePlan: { body1: ["claim", "reason", "example"], body2: [], conclusion: [] },
+    moduleIndex: 2,
+    mode: "feedback",
+    pendingSentence: undefined,
+    confirmedSentences: {},
+  },
+  coachContext: {},
+};
+const cppExample =
+  "for example, students learn c++ at school while companies rarely use it these days, instead, they use more suitable business model language";
+const mCpp = assessMeaningAlignment(body1ExampleState, cppExample);
+ok(mCpp.aligned, "C++ example 句不传 module 也应通过（从 state 解析 example）");
+ok(
+  !mCpp.missing.includes("job") && !mCpp.missing.includes("practice"),
+  "C++ example 句不应被误判缺 job/practice",
+);
+const cppProcessed = postProcessStage3Sentence(
+  body1ExampleState,
+  { verdict: "pass", advance: false, userVisibleText: "", moduleComplete: false },
+  cppExample,
+);
+ok(
+  cppProcessed.state.coachContext?.sentenceState !== "repair_needed",
+  "C++ example 句 postProcess 不应走 meaning_gap repair_needed",
+);
+ok(
+  ["refine_needed", "stabilizable", "workable"].includes(
+    cppProcessed.state.coachContext?.sentenceState ?? "",
+  ),
+  "C++ example 句应进入 refine_needed / stabilizable / workable，而非 meaning 拦截",
+);
+const bizViab = assessLocalViability(cppExample);
+ok(
+  bizViab.issues.some((i) => /business model language/i.test(i.anchor ?? "")),
+  "`business model language` anchor 应被命中",
+);
+
 const good =
   "Universities should prioritize practical skills because this helps graduates adapt to workplace demands.";
 const d4 = diagnoseSentence(good, "claim");
@@ -498,6 +547,10 @@ ok(
 ok(
   detectStage3SentenceIntent("给个提示") === "scaffold",
   "「给个提示」应被识别为 scaffold intent",
+);
+ok(
+  detectStage3SentenceIntent("提示") === "scaffold",
+  "单独「提示」应被识别为 scaffold",
 );
 ok(
   detectStage3SentenceIntent("不会写") === "scaffold",

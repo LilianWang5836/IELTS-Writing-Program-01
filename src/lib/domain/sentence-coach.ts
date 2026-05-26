@@ -4,7 +4,7 @@
 import { normalizeBlueprint } from "./blueprint-from-s2";
 import { getCurrentModule, moduleKey } from "./module-compiler";
 import { buildStage3CompactDisplay } from "./output-contract";
-import { sampleStage3Task } from "./stage3-task-sampler";
+import { resolveStage3Module } from "./stage3-task-sampler";
 import type { BodyKey, LlmTurnResult, SessionState } from "./types";
 
 export function getModuleDirection(state: SessionState): string {
@@ -162,11 +162,13 @@ function hasCauseOrContrast(sentence: string): boolean {
 export function assessMeaningAlignment(
   state: SessionState,
   sentence: string,
-  module?: string,
+  module?: string | null,
 ): MeaningAlignmentResult {
   const s3 = state.s3;
   const body = s3?.currentBody;
   const s2 = state.s2;
+  // 未显式传入 module 时，从 state 解析，避免掉进 Body 级 fallback。
+  const mod = module ?? resolveStage3Module(state) ?? undefined;
   if (!s2 || !body) {
     return { aligned: true, missing: [], requiredConcepts: [] };
   }
@@ -199,7 +201,7 @@ export function assessMeaningAlignment(
   const hasConnector = hasCauseOrContrast(sentence);
 
   // Sentence-level local function checks (not full-body completion).
-  if (module === "example") {
+  if (mod === "example") {
     // Example: any concrete actor + outline-aligned object + relevance,
     // not necessarily school/workplace.
     const hasExampleMarker =
@@ -235,7 +237,7 @@ export function assessMeaningAlignment(
     };
   }
 
-  if (module === "reason") {
+  if (mod === "reason") {
     // Reason: cause-effect/contrast path + relevant object.
     const hasReasonObject = required.some((c) => hasConcept(c));
     if (!hasReasonObject) missing.push("core_object");
@@ -247,7 +249,7 @@ export function assessMeaningAlignment(
     };
   }
 
-  if (module === "claim" || module === "conclusion_restate") {
+  if (mod === "claim" || mod === "conclusion_restate") {
     const hasStanceVerb = /\b(should|must|need\s+to|ought\s+to|have\s+to)\b/i.test(sentence);
     const hasTargetRole = /\b(universities?|university|schools?|students?|governments?|institutions?)\b/i.test(
       sentence,
@@ -263,7 +265,7 @@ export function assessMeaningAlignment(
     };
   }
 
-  if (module === "conclusion_summary") {
+  if (mod === "conclusion_summary") {
     // summary 的局部功能：连接 body1 与 body2，要么概念两侧都触达，要么使用对比/并列连接词。
     const hasLinkConnector =
       /\b(although|while|whereas|in\s+contrast|on\s+the\s+other\s+hand|at\s+the\s+same\s+time|both|either|together|combined|balance|trade-off|trade\s+off|complement)\b/i.test(
@@ -291,7 +293,7 @@ export function assessMeaningAlignment(
     }
   }
 
-  if (moduleNeedsConnector(module) && !hasConnector) {
+  if (moduleNeedsConnector(mod) && !hasConnector) {
     missing.push("logic_link");
   }
 
@@ -455,8 +457,7 @@ export function buildAssignContextPrefix(state: SessionState): string {
  * 默认不主动推；只有当用户输入命中 scaffold intent 才调用。
  */
 export function buildScaffoldResponse(state: SessionState): string {
-  const sampledTask = sampleStage3Task(state);
-  const mod = sampledTask?.taskType ?? null;
+  const mod = resolveStage3Module(state);
   const moduleDir = getModuleDirection(state);
   const moduleLabel = MODULE_LABEL_ZH[mod ?? ""] ?? "本句";
   const patterns = inferPatternByModule(mod);
@@ -743,6 +744,14 @@ const VIABILITY_RULES: ViabilityRule[] = [
       if (noun === "workforce") return `${verb} the workforce`;
       return `${verb} the ${noun}`;
     },
+  },
+  // P2: business model language（应为 tailored programming languages 等）
+  {
+    re: /\bbusiness\s+model\s+language\b/i,
+    kind: "collocation",
+    severity: 0.28,
+    note: "`business model language` 搭配不自然",
+    buildReplacement: () => "programming languages tailored to their business models",
   },
   // P2: competition advantage（应为 competitive advantage）
   {
@@ -1536,14 +1545,14 @@ export function postProcessStage3Sentence(
   userMessage?: string,
   viabilityOverride?: LocalViabilityResult,
   structuralWorkableOverride?: boolean,
+  meaningAlignedOverride?: boolean,
 ): { result: LlmTurnResult; state: SessionState } {
   const s3 = state.s3;
   if (!s3 || state.subStep !== "S3_2_MODULE") {
     return { result, state };
   }
 
-  const sampledTask = sampleStage3Task(state);
-  const mod = sampledTask?.taskType ?? null;
+  const mod = resolveStage3Module(state);
   const orchestrator = s3.orchestrator;
   const layerHint = getOrchestratorLayerHint(state);
 
@@ -1721,7 +1730,7 @@ export function postProcessStage3Sentence(
   }
 
   const meaning = assessMeaningAlignment(state, sentence, mod ?? undefined);
-  if (!meaning.aligned) {
+  if (!meaning.aligned && !meaningAlignedOverride) {
     const missingLabels = meaning.missing
       .map((m) =>
         m === "job"

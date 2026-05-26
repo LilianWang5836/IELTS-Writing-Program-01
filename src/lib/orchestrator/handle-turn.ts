@@ -1,6 +1,6 @@
 import { STAGE1_OPENING, MODULE_LABELS } from "@/lib/domain/constants";
 import { applyHandoffToState, validateHandoff } from "@/lib/domain/handoff";
-import { sampleStage3Task } from "@/lib/domain/stage3-task-sampler";
+import { sampleStage3Task, resolveStage3Module } from "@/lib/domain/stage3-task-sampler";
 import { buildRuleHintsBlock, ruleHintsForHandoff } from "@/lib/domain/rule-hints";
 import { resolvePromptModule, stageLabel } from "@/lib/domain/router";
 import { normalizeBlueprint } from "@/lib/domain/blueprint-from-s2";
@@ -48,6 +48,7 @@ import {
   buildScaffoldResponse,
   detectStage3SentenceIntent,
   diagnoseSentence,
+  getModuleDirection,
   looksStructurallyWorkable,
   type LocalViabilityResult,
   postProcessStage3Sentence,
@@ -202,6 +203,37 @@ function normalizeViabilityFromLlm(raw: unknown): LocalViabilityResult | null {
 }
 
 /**
+ * 当规则判定 meaning 未对齐时，用 LLM 二次确认局部功能是否成立。
+ * 防止把 Body 级概念 checklist 误套到单句（如 Example 不要求同句含 internship）。
+ */
+async function confirmMeaningWithLlm(
+  sentence: string,
+  module: string,
+  moduleDirection: string,
+): Promise<boolean> {
+  const prompt = [
+    "You evaluate whether an English sentence fulfills its LOCAL discourse role in IELTS writing coaching.",
+    `Current role: ${module}`,
+    moduleDirection
+      ? `Target meaning for this sentence: ${moduleDirection}`
+      : "Use the role's typical local function.",
+    "Rules:",
+    "- Only check whether THIS sentence completes its local role (not the whole paragraph).",
+    "- For 'example': a concrete contrast or instance supporting the prior reason is enough; do NOT require job/internship keywords if the example already shows textbook vs workplace mismatch.",
+    "- For 'reason': a causal or contrast link explaining why is enough.",
+    'Return JSON only: {"aligned": true|false, "reason": "one sentence"}',
+    `Sentence: ${sentence}`,
+  ].join("\n");
+
+  try {
+    const raw = await callLlmJson<{ aligned?: unknown }>(prompt);
+    return raw?.aligned === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 当规则判定句子结构不可用时，用 LLM 二次确认。
  * 返回 true 表示 LLM 认为句子有完整的主谓结构（规则误判），可覆盖规则结论。
  * 返回 false / null 时保留规则结论。
@@ -342,11 +374,11 @@ function buildVars(
       base.body_sentences = integrateBodySentences(state, body);
     }
     if (state.subStep === "S3_2_MODULE" && userMessage?.trim()) {
-      const sentenceTask = sampledTask?.taskType ?? null;
+      const sentenceTask = resolveStage3Module(state) ?? undefined;
       const meaning = assessMeaningAlignment(
         state,
         userMessage,
-        sentenceTask ?? undefined,
+        sentenceTask,
       );
       const diagnosis = diagnoseSentence(userMessage, sentenceTask ?? undefined);
       base.sentence_diagnosis = JSON.stringify({
@@ -429,21 +461,31 @@ async function processLlmTurn(
 
   if (prevSubStep === "S3_2_MODULE") {
     let viabilityOverride: LocalViabilityResult | undefined;
+    let meaningAlignedOverride: boolean | undefined;
     const sentenceInput =
       userMessage?.trim() ?? nextState.s3?.pendingSentence?.trim() ?? "";
-    const sampledTask = sampleStage3Task(nextState);
-    const sentenceTask = sampledTask?.taskType ?? undefined;
+    const sentenceTask = resolveStage3Module(nextState) ?? undefined;
     let structuralOverride: boolean | undefined;
     if (sentenceInput) {
       const meaning = assessMeaningAlignment(nextState, sentenceInput, sentenceTask);
+      if (!meaning.aligned && sentenceTask) {
+        const moduleDir = getModuleDirection(nextState);
+        const llmMeaningOk = await confirmMeaningWithLlm(
+          sentenceInput,
+          sentenceTask,
+          moduleDir,
+        );
+        if (llmMeaningOk) meaningAlignedOverride = true;
+      }
+      const effectiveMeaning = meaning.aligned || !!meaningAlignedOverride;
       const structuralWorkable = looksStructurallyWorkable(sentenceInput);
-      if (meaning.aligned && !structuralWorkable) {
+      if (effectiveMeaning && !structuralWorkable) {
         // 规则判定结构不可用时，LLM 二次确认，防止误判。
         const llmConfirm = await confirmStructuralWithLlm(sentenceInput);
         if (llmConfirm) structuralOverride = true;
       }
       const effectiveStructural = structuralOverride ?? structuralWorkable;
-      if (meaning.aligned && effectiveStructural) {
+      if (effectiveMeaning && effectiveStructural) {
         const local = assessLocalViability(sentenceInput);
         if (!(local.score >= 0.75 && local.confidence >= 0.8)) {
           const llmReviewed = await reviewViabilityWithLlm(sentenceInput);
@@ -457,6 +499,7 @@ async function processLlmTurn(
       userMessage,
       viabilityOverride,
       structuralOverride,
+      meaningAlignedOverride,
     );
     result = processed.result;
     nextState = processed.state;

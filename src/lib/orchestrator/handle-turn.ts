@@ -292,6 +292,36 @@ function normalizeViabilityFromLlm(raw: unknown): LocalViabilityResult | null {
 }
 
 /**
+ * Stage 3 LLM 调试日志：把 prompt / raw / parsed 三段都打到服务端控制台。
+ * 设环境变量 STAGE3_DEBUG_LLM=1 开启。
+ *
+ * 本地 dev:    STAGE3_DEBUG_LLM=1 npm run dev
+ * 在 Vercel:  Project Settings → Environment Variables 添加 STAGE3_DEBUG_LLM=1
+ *            （只建议在 Preview / 开发环境开，Production 关闭以免污染日志）
+ */
+const STAGE3_DEBUG_LLM = process.env.STAGE3_DEBUG_LLM === "1";
+
+function debugLogLlm(
+  tag: string,
+  payload: { sentence?: string; prompt?: string; raw?: unknown; parsed?: unknown },
+): void {
+  if (!STAGE3_DEBUG_LLM) return;
+  const banner = `\n=== [stage3-llm:${tag}] ===`;
+  console.log(banner);
+  if (payload.sentence !== undefined) console.log("sentence:", payload.sentence);
+  if (payload.raw !== undefined) {
+    console.log(
+      "raw:",
+      typeof payload.raw === "string" ? payload.raw : JSON.stringify(payload.raw, null, 2),
+    );
+  }
+  if (payload.parsed !== undefined) {
+    console.log("parsed:", JSON.stringify(payload.parsed, null, 2));
+  }
+  console.log(`=== [/stage3-llm:${tag}] ===\n`);
+}
+
+/**
  * 当规则判定 meaning 未对齐时，用 LLM 二次确认局部功能是否成立。
  * 防止把 Body 级概念 checklist 误套到单句（如 Example 不要求同句含 internship）。
  */
@@ -316,8 +346,11 @@ async function confirmMeaningWithLlm(
 
   try {
     const raw = await callLlmJson<{ aligned?: unknown }>(prompt);
-    return raw?.aligned === true;
-  } catch {
+    const parsed = raw?.aligned === true;
+    debugLogLlm("confirmMeaning", { sentence, raw, parsed });
+    return parsed;
+  } catch (e) {
+    debugLogLlm("confirmMeaning", { sentence, raw: `<error> ${String(e)}` });
     return false;
   }
 }
@@ -338,8 +371,11 @@ async function confirmStructuralWithLlm(sentence: string): Promise<boolean> {
 
   try {
     const raw = await callLlmJson<{ hasCompleteClause?: unknown }>(prompt);
-    return raw?.hasCompleteClause === true;
-  } catch {
+    const parsed = raw?.hasCompleteClause === true;
+    debugLogLlm("confirmStructural", { sentence, raw, parsed });
+    return parsed;
+  } catch (e) {
+    debugLogLlm("confirmStructural", { sentence, raw: `<error> ${String(e)}` });
     return false;
   }
 }
@@ -389,8 +425,11 @@ async function reviewViabilityWithLlm(
 
   try {
     const raw = await callLlmJson<unknown>(prompt);
-    return normalizeViabilityFromLlm(raw);
-  } catch {
+    const parsed = normalizeViabilityFromLlm(raw);
+    debugLogLlm("reviewViability", { sentence, raw, parsed });
+    return parsed;
+  } catch (e) {
+    debugLogLlm("reviewViability", { sentence, raw: `<error> ${String(e)}` });
     return null;
   }
 }

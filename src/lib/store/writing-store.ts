@@ -68,14 +68,18 @@ function sanitizePersistedStore(raw: unknown): Partial<WritingStore> {
     ? s.questions.filter((q): q is Question => !!q && typeof q === "object")
     : [];
 
+  // 「确认写入」按钮已下线。旧 persist 可能存在 requiresConfirm=true / canSubmit=false
+  // 的"卡死"组合（用户被告知点按钮但按钮没了）。这里统一清零，让输入框可用；
+  // 真正的 canSubmit 会被下一次 API 回包重新写入。COMPLETED 态另行兜底。
+  const completed =
+    !!s.state && (s.state as SessionState).subStep === "COMPLETED";
   return {
     ...s,
     messages: safeMessages,
     questions: safeQuestions,
     leftPanel: typeof s.leftPanel === "string" ? s.leftPanel : "",
-    // 「确认写入」按钮已下线；强制清零 requiresConfirm，避免旧 persist 卡住 UI。
     requiresConfirm: false,
-    canSubmit: !!s.canSubmit,
+    canSubmit: completed ? false : true,
   };
 }
 
@@ -401,8 +405,8 @@ export const useWritingStore = create<WritingStore>()(
     {
       name: STORAGE_KEY,
       storage: safeStorage,
-      // v3：「确认写入」按钮下线，强制 requiresConfirm=false。
-      version: 3,
+      // v4：修复旧缓存导致的输入锁死（canSubmit/requiresConfirm 脏值）。
+      version: 4,
       migrate: (persistedState) => sanitizePersistedStore(persistedState),
       skipHydration: true,
       partialize: (s) => ({

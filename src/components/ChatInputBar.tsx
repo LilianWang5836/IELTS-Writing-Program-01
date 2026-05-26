@@ -11,7 +11,6 @@ export function ChatInputBar() {
     state,
     loading,
     requiresConfirm,
-    canSubmit,
     sendMessage,
     error,
   } = useWritingStore();
@@ -19,6 +18,7 @@ export function ChatInputBar() {
   if (!state) return null;
 
   const disabled = loading;
+  const completed = state.subStep === "COMPLETED";
   const stage3 = state.stage === 3;
   const stage1Explore = state.stage === 1 && !state.handoffLocked;
   const awaitingSentence = stage3 && state.s3?.mode === "assign";
@@ -68,7 +68,7 @@ export function ChatInputBar() {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
-          disabled={disabled || requiresConfirm || !canSubmit}
+          disabled={disabled || requiresConfirm || completed}
           aria-label="教练对话输入"
         />
         <div className="flex flex-col gap-2">
@@ -76,7 +76,7 @@ export function ChatInputBar() {
             type="button"
             onClick={onSubmit}
             disabled={
-              disabled || requiresConfirm || !canSubmit || !text.trim()
+              disabled || requiresConfirm || completed || !text.trim()
             }
             className="rounded-lg bg-sky-700 px-3 py-2 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-40"
           >

@@ -942,6 +942,39 @@ ok(
 // === normalize 兜底已在 handle-turn 内部，无 issues 时拉满 score/confidence ===
 //   这里通过 decideSentenceState 间接保障：见上面两条测试。
 
+// === 新 intent：discussion（追问/试改/中英混合） ========================
+ok(
+  detectStage3SentenceIntent("students are genuinely interested in, 怎么放到句子里面") ===
+    "discussion",
+  "中英混合追问 → discussion",
+);
+ok(
+  detectStage3SentenceIntent("能不能这样改 students are interested in subjects") ===
+    "discussion",
+  "中英混合试改 → discussion（中文优先，不被 content 抢）",
+);
+ok(
+  detectStage3SentenceIntent("students are genuinely interested in") === "discussion",
+  "短英文片段（< 6 词，无句末）→ discussion",
+);
+ok(
+  detectStage3SentenceIntent("that interest them") === "discussion",
+  "小写开头无句末标点的英文残片 → discussion",
+);
+// 完整句子仍走 content
+ok(
+  detectStage3SentenceIntent(
+    "If students want to pursue an academic career, they need to study subjects that interest them.",
+  ) === "content",
+  "完整英文句子（含句末标点 + 足够词数）仍走 content",
+);
+ok(
+  detectStage3SentenceIntent(
+    "This is because academic knowledge is systematic, which requires significant time and energy.",
+  ) === "content",
+  "Reason 完整句仍走 content",
+);
+
 // === 通用契约：本地 VIABILITY_RULES 不为具体词组堆 case ==================
 //   具体表达（缺冠词、语序反向、interested 用法、from-clause 缺主语）
 //   一律交给 LLM scout 识别。下面这些句子本地不应命中，保留作 fixture

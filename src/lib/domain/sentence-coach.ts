@@ -133,7 +133,17 @@ export type SentenceTrainingState =
   | "refine_needed"
   | "stabilizable";
 
-export type Stage3SentenceIntent = "content" | "meta" | "scaffold";
+/** Stage 3 用户输入意图：
+ *  - content    完整英文一句，进入判定/写入流程
+ *  - scaffold   求句型提示
+ *  - meta       回顾性提问（错在哪、打磨哪里）
+ *  - discussion 对话过程：追问、试改短语、中英混合提问；走 LLM 自由回复，
+ *               不跑 meaning/viability 判定、不推进模块。 */
+export type Stage3SentenceIntent =
+  | "content"
+  | "meta"
+  | "scaffold"
+  | "discussion";
 type DetectableProblemKind = Exclude<
   SentenceProblemKind,
   "none" | "unclear_wording" | "meaning_gap"
@@ -419,17 +429,46 @@ function detectMissingSubject(s: string): boolean {
 export function detectStage3SentenceIntent(message: string): Stage3SentenceIntent {
   const m = message.trim();
   if (!m) return "content";
-  // 单独一个"提示"字（消息体只有1-2字）也应识别为 scaffold
   if (/^提示[一下]?$/.test(m) || /^hint$/.test(m.toLowerCase())) return "scaffold";
+
   const scaffoldRe =
     /(给(个|一个|点|我个)?\s*(提示|句型|开头|starter|帮助)|提示一下|不会写|怎么写|不知道(怎么|如何)|无从下手|没思路|来个(提示|句型|开头)|句型怎么|hint|scaffold)/i;
   const metaRe =
     /(我觉得|我认为|不一定|能不能|可不可以|是不是|对吗|为什么|语法|主语|谓语|动名词|从句|搭配|这个表达|这样写|这句行吗|grammar|subject|predicate|gerund|clause|打磨哪|改哪|哪里(有问题|需要|要改|不对|不行|不自然|不地道|打磨|修改)|哪里问题|什么问题|啥问题|啥意思|什么意思|我哪|我哪儿|没毛病吗|没问题吗|是不是错|问题在哪|错在哪)/i;
   const contentRe =
     /\b(for instance|for example|because|which|therefore|students?|graduates?|companies?|workplace|internships?|projects?)\b/i;
+
   if (scaffoldRe.test(m) && !contentRe.test(m)) return "scaffold";
   if (metaRe.test(m) && !contentRe.test(m)) return "meta";
   if (metaRe.test(m) && /[？?]/.test(m)) return "meta";
+
+  // 讨论/试改/追问：
+  //  1) 中英混合（出现中文字符）——大概率是带中文问的"怎么放/能不能这样"
+  //  2) 纯英文残片：很短 + 没句末标点 + 不含内容信号词（students/should/...）
+  // 这些都走 LLM 自由对话，不跑模块判定。
+  const hasChinese = /[\u4e00-\u9fff]/.test(m);
+  if (hasChinese) return "discussion";
+
+  // 残片信号：句尾是裸介词（in / on / to / with ...）
+  const endsWithPreposition =
+    /\b(in|on|at|to|of|for|with|by|from|about|into|onto|over|under|through|toward|across)\s*$/i.test(
+      m,
+    );
+  const startsUpper = /^[A-Z]/.test(m);
+  const startsLower = /^[a-z]/.test(m);
+  const endsWithSentencePunct = /[.!?]\s*$/.test(m);
+  const words = m.split(/\s+/).filter(Boolean).length;
+
+  // 大写开头 + 含内容信号 + 不是裸介词结尾 → 当作完整提交（哪怕漏了句号）
+  if (contentRe.test(m) && startsUpper && !endsWithPreposition) return "content";
+
+  // 残片：短 + 无句末标点；或小写开头 + 没标点；或裸介词结尾
+  const looksLikeFragment =
+    endsWithPreposition ||
+    (words < 6 && !endsWithSentencePunct) ||
+    (words < 10 && startsLower && !endsWithSentencePunct);
+  if (looksLikeFragment) return "discussion";
+
   return "content";
 }
 

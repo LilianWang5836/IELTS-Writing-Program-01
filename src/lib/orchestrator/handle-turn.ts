@@ -380,6 +380,68 @@ async function confirmStructuralWithLlm(sentence: string): Promise<boolean> {
   }
 }
 
+/**
+ * 学生在追问/试改/中英混合提问时，调 LLM 走自由对话——
+ * 不跑 meaning / viability 判定，不推进模块，纯讨论式辅导。
+ */
+async function buildDiscussionLlmResponse(
+  state: SessionState,
+  userMessage: string,
+): Promise<string> {
+  const mod = resolveStage3Module(state) ?? "this sentence";
+  const moduleDir = getModuleDirection(state) ?? "";
+  const pending = state.s3?.pendingSentence ?? "";
+  const lastIssues = state.coachContext?.lastViabilityIssues ?? [];
+  const issuesBlock = lastIssues
+    .slice(0, 3)
+    .map((it, i) => {
+      const anchor = it.anchor ? `「${it.anchor}」` : "";
+      const note = it.guideZh ?? it.note ?? "";
+      return `  ${i + 1}. ${anchor} ${note}`.trim();
+    })
+    .join("\n");
+
+  const prompt = [
+    "你是 IELTS 写作教练，正在和学生一对一讨论当前句的改写。这一轮学生没有提交完整的新一版，而是在追问、试改片段、或用中英文混合提问。",
+    "",
+    `当前模块：${mod}`,
+    moduleDir ? `这一句要表达的意思：${moduleDir}` : "",
+    pending ? `学生上一版提交的句子：${pending}` : "",
+    lastIssues.length
+      ? `你上一轮指出的问题：\n${issuesBlock}`
+      : "",
+    "",
+    `学生这一轮说：${userMessage}`,
+    "",
+    "请用中文自由回复，要求：",
+    "- 大白话，不要语法术语（系动词/定语从句/主动语态/被动语态 等禁用）",
+    "- 启发式：让学生自己想出改写；不要直接给整句改写。",
+    "- 如果学生只给了一个短语或片段，告诉他怎么把这个短语接回原句的逻辑里——但不要替他写整句。",
+    "- 如果学生在问语法/用法（例如「能不能这样」），用大白话回答能或不能 + 用一句解释为什么。",
+    "- 控制在 3 句话以内。",
+    "- 结尾鼓励学生把完整的新一版写出来发上来。",
+    "",
+    "输出 JSON 严格如下：",
+    '{"reply": "<中文回复正文>"}',
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const raw = await callLlmJson<{ reply?: unknown }>(prompt);
+    const text =
+      raw && typeof raw.reply === "string" ? raw.reply.trim() : "";
+    debugLogLlm("discussion", { sentence: userMessage, raw, parsed: text });
+    if (!text) {
+      return "试着把你想加的部分接回原句的核心动作里，再发一版完整句子上来。";
+    }
+    return text;
+  } catch (e) {
+    debugLogLlm("discussion", { sentence: userMessage, raw: `<error> ${String(e)}` });
+    return "我这边接不上 LLM，先按上一轮的提示，把改后整句完整发上来。";
+  }
+}
+
 async function reviewViabilityWithLlm(
   sentence: string,
 ): Promise<LocalViabilityResult | null> {
@@ -1036,6 +1098,16 @@ export async function handleTurn(
       // "打磨哪里 / 哪里有问题 / 错在哪" 等元提问：直接回放上一轮 viability issues，
       // 不再让用户重新贴一遍上一版。
       const reply = buildMetaRecallResponse(s);
+      return {
+        replies: [reply],
+        state: appendChat(s, "assistant", reply),
+        requiresConfirm: false,
+        canSubmit: true,
+      };
+    }
+    if (intent === "discussion") {
+      // 学生在追问/试改/中英混合提问：交给 LLM 自由对话，不跑模块判定。
+      const reply = await buildDiscussionLlmResponse(s, message);
       return {
         replies: [reply],
         state: appendChat(s, "assistant", reply),

@@ -208,5 +208,92 @@ ok(
   "缺主语句不应通过结构层",
 );
 
+// === viability 表层瑕疵规则回归 ==========================================
+// 1) 缺所有格 's
+const apostropheSentence =
+  "Universities should be aligned with students plan because they need clarity.";
+const apoViab = assessLocalViability(apostropheSentence);
+ok(
+  apoViab.issues.some((i) => /所有关系建议加 ’s/.test(i.note)),
+  "复数群体+名词缺所有格应被识别",
+);
+
+// 2) 复合修饰词缺连字符
+const hyphenSentence =
+  "Universities should offer them more work related skills.";
+const hyphenViab = assessLocalViability(hyphenSentence);
+ok(
+  hyphenViab.issues.some((i) => /连字符/.test(i.note)),
+  "复合修饰词缺连字符应被识别",
+);
+
+// 3) vice versa 单独悬挂
+const dangleSentence =
+  "If they want to work, university should offer skills, vice versa.";
+const dangleViab = assessLocalViability(dangleSentence);
+ok(
+  dangleViab.issues.some((i) => /vice versa/.test(i.note)),
+  "vice versa 单独悬挂应被识别",
+);
+
+// 4) 三类合并：原始用户句应直接落到 refine_needed（不再 stabilizable）
+const realProblemSentence =
+  "In conclusion, curriculum design at universities should be aligned with students plan, vice versa.";
+const realViab = assessLocalViability(realProblemSentence);
+ok(realViab.issues.length >= 2, "原始问题句应触发多条 viability issue");
+ok(
+  decideSentenceState({
+    meaningAligned: true,
+    structuralWorkable: true,
+    viability: realViab,
+  }) === "refine_needed",
+  "原始问题句不能再被判 stabilizable",
+);
+
+// === Conclusion 模块 meaning gate 回归 ==================================
+const conclusionState = {
+  s2: {
+    body1Point: "大学应教授实用技能，使毕业生能迅速找到工作",
+    body1Angle: "实习帮助适应职场",
+    body2Point: "大学应教授学术深度，培养系统知识",
+    body2Angle: "长期研究与学术训练",
+  },
+  s3: {
+    currentBody: "conclusion",
+    modulePlan: { body1: [], body2: [], conclusion: ["conclusion_summary"] },
+    moduleIndex: 0,
+  },
+};
+
+const summaryDrift = assessMeaningAlignment(
+  conclusionState,
+  "Universities should keep growing in many directions.",
+  "conclusion_summary",
+);
+ok(
+  !summaryDrift.aligned,
+  "conclusion_summary 句未连接两段时应被拦截（不再 early-return 通过）",
+);
+
+const summaryGood = assessMeaningAlignment(
+  conclusionState,
+  "Whether universities prioritize practical skills or academic research depends on students' career goals.",
+  "conclusion_summary",
+);
+ok(
+  summaryGood.aligned,
+  "conclusion_summary 同时点到两段概念 + 含连接词时应通过",
+);
+
+const restateDrift = assessMeaningAlignment(
+  conclusionState,
+  "Universities are doing fine.",
+  "conclusion_restate",
+);
+ok(
+  !restateDrift.aligned,
+  "conclusion_restate 缺立场动词/方向时应被拦截",
+);
+
 if (fail) process.exit(1);
 console.log("\nAll sentence coach checks passed.");

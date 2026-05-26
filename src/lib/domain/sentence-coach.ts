@@ -135,15 +135,13 @@ export type SentenceTrainingState =
 
 /** Stage 3 用户输入意图：
  *  - content    完整英文一句，进入判定/写入流程
- *  - scaffold   求句型提示
- *  - meta       回顾性提问（错在哪、打磨哪里）
- *  - discussion 对话过程：追问、试改短语、中英混合提问；走 LLM 自由回复，
+ *  - scaffold   求句型提示（明确触发词，零 LLM）
+ *  - discussion 其它所有非完整提交：回顾性提问、追问、试改片段、
+ *               中英混合提问、对话讨论。统一交给 LLM 自由回复——
+ *               LLM 拿到 pendingSentence + lastViabilityIssues 后自行
+ *               判断：要回放具体位置、还是答疑、还是讨论。
  *               不跑 meaning/viability 判定、不推进模块。 */
-export type Stage3SentenceIntent =
-  | "content"
-  | "meta"
-  | "scaffold"
-  | "discussion";
+export type Stage3SentenceIntent = "content" | "scaffold" | "discussion";
 type DetectableProblemKind = Exclude<
   SentenceProblemKind,
   "none" | "unclear_wording" | "meaning_gap"
@@ -429,29 +427,27 @@ function detectMissingSubject(s: string): boolean {
 export function detectStage3SentenceIntent(message: string): Stage3SentenceIntent {
   const m = message.trim();
   if (!m) return "content";
-  if (/^提示[一下]?$/.test(m) || /^hint$/.test(m.toLowerCase())) return "scaffold";
 
+  // —— Scaffold（明确求提示）：唯一一类还走关键字快路径的意图。
+  //    强信号短语，避免和正文混淆。
+  if (/^提示[一下]?$/.test(m) || /^hint$/.test(m.toLowerCase())) return "scaffold";
   const scaffoldRe =
     /(给(个|一个|点|我个)?\s*(提示|句型|开头|starter|帮助)|提示一下|不会写|怎么写|不知道(怎么|如何)|无从下手|没思路|来个(提示|句型|开头)|句型怎么|hint|scaffold)/i;
-  // meta = 「回顾上一轮反馈」类提问：用户在问"刚才哪里有问题"。
-  // 收窄：只命中明确指向上一轮 issues 的措辞；不再吃"为什么/我觉得/能不能/对吗"
-  //       这种追问性问题——那些归 discussion，让 LLM 自由解答。
-  const metaRe =
-    /(打磨哪|改哪|哪里(有问题|需要|要改|不对|不行|不自然|不地道|打磨|修改)|哪里问题|什么问题|啥问题|没毛病吗|没问题吗|是不是错|问题在哪|错在哪|我哪儿(不|没))/i;
   const contentRe =
     /\b(for instance|for example|because|which|therefore|students?|graduates?|companies?|workplace|internships?|projects?)\b/i;
-
   if (scaffoldRe.test(m) && !contentRe.test(m)) return "scaffold";
-  if (metaRe.test(m) && !contentRe.test(m)) return "meta";
 
-  // 讨论/试改/追问：
-  //  1) 中英混合（出现中文字符）——大概率是带中文问的"怎么放/为什么/能不能"
-  //  2) 纯英文残片：很短 + 没句末标点 + 不含内容信号词（students/should/...）
-  // 这些都走 LLM 自由对话，不跑模块判定。
+  // —— Discussion vs Content：粗判（不再列举"回顾/追问/讨论"措辞）。
+  //    1) 含中文字符 → 一定不是英文 content，走 discussion 让 LLM 处理；
+  //    2) 句尾是裸介词 → 残片，走 discussion；
+  //    3) 大写开头 + 含内容信号词 + 不是残片 → 当作完整提交（content）；
+  //    4) 短片段（<6 词且无句末标点） / 小写开头无标点 → discussion；
+  //    5) 其它默认 content。
+  //    回顾性提问（"哪里有问题 / 打磨哪里"）也走 discussion——LLM 拿到
+  //    pendingSentence + lastViabilityIssues 后自行决定要不要逐条复述。
   const hasChinese = /[\u4e00-\u9fff]/.test(m);
   if (hasChinese) return "discussion";
 
-  // 残片信号：句尾是裸介词（in / on / to / with ...）
   const endsWithPreposition =
     /\b(in|on|at|to|of|for|with|by|from|about|into|onto|over|under|through|toward|across)\s*$/i.test(
       m,
@@ -461,10 +457,8 @@ export function detectStage3SentenceIntent(message: string): Stage3SentenceInten
   const endsWithSentencePunct = /[.!?]\s*$/.test(m);
   const words = m.split(/\s+/).filter(Boolean).length;
 
-  // 大写开头 + 含内容信号 + 不是裸介词结尾 → 当作完整提交（哪怕漏了句号）
   if (contentRe.test(m) && startsUpper && !endsWithPreposition) return "content";
 
-  // 残片：短 + 无句末标点；或小写开头 + 没标点；或裸介词结尾
   const looksLikeFragment =
     endsWithPreposition ||
     (words < 6 && !endsWithSentencePunct) ||
@@ -560,57 +554,6 @@ export function buildScaffoldResponse(state: SessionState): string {
     );
   } else {
     lines.push(`把这一句围绕${moduleLabel}的核心信息接完整。`);
-  }
-  return lines.join("\n");
-}
-
-/** 元提问回放：当用户问"打磨哪里 / 错在哪"等，从上一轮 sentenceIssues
- *  里直接重述具体位置，避免再让用户盲改。 */
-export function buildMetaRecallResponse(state: SessionState): string {
-  const ctx = state.coachContext;
-  const rawIssues = ctx?.lastViabilityIssues ?? [];
-  const issues: ViabilityIssue[] = rawIssues.map((it) => ({
-    kind: (ALLOWED_KIND_SET.has(it.kind as ViabilityIssueKind)
-      ? (it.kind as ViabilityIssueKind)
-      : "phrase_naturalness") as ViabilityIssueKind,
-    severityClass: it.severityClass,
-    severity: it.severity ?? 0.3,
-    note: it.note,
-    anchor: it.anchor,
-    guideZh: it.guideZh,
-    replacement: it.replacement,
-  }));
-  const pending = state.s3?.pendingSentence;
-  const lastState = ctx?.sentenceState;
-
-  if (!issues.length) {
-    // 上一轮已没有具体可指——直接告诉用户已经过关。
-    if (lastState === "stabilizable" || lastState === "refine_needed") {
-      return "上一句没有需要改的地方，已经可以写下一句了。";
-    }
-    return "我这边没拿到具体定位。你把刚才那一版再贴一次，我对着原句指出位置。";
-  }
-
-  const grouped = groupViabilityIssues(issues);
-  const lines: string[] = [];
-  if (pending) {
-    lines.push(`针对你上一版：「${pending}」`);
-  }
-  if (grouped.hard.length) {
-    lines.push("需要你自己改的位置：");
-    grouped.hard.forEach((it, idx) => {
-      lines.push(`${idx + 1}. ${formatViabilityProse(it)}`);
-    });
-  }
-  if (grouped.soft.length) {
-    lines.push(
-      grouped.hard.length
-        ? "顺手可以打磨（不强求）："
-        : "可以打磨的位置：",
-    );
-    grouped.soft.forEach((it, idx) => {
-      lines.push(`${idx + 1}. ${formatViabilityProse(it)}`);
-    });
   }
   return lines.join("\n");
 }
@@ -1839,56 +1782,8 @@ export function postProcessStage3Sentence(
   const prevIssue = nextState.coachContext?.sentenceIssue;
   const prevIssues = nextState.coachContext?.sentenceIssues;
 
-  const intent = detectStage3SentenceIntent(sentence);
-  if (intent === "meta") {
-    const clarification =
-      /动名词|gerund|主语/.test(sentence)
-        ? "你说得对，动名词短语可以做主语，不一定必须换成人称主语。这里更该修的是搭配和连接。"
-        : "这是一个表达/语法层面的讨论点，我们先澄清判断，再继续修句。";
-    next = {
-      ...next,
-      verdict: "coach",
-      advance: false,
-      userVisibleText: buildStage3CompactDisplay({
-        mode: "meta",
-        headline: clarification,
-        body: "请在保留原意的前提下，再发一版英文句子。",
-        contract: {
-          module: mod ?? null,
-          meaningOk: true,
-          meaningReason: "当前是表达讨论，不是内容偏题",
-          paragraphFit: true,
-          paragraphReason: "先澄清语法选择，再回到当前句",
-          feedback: prependHint(
-            layerHint,
-            `${clarification}\n\n请在保留原意的前提下，再发一版英文句子。`,
-          ),
-          suggestedRevision: "基于你原句改一版，不需要整句重写。",
-          nextStep: "继续提交英文句子，我会回到当前模块修句。",
-          orchestrator,
-        },
-      }),
-      mirror: clarification,
-      coachQuestion: "继续改原句即可，不需要整句重写。",
-      moduleComplete: false,
-      syntaxHint: undefined,
-    };
-    return {
-      result: next,
-      state: {
-        ...nextState,
-        s3: { ...s3, mode: "coach", pendingSentence: s3.pendingSentence },
-        coachContext: {
-          ...nextState.coachContext,
-          lastQuestion: next.coachQuestion,
-          openIssue: "表达讨论（meta）",
-          sentenceIssue: prevIssue,
-          sentenceIssues: prevIssues,
-          sentenceState: nextState.coachContext?.sentenceState,
-        },
-      },
-    };
-  }
+  // 注：discussion / scaffold 意图已在 handle-turn 入口拦截并直接 return，
+  //     postProcessStage3Sentence 这里只会处理 content 提交，不再做 intent 判定。
 
   // Phase 2 minimal takeover: only hard-block essay contradiction.
   if (

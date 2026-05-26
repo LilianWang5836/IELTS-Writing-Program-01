@@ -59,7 +59,6 @@ export type Stage3DisplayMode =
   | "assign"
   | "stabilizable"
   | "needs_repair"
-  | "meta"
   | "hard_gate";
 
 export interface Stage3CompactInput {

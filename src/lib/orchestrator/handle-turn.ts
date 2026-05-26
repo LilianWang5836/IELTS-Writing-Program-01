@@ -45,7 +45,6 @@ import {
 import {
   assessMeaningAlignment,
   assessLocalViability,
-  buildMetaRecallResponse,
   buildScaffoldResponse,
   classifyViabilityKind,
   detectStage3SentenceIntent,
@@ -381,8 +380,9 @@ async function confirmStructuralWithLlm(sentence: string): Promise<boolean> {
 }
 
 /**
- * 学生在追问/试改/中英混合提问时，调 LLM 走自由对话——
- * 不跑 meaning / viability 判定，不推进模块，纯讨论式辅导。
+ * Discussion 模式：学生这轮没提交完整新句子（回顾、追问、试改片段、
+ * 中英混合提问 等），统一走 LLM 自由对话。LLM 看 pendingSentence +
+ * lastViabilityIssues 后自行决定要不要逐条复述具体位置。不推进模块。
  */
 async function buildDiscussionLlmResponse(
   state: SessionState,
@@ -393,33 +393,51 @@ async function buildDiscussionLlmResponse(
   const pending = state.s3?.pendingSentence ?? "";
   const lastIssues = state.coachContext?.lastViabilityIssues ?? [];
   const issuesBlock = lastIssues
-    .slice(0, 3)
+    .slice(0, 4)
     .map((it, i) => {
       const anchor = it.anchor ? `「${it.anchor}」` : "";
+      const sev = it.severityClass === "hard" ? "[硬错]" : "[可打磨]";
       const note = it.guideZh ?? it.note ?? "";
-      return `  ${i + 1}. ${anchor} ${note}`.trim();
+      return `  ${i + 1}. ${sev} ${anchor} ${note}`.trim();
     })
     .join("\n");
 
   const prompt = [
-    "你是 IELTS 写作教练，正在和学生一对一讨论当前句的改写。这一轮学生没有提交完整的新一版，而是在追问、试改片段、或用中英文混合提问。",
+    "你是 IELTS 写作教练，正在和学生一对一讨论当前句的改写。",
+    "这一轮学生**没有提交完整的新一版英文句子**——而是在回顾、追问、试改片段、或用中英文混合提问。",
+    "你的任务是**根据学生说的具体内容**做出针对性回应，不推进模块、不评估全句。",
     "",
     `当前模块：${mod}`,
     moduleDir ? `这一句要表达的意思：${moduleDir}` : "",
     pending ? `学生上一版提交的句子：${pending}` : "",
     lastIssues.length
-      ? `你上一轮指出的问题：\n${issuesBlock}`
-      : "",
+      ? `你上一轮指出的问题（按出现顺序）：\n${issuesBlock}`
+      : "（上一轮没有未解决的具体问题。）",
     "",
     `学生这一轮说：${userMessage}`,
     "",
-    "请用中文自由回复，要求：",
-    "- 大白话，不要语法术语（系动词/定语从句/主动语态/被动语态 等禁用）",
-    "- 启发式：让学生自己想出改写；不要直接给整句改写。",
-    "- 如果学生只给了一个短语或片段，告诉他怎么把这个短语接回原句的逻辑里——但不要替他写整句。",
-    "- 如果学生在问语法/用法（例如「能不能这样」），用大白话回答能或不能 + 用一句解释为什么。",
-    "- 控制在 3 句话以内。",
-    "- 结尾鼓励学生把完整的新一版写出来发上来。",
+    "请根据学生说的内容，从下面几种情况里选最贴近的一种来回复：",
+    "",
+    "① 学生在问「哪里有问题 / 错在哪 / 打磨哪里 / 还要改吗」这种回顾类问题：",
+    "   → 把上面列出的「上一轮指出的问题」逐条复述给学生（用 1. 2. 3. 编号），",
+    "     先列硬错（必须自己改），再列可打磨（不强求）。结尾让他改完整句发上来。",
+    "   → 如果上一轮没有未解决问题，直接说「上一句没有需要改的地方，已经可以写下一句了」。",
+    "",
+    "② 学生在问语法或用法（如「为什么要加 that」「能不能用 X」「这样对吗」）：",
+    "   → 用大白话回答能或不能 + 一句解释「为什么」（讲意思，不讲语法术语）。",
+    "   → 然后让他把整句改好发上来。",
+    "",
+    "③ 学生只给了一个短语/片段（如「students are genuinely interested in」）：",
+    "   → 别当成完整句来评。指出这个片段在原句里要接到哪个动作上，让他把整句接完整。",
+    "",
+    "④ 学生在做开放讨论（「我觉得…」「不一定要…」「这样也行吧」）：",
+    "   → 简短回应他的想法，然后引导他写出完整新一版。",
+    "",
+    "硬性要求：",
+    "- 中文回复，大白话，不要语法术语（系动词/定语从句/主动语态/被动语态/不定式作主语/过去分词 等禁用）。",
+    "- 不要直接给整句改写、不要给候选短语清单——启发式让学生自己改。",
+    "- 不要重新去评估当前这条短消息本身的语法；只回应学生在说什么。",
+    "- 整体控制在 3-6 行以内。",
     "",
     "输出 JSON 严格如下：",
     '{"reply": "<中文回复正文>"}',
@@ -433,11 +451,37 @@ async function buildDiscussionLlmResponse(
       raw && typeof raw.reply === "string" ? raw.reply.trim() : "";
     debugLogLlm("discussion", { sentence: userMessage, raw, parsed: text });
     if (!text) {
+      // LLM 返回空且本地有上一轮 issues 时，兜底用模板回放，保证 anchor 不丢。
+      if (lastIssues.length) {
+        const lines: string[] = [];
+        if (pending) lines.push(`针对你上一版：「${pending}」`);
+        lines.push("需要再调整的位置：");
+        lastIssues.slice(0, 4).forEach((it, i) => {
+          const anchor = it.anchor ? `「${it.anchor}」` : "";
+          const note = it.guideZh ?? it.note ?? "";
+          lines.push(`${i + 1}. ${anchor} ${note}`.trim());
+        });
+        lines.push("把这几处改好后，整句再发我看。");
+        return lines.join("\n");
+      }
       return "试着把你想加的部分接回原句的核心动作里，再发一版完整句子上来。";
     }
     return text;
   } catch (e) {
     debugLogLlm("discussion", { sentence: userMessage, raw: `<error> ${String(e)}` });
+    // 失败时也走兜底模板，保证学生能看到上一轮的 anchor。
+    if (lastIssues.length) {
+      const lines: string[] = [];
+      if (pending) lines.push(`针对你上一版：「${pending}」`);
+      lines.push("需要再调整的位置：");
+      lastIssues.slice(0, 4).forEach((it, i) => {
+        const anchor = it.anchor ? `「${it.anchor}」` : "";
+        const note = it.guideZh ?? it.note ?? "";
+        lines.push(`${i + 1}. ${anchor} ${note}`.trim());
+      });
+      lines.push("把这几处改好后，整句再发我看。");
+      return lines.join("\n");
+    }
     return "我这边接不上 LLM，先按上一轮的提示，把改后整句完整发上来。";
   }
 }
@@ -1094,19 +1138,10 @@ export async function handleTurn(
         canSubmit: true,
       };
     }
-    if (intent === "meta") {
-      // "打磨哪里 / 哪里有问题 / 错在哪" 等元提问：直接回放上一轮 viability issues，
-      // 不再让用户重新贴一遍上一版。
-      const reply = buildMetaRecallResponse(s);
-      return {
-        replies: [reply],
-        state: appendChat(s, "assistant", reply),
-        requiresConfirm: false,
-        canSubmit: true,
-      };
-    }
     if (intent === "discussion") {
-      // 学生在追问/试改/中英混合提问：交给 LLM 自由对话，不跑模块判定。
+      // 任何非完整提交的输入（回顾性提问 / 追问 / 试改片段 / 中英混合）：
+      // 统一交给 LLM 自由对话，由 LLM 看 pendingSentence + lastViabilityIssues
+      // 自己判断要回放具体位置还是要讨论/答疑，不跑模块判定，不推进。
       const reply = await buildDiscussionLlmResponse(s, message);
       return {
         replies: [reply],

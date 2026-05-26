@@ -691,6 +691,22 @@ ok(
   "进入 Conclusion 时给出收束引导",
 );
 
+// === buildCurrentAssignmentLine：discussion 兜底拉回当前模块的指令 ======
+const conclusionAssignmentLine = buildCurrentAssignmentLine(enterConclusionState);
+ok(
+  /进入 Conclusion/.test(conclusionAssignmentLine),
+  "buildCurrentAssignmentLine 在 conclusion 段首带上跨段前缀",
+);
+ok(
+  /现在请写/.test(conclusionAssignmentLine),
+  "buildCurrentAssignmentLine 包含「现在请写...」任务行",
+);
+const midBodyAssignmentLine = buildCurrentAssignmentLine(midBodyState);
+ok(
+  /继续这一段/.test(midBodyAssignmentLine) && /现在请写/.test(midBodyAssignmentLine),
+  "buildCurrentAssignmentLine 同段非首句带上「继续这一段」前缀",
+);
+
 // === Viability hard/soft 分类与分组 =====================================
 ok(
   HARD_VIABILITY_KINDS.includes("spelling") &&

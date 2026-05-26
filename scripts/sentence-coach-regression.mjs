@@ -510,8 +510,12 @@ ok(
 const proseAcademic = formatViabilityProse(acIssue);
 ok(
   /「academic studying」/.test(proseAcademic) &&
-    /「academic studies」/.test(proseAcademic),
-  "prose 反馈应同时含原句片段与替换建议",
+    /(想一下|想一想|想想|换个|判断|什么形式)/.test(proseAcademic),
+  "prose 反馈应含原句片段 + 启发式提问（不再直接给答案）",
+);
+ok(
+  !/「academic studies」/.test(proseAcademic),
+  "prose 反馈不再直接吐出 replacement 字符串",
 );
 ok(
   !/【|】|主 Pattern|Keywords|修法/.test(proseAcademic),
@@ -937,6 +941,98 @@ ok(
 
 // === normalize 兜底已在 handle-turn 内部，无 issues 时拉满 score/confidence ===
 //   这里通过 decideSentenceState 间接保障：见上面两条测试。
+
+// === 新增 viability 规则：if-从句缺主语 / interested + 名词 / 单数名词缺冠词 ===
+const userSentence =
+  "if want to pursue academic path, students should learn their interested fields, learning and accumulating knowledge needs time";
+const userViab = assessLocalViability(userSentence);
+ok(
+  userViab.issues.some(
+    (i) => /if\s+want/i.test(i.anchor ?? "") && i.severityClass === "hard",
+  ),
+  "「if want」从句缺主语 → hard issue",
+);
+ok(
+  userViab.issues.some(
+    (i) =>
+      /interested\s+fields/i.test(i.anchor ?? "") &&
+      i.kind === "collocation",
+  ),
+  "「interested fields」用法不当 → collocation issue",
+);
+ok(
+  userViab.issues.some(
+    (i) =>
+      /pursue\s+academic\s+path/i.test(i.anchor ?? "") &&
+      i.severityClass === "hard",
+  ),
+  "「pursue academic path」缺冠词 → hard issue (article)",
+);
+ok(
+  decideSentenceState({
+    meaningAligned: true,
+    structuralWorkable: true,
+    viability: userViab,
+  }) === "workable",
+  "该问题句应被判 workable（不写入，用户必须自己改）",
+);
+
+// === 启发式反馈：guideZh 必须含提问/反问性引导，不能直接给替换 ============
+const ifIssue = userViab.issues.find((i) => /if\s+want/i.test(i.anchor ?? ""));
+const ifProse = ifIssue ? formatViabilityProse(ifIssue) : "";
+ok(
+  /(想一下|想一想|想想|谁|自己|判断)/.test(ifProse),
+  "if-从句反馈含启发性提问",
+);
+ok(
+  !/(改成|应改为|应该是|正确写法)/.test(ifProse),
+  "if-从句反馈不直接给答案",
+);
+
+const interestedIssue = userViab.issues.find((i) =>
+  /interested\s+fields/i.test(i.anchor ?? ""),
+);
+const interestedProse = interestedIssue
+  ? formatViabilityProse(interestedIssue)
+  : "";
+ok(
+  /(想一下|想一想|想想|换个|做表语|修饰方向)/.test(interestedProse),
+  "interested 反馈含启发性提问",
+);
+ok(
+  !/the fields they are interested in/.test(interestedProse),
+  "interested 反馈不直接给改写候选",
+);
+
+const pathIssue = userViab.issues.find((i) =>
+  /pursue\s+academic\s+path/i.test(i.anchor ?? ""),
+);
+const pathProse = pathIssue ? formatViabilityProse(pathIssue) : "";
+ok(
+  /(想一下|想一想|判断|限定词)/.test(pathProse),
+  "缺冠词反馈含启发性提问",
+);
+ok(
+  !/(a\/an\/the|改成|应改为)/.test(pathProse),
+  "缺冠词反馈不直接列出 a/an/the 候选",
+);
+
+// === 旧规则也要启发式：competition advantage ============================
+const compViabHeur = assessLocalViability(
+  "Students can gain competition advantage in the job market.",
+);
+const compIssue = compViabHeur.issues.find((i) =>
+  /competition\s+advantage/i.test(i.anchor ?? ""),
+);
+const compProse = compIssue ? formatViabilityProse(compIssue) : "";
+ok(
+  /(想一下|想一想|形容词|词性|对应)/.test(compProse),
+  "competition advantage 反馈含启发式提问",
+);
+ok(
+  !/「competitive advantage」/.test(compProse),
+  "competition advantage 反馈不直接给整改后短语",
+);
 
 if (fail) process.exit(1);
 console.log("\nAll sentence coach checks passed.");

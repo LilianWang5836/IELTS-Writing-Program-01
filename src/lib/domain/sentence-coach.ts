@@ -753,6 +753,8 @@ const VIABILITY_RULES: ViabilityRule[] = [
     severity: 0.32,
     note: "`sustainable studying` 搭配不自然",
     buildReplacement: () => "long-term study",
+    buildGuide: () =>
+      "sustainable 通常描述资源/发展是否可持续，和 studying 不搭。想一下：要表达「长期、持续地学习」，应该用什么形容词 + 哪种名词形式？",
   },
   {
     re: /\bknowledge\s+chances\b/i,
@@ -760,6 +762,8 @@ const VIABILITY_RULES: ViabilityRule[] = [
     severity: 0.32,
     note: "`knowledge chances` 语义不自然",
     buildReplacement: () => "opportunities to gain knowledge",
+    buildGuide: () =>
+      "chance 和 knowledge 直接搭配不自然。想一想：你想表达的是「机会」还是「学习/接触知识的机会」？是不是该换个名词、再加个动作把意思补齐？",
   },
   {
     re: /\bacademic\s+students\b/i,
@@ -767,6 +771,8 @@ const VIABILITY_RULES: ViabilityRule[] = [
     severity: 0.32,
     note: "`academic students` 指称不自然",
     buildReplacement: () => "students in academic tracks",
+    buildGuide: () =>
+      "academic 直接修饰 students 不自然。想一下：「学术型学生」是不是更像「读学术方向 / 在学术路线上的学生」？换个介词结构试试。",
   },
   {
     re: /\baccumulate\s+chances\b/i,
@@ -774,6 +780,8 @@ const VIABILITY_RULES: ViabilityRule[] = [
     severity: 0.32,
     note: "`accumulate chances` 语义不成立",
     buildReplacement: () => "build up opportunities",
+    buildGuide: () =>
+      "accumulate 通常搭配可量化的东西（经验、知识、财富）。chance 不能这么积累——想一想动词换成什么、宾语换成什么更合理。",
   },
   // P2: 复数群体 + 名词，缺所有格
   {
@@ -789,6 +797,8 @@ const VIABILITY_RULES: ViabilityRule[] = [
       const apostrophe = owners.endsWith("s") ? `${owner}'` : `${owner}'s`;
       return `${apostrophe} ${obj}`;
     },
+    buildGuide: (m) =>
+      `这里「${m[1]} ${m[2]}」两个名词直接连着。${m[2]} 是属于 ${m[1]} 的吗？如果是，前面那个名词的「属格」该怎么标？`,
   },
   // P2: 复合修饰词缺连字符
   {
@@ -800,6 +810,8 @@ const VIABILITY_RULES: ViabilityRule[] = [
       if (!m[1] || !m[2] || !m[3]) return undefined;
       return `${m[1]}-${m[2]} ${m[3]}`;
     },
+    buildGuide: (m) =>
+      `${m[1]} ${m[2]} 一起在修饰后面的 ${m[3]}。两个词同时做形容词修饰时，英语里通常会用一个标点把它们绑起来——是哪个标点？`,
   },
   // P2: vice versa / and so on / etc 单独悬挂
   {
@@ -817,7 +829,6 @@ const VIABILITY_RULES: ViabilityRule[] = [
     note: "academic 类形容词后接动名词偏不自然",
     buildReplacement: (m) => {
       if (!m[1]) return undefined;
-      // studying -> studies; learning -> studies/learning; researching -> research
       const targetMap: Record<string, string> = {
         studying: "studies",
         learning: "studies",
@@ -828,6 +839,8 @@ const VIABILITY_RULES: ViabilityRule[] = [
       const tail = targetMap[m[2]?.toLowerCase() ?? ""] ?? "studies";
       return `${m[1].toLowerCase()} ${tail}`;
     },
+    buildGuide: (m) =>
+      `这里 ${m[1]} 后面跟 ${m[2]}（动词的 -ing 形式）。如果你想表达「学术上的学习/研究」这件事，名词形式应该是什么？换个词更地道。`,
   },
   // P3: enter / find + work / workforce / business 缺冠词
   {
@@ -843,6 +856,8 @@ const VIABILITY_RULES: ViabilityRule[] = [
       if (noun === "workforce") return `${verb} the workforce`;
       return `${verb} the ${noun}`;
     },
+    buildGuide: (m) =>
+      `这里 ${m[1]} ${m[2]} 后面没有限定词。${m[2]} 在这里指的是泛泛的工作还是具体的「职场/就业市场」？要么加个限定词，要么换成更具体的名词。`,
   },
   // P2: business model language — 中英语序差异，引导用户自己重组（不直接给整句）
   {
@@ -861,6 +876,8 @@ const VIABILITY_RULES: ViabilityRule[] = [
     severity: 0.3,
     note: "`competition advantage` 词性错误，应用形容词 competitive",
     buildReplacement: () => "competitive advantage",
+    buildGuide: () =>
+      "competition 是名词。advantage 前面通常要用形容词修饰——competition 的形容词形式是什么？",
   },
   // P2: compete advantage / compete edge（动词形式用作修饰语）
   {
@@ -869,6 +886,8 @@ const VIABILITY_RULES: ViabilityRule[] = [
     severity: 0.3,
     note: "`compete + 名词` 词性错误，应用 competitive",
     buildReplacement: (m) => `competitive ${m[1]?.toLowerCase() ?? "advantage"}`,
+    buildGuide: (m) =>
+      `compete 是动词。这里在修饰名词 ${m[1]}，要用形容词形式——你能想到这个形容词吗？`,
   },
   // P1 hard: if/when/although/while + 动词，从句缺主语
   // 例：「if want to pursue」「when learn」「although study hard」
@@ -879,7 +898,7 @@ const VIABILITY_RULES: ViabilityRule[] = [
     note: "if/when 从句缺少主语",
     guideOnly: true,
     buildGuide: (m) =>
-      `这里「${m[1]} ${m[2]}」从句没有主语——${m[1]} 引导的从句也必须有主语（如 they / students / one / people），把主语补上再发一版。`,
+      `这里 ${m[1]} 从句缺了主语——想一下："谁" ${m[2]} 这个动作？把主语补上再发。`,
   },
   // P1 hard: interested + 复数名词（修饰被感兴趣的对象）
   // 例：「their interested fields」「my interested topics」
@@ -891,7 +910,7 @@ const VIABILITY_RULES: ViabilityRule[] = [
     note: "`interested + 名词` 用法不当",
     guideOnly: true,
     buildGuide: () =>
-      "`interested` 不能直接修饰被感兴趣的对象。换个说法：the fields they are interested in / fields of (one's) interest / one's areas of interest。",
+      "interested 在英语里通常做表语，不直接修饰名词。想一想：到底是 fields 在 interested，还是人在 interested？把修饰方向调过来，自己重组一下。",
   },
   // P1 hard: 单数可数名词缺冠词（高频名词搭配）
   // 例：「pursue academic path」「choose career path」「enter academic career」
@@ -902,7 +921,7 @@ const VIABILITY_RULES: ViabilityRule[] = [
     note: "单数可数名词前缺冠词",
     guideOnly: true,
     buildGuide: (m) =>
-      `「${m[1]} ${m[2]} ${m[3]}」前缺冠词——${m[2]} ${m[3]} 是单数可数名词短语，前面需要 a / an / the，先补上再发。`,
+      `${m[2]} ${m[3]} 是单数可数名词。想一下：这里指的是某一条特定的路、还是泛指任意一条？根据这个判断前面要补哪个限定词。`,
   },
 ];
 
@@ -1014,14 +1033,16 @@ export function formatViabilityProse(issue: ViabilityIssue): string {
   if (guide) {
     return guide;
   }
+  // 启发式优先：即便有 replacement，也只把它作为"参考方向"提示而不是直接答案；
+  // hard 类规则应使用 guideOnly + buildGuide，不应走到这里。
   if (anchor && replacement) {
-    return `这里「${anchor}」不太自然，改成「${replacement}」会更地道。`;
+    return `这里「${anchor}」可以再琢磨一下用词。如果想不到，参考方向：「${replacement}」，但先自己试着写一版。`;
   }
   if (anchor) {
     return `这里「${anchor}」表达上需要打磨：${issue.note}。`;
   }
   if (replacement) {
-    return `这一处可以改成「${replacement}」，会更自然。`;
+    return `这一处可以再想一想。参考方向：「${replacement}」，先自己试。`;
   }
   return `这一处表达需要打磨：${issue.note}。`;
 }

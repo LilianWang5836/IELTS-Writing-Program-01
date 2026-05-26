@@ -889,40 +889,11 @@ const VIABILITY_RULES: ViabilityRule[] = [
     buildGuide: (m) =>
       `compete 是动词。这里在修饰名词 ${m[1]}，要用形容词形式——你能想到这个形容词吗？`,
   },
-  // P1 hard: if/when/although/while + 动词，从句缺主语
-  // 例：「if want to pursue」「when learn」「although study hard」
-  {
-    re: /(?:^|[\s,.;])(if|when|while|although|though|unless|once|whenever)\s+(want|need|study|learn|work|do|does|don't|doesn't|are|is|was|were|have|has|had|will|would|can|could|should|must|may|might)\b/i,
-    kind: "grammar_agreement",
-    severity: 0.6,
-    note: "if/when 从句缺少主语",
-    guideOnly: true,
-    buildGuide: (m) =>
-      `这里 ${m[1]} 从句缺了主语——想一下："谁" ${m[2]} 这个动作？把主语补上再发。`,
-  },
-  // P1 hard: interested + 复数名词（修饰被感兴趣的对象）
-  // 例：「their interested fields」「my interested topics」
-  // 正确：the fields they are interested in / fields of interest
-  {
-    re: /\b(their|my|her|his|our|your|its)?\s*interested\s+(field|fields|topic|topics|area|areas|subject|subjects|domain|domains|major|majors)\b/i,
-    kind: "collocation",
-    severity: 0.4,
-    note: "`interested + 名词` 用法不当",
-    guideOnly: true,
-    buildGuide: () =>
-      "interested 在英语里通常做表语，不直接修饰名词。想一想：到底是 fields 在 interested，还是人在 interested？把修饰方向调过来，自己重组一下。",
-  },
-  // P1 hard: 单数可数名词缺冠词（高频名词搭配）
-  // 例：「pursue academic path」「choose career path」「enter academic career」
-  {
-    re: /\b(pursue|choose|follow|take|enter|start|begin)\s+(academic|career|professional|business|research)\s+(path|career|track|route|life|future)\b/i,
-    kind: "article",
-    severity: 0.45,
-    note: "单数可数名词前缺冠词",
-    guideOnly: true,
-    buildGuide: (m) =>
-      `${m[2]} ${m[3]} 是单数可数名词。想一下：这里指的是某一条特定的路、还是泛指任意一条？根据这个判断前面要补哪个限定词。`,
-  },
+  // —— 决策：不再在 VIABILITY_RULES 上为「具体词组/搭配」继续堆 case。
+  // 具体语言表达（缺冠词、语序反向、from-clause 缺主语、词性混淆…）
+  // 一律交给 LLM scout 识别。本地只保留**通用结构层**规则。
+  // 历史规则（sustainable studying、competition advantage 等）暂留，
+  // 但不再为新错误模式添加新条目。
 ];
 
 function pickAnchor(match: RegExpMatchArray): string | undefined {

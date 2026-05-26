@@ -165,8 +165,16 @@ const fuzzy = "Good for jobs.";
 const d5 = diagnoseSentence(fuzzy, "reason");
 ok(d5.kind === "unclear_wording", "未命中前置规则时走 unclear 兜底");
 ok(
-  detectStage3SentenceIntent("我觉得不一定要人做主语") === "meta",
-  "meta 讨论应识别为 meta intent",
+  detectStage3SentenceIntent("我觉得不一定要人做主语") === "discussion",
+  "「我觉得 / 不一定」类追问性讨论 → discussion（让 LLM 自由对话，不走 meta recall）",
+);
+ok(
+  detectStage3SentenceIntent("这里为什么要加 that") === "discussion",
+  "「为什么 + X」类追问 → discussion（不是回顾上一轮）",
+);
+ok(
+  detectStage3SentenceIntent("能不能用 that interest them") === "discussion",
+  "「能不能 / 可不可以」类商讨 → discussion",
 );
 
 const fb = formatSentenceCoachFeedback(d1, badSubject);

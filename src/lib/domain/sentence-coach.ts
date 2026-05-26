@@ -433,17 +433,19 @@ export function detectStage3SentenceIntent(message: string): Stage3SentenceInten
 
   const scaffoldRe =
     /(给(个|一个|点|我个)?\s*(提示|句型|开头|starter|帮助)|提示一下|不会写|怎么写|不知道(怎么|如何)|无从下手|没思路|来个(提示|句型|开头)|句型怎么|hint|scaffold)/i;
+  // meta = 「回顾上一轮反馈」类提问：用户在问"刚才哪里有问题"。
+  // 收窄：只命中明确指向上一轮 issues 的措辞；不再吃"为什么/我觉得/能不能/对吗"
+  //       这种追问性问题——那些归 discussion，让 LLM 自由解答。
   const metaRe =
-    /(我觉得|我认为|不一定|能不能|可不可以|是不是|对吗|为什么|语法|主语|谓语|动名词|从句|搭配|这个表达|这样写|这句行吗|grammar|subject|predicate|gerund|clause|打磨哪|改哪|哪里(有问题|需要|要改|不对|不行|不自然|不地道|打磨|修改)|哪里问题|什么问题|啥问题|啥意思|什么意思|我哪|我哪儿|没毛病吗|没问题吗|是不是错|问题在哪|错在哪)/i;
+    /(打磨哪|改哪|哪里(有问题|需要|要改|不对|不行|不自然|不地道|打磨|修改)|哪里问题|什么问题|啥问题|没毛病吗|没问题吗|是不是错|问题在哪|错在哪|我哪儿(不|没))/i;
   const contentRe =
     /\b(for instance|for example|because|which|therefore|students?|graduates?|companies?|workplace|internships?|projects?)\b/i;
 
   if (scaffoldRe.test(m) && !contentRe.test(m)) return "scaffold";
   if (metaRe.test(m) && !contentRe.test(m)) return "meta";
-  if (metaRe.test(m) && /[？?]/.test(m)) return "meta";
 
   // 讨论/试改/追问：
-  //  1) 中英混合（出现中文字符）——大概率是带中文问的"怎么放/能不能这样"
+  //  1) 中英混合（出现中文字符）——大概率是带中文问的"怎么放/为什么/能不能"
   //  2) 纯英文残片：很短 + 没句末标点 + 不含内容信号词（students/should/...）
   // 这些都走 LLM 自由对话，不跑模块判定。
   const hasChinese = /[\u4e00-\u9fff]/.test(m);

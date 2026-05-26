@@ -764,7 +764,9 @@ export function assessLocalViability(sentence: string): LocalViabilityResult {
   );
   return {
     score: Math.max(0, 1 - penalty),
-    confidence: issues.length > 0 ? 0.92 : 0.82,
+    // 规则有命中时置信度高（0.92）；规则未命中不代表句子没问题——这是规则盲区，
+    // 置信度设为 0.72（低于 LLM 升级阈值 0.8），确保 LLM 兜底复核。
+    confidence: issues.length > 0 ? 0.92 : 0.72,
     issues,
   };
 }

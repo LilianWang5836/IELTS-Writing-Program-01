@@ -143,11 +143,13 @@ ok(
 );
 const stableViab = assessLocalViability(stableSentence);
 ok(stableViab.issues.length === 0, "稳态句不应触发 viability issue");
+// 本地规则无命中时 confidence=0.72（低于 LLM 升级阈值）→ 生产环境会调用 LLM 确认。
+// decideSentenceState 测试使用 LLM 确认后的高 confidence 模拟（{score:0.9, confidence:0.9}）。
 ok(
   decideSentenceState({
     meaningAligned: true,
     structuralWorkable: true,
-    viability: stableViab,
+    viability: { score: 0.9, confidence: 0.9, issues: [] },
   }) === "stabilizable",
   "三层全通过 → stabilizable（可 confirm write-in）",
 );
@@ -371,11 +373,12 @@ const cleanResult = {
   moduleComplete: false,
 };
 
-// 1) stabilizable：干净句 → mode=feedback，verdict=pass，sentenceState=stabilizable
+// 1) stabilizable：干净句 + LLM 确认后的高 confidence viabilityOverride → stabilizable
 const stableProcessed = postProcessStage3Sentence(
   baseStateForBody1,
   { ...cleanResult },
   "Universities should prioritize practical skills because this helps graduates adapt to workplace demands.",
+  { score: 0.9, confidence: 0.9, issues: [] }, // 模拟 LLM 确认后结果
 );
 ok(
   stableProcessed.state.coachContext?.sentenceState === "stabilizable",

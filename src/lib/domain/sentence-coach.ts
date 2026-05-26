@@ -73,8 +73,10 @@ export interface ViabilityIssue {
   note: string;
   /** 用户原句里命中的具体片段，让反馈能指到位。 */
   anchor?: string;
-  /** 建议替换写法（给用户可粘贴的修法）。 */
+  /** 建议替换写法（机械可替换类问题用；guideOnly 规则不展示给用户）。 */
   replacement?: string;
+  /** 引导用户自己改写的说明（语序/搭配类优先用引导，不直接给整句）。 */
+  guideZh?: string;
 }
 
 export interface LocalViabilityResult {
@@ -645,6 +647,10 @@ type ViabilityRule = {
    * 没法精确给替换时返回 undefined，让反馈层走通用建议。
    */
   buildReplacement?: (match: RegExpMatchArray) => string | undefined;
+  /** 引导用户自己重组表达（语序/搭配类）；与 guideOnly 联用时不展示 replacement。 */
+  buildGuide?: (match: RegExpMatchArray) => string | undefined;
+  /** true = 用户可见反馈只给 guide，不给整句 replacement，鼓励用户自己改。 */
+  guideOnly?: boolean;
 };
 
 const VIABILITY_RULES: ViabilityRule[] = [
@@ -745,13 +751,15 @@ const VIABILITY_RULES: ViabilityRule[] = [
       return `${verb} the ${noun}`;
     },
   },
-  // P2: business model language（应为 tailored programming languages 等）
+  // P2: business model language — 中英语序差异，引导用户自己重组（不直接给整句）
   {
     re: /\bbusiness\s+model\s+language\b/i,
     kind: "collocation",
     severity: 0.28,
-    note: "`business model language` 搭配不自然",
-    buildReplacement: () => "programming languages tailored to their business models",
+    note: "`business model language` 搭配/语序不自然",
+    guideOnly: true,
+    buildGuide: () =>
+      "英文里中心词通常是 language，「适合公司业务/模式」是修饰成分；试着把这两层意思自己重组一下，不要直接堆成 business model language。",
   },
   // P2: competition advantage（应为 competitive advantage）
   {
@@ -790,7 +798,10 @@ export function assessLocalViability(sentence: string): LocalViabilityResult {
       severity: rule.severity,
       note: rule.note,
       anchor: pickAnchor(match),
-      replacement: rule.buildReplacement?.(match),
+      guideZh: rule.buildGuide?.(match),
+      replacement: rule.guideOnly
+        ? undefined
+        : rule.buildReplacement?.(match),
     });
   }
   if (
@@ -828,10 +839,18 @@ function formatViabilityFeedback(v: LocalViabilityResult): string {
   ].join("\n\n");
 }
 
-/** Prose-form：直接告诉用户"原句片段哪里不对、改成什么"，无标签。 */
+/** Prose-form：直接告诉用户"原句片段哪里不对、怎么改"，无标签。
+ *  优先级：guideZh（引导式，鼓励自己改）> replacement（机械可替换）> note 兜底。 */
 export function formatViabilityProse(issue: ViabilityIssue): string {
   const anchor = issue.anchor?.trim();
+  const guide = issue.guideZh?.trim();
   const replacement = issue.replacement?.trim();
+  if (anchor && guide) {
+    return `这里「${anchor}」需要打磨：${guide}`;
+  }
+  if (guide) {
+    return guide;
+  }
   if (anchor && replacement) {
     return `这里「${anchor}」不太自然，改成「${replacement}」会更地道。`;
   }
@@ -1920,9 +1939,23 @@ export function postProcessStage3Sentence(
 
   if (sentenceState === "workable" || sentenceState === "refine_needed") {
     const top = viability.issues[0];
-    const headline = top
+    // refine_needed = accept-with-correction，先肯定再点出小修，避免「驳回」语气。
+    const affirmByModule: Record<string, string> = {
+      claim: "立场已经表达清楚。",
+      reason: "因果说清楚了。",
+      example: "意思和例子都到位。",
+      impact: "影响表达到位。",
+      conclusion_restate: "立场已收回。",
+      conclusion_summary: "两段已经连起来了。",
+    };
+    const affirmPrefix =
+      sentenceState === "refine_needed"
+        ? (affirmByModule[mod ?? ""] ?? "意思已经传达到。") + " "
+        : "";
+    const issueLine = top
       ? formatViabilityProse(top)
       : "这一处表达可以再自然一点，微调后再发一版。";
+    const headline = `${affirmPrefix}${issueLine}`;
     const detailFeedback = [
       executionCard,
       sentenceState === "workable"

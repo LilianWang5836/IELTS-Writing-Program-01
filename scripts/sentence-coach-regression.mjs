@@ -129,9 +129,27 @@ ok(
   "C++ example 句应进入 refine_needed / stabilizable / workable，而非 meaning 拦截",
 );
 const bizViab = assessLocalViability(cppExample);
+const bizIssue = bizViab.issues.find((i) =>
+  /business model language/i.test(i.anchor ?? ""),
+);
+ok(!!bizIssue, "`business model language` anchor 应被命中");
 ok(
-  bizViab.issues.some((i) => /business model language/i.test(i.anchor ?? "")),
-  "`business model language` anchor 应被命中",
+  !!bizIssue?.guideZh && !bizIssue?.replacement,
+  "`business model language` 走 guide-only：有 guideZh 且不直接给整句 replacement",
+);
+const bizProse = formatViabilityProse(bizIssue);
+ok(
+  /business model language/.test(bizProse) && /语序|修饰|中心词|重组/.test(bizProse),
+  "prose 反馈应包含 anchor 并以引导语序方式呈现",
+);
+ok(
+  !/programming languages tailored/.test(bizProse),
+  "guide-only 不应直接吐出整句 replacement",
+);
+const cppHeadline = cppProcessed.result.userVisibleText ?? "";
+ok(
+  /意思和例子都到位/.test(cppHeadline),
+  "refine_needed (example) headline 应以肯定开头",
 );
 
 const good =

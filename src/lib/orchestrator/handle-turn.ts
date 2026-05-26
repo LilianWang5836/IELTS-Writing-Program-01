@@ -487,7 +487,14 @@ async function processLlmTurn(
       const effectiveStructural = structuralOverride ?? structuralWorkable;
       if (effectiveMeaning && effectiveStructural) {
         const local = assessLocalViability(sentenceInput);
-        if (!(local.score >= 0.75 && local.confidence >= 0.8)) {
+        // 本地已经命中 anchor/guide 的具体 issue，最精准——不再让 LLM 整包覆盖，
+        // 避免把"中文 anchor + 引导式 guide"换成英文长解释。
+        // 仅当本地 0 issue 且置信度不足时调 LLM 兜底（rule 盲区）。
+        const localHasIssue = local.issues.length > 0;
+        const needsScout =
+          !localHasIssue &&
+          !(local.score >= 0.75 && local.confidence >= 0.8);
+        if (needsScout) {
           const llmReviewed = await reviewViabilityWithLlm(sentenceInput);
           if (llmReviewed) viabilityOverride = llmReviewed;
         }

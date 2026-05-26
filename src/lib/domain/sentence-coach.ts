@@ -80,6 +80,18 @@ export type ViabilityIssueKind =
 
 export type ViabilitySeverityClass = "hard" | "soft";
 
+const ALLOWED_KIND_SET = new Set<ViabilityIssueKind>([
+  "collocation",
+  "phrase_naturalness",
+  "semantic_plausibility",
+  "target_role",
+  "grammar_agreement",
+  "spelling",
+  "tense",
+  "article",
+  "preposition",
+]);
+
 export const HARD_VIABILITY_KINDS: ViabilityIssueKind[] = [
   "grammar_agreement",
   "spelling",
@@ -412,7 +424,7 @@ export function detectStage3SentenceIntent(message: string): Stage3SentenceInten
   const scaffoldRe =
     /(给(个|一个|点|我个)?\s*(提示|句型|开头|starter|帮助)|提示一下|不会写|怎么写|不知道(怎么|如何)|无从下手|没思路|来个(提示|句型|开头)|句型怎么|hint|scaffold)/i;
   const metaRe =
-    /(我觉得|我认为|不一定|能不能|可不可以|是不是|对吗|为什么|语法|主语|谓语|动名词|从句|搭配|这个表达|这样写|这句行吗|grammar|subject|predicate|gerund|clause)/i;
+    /(我觉得|我认为|不一定|能不能|可不可以|是不是|对吗|为什么|语法|主语|谓语|动名词|从句|搭配|这个表达|这样写|这句行吗|grammar|subject|predicate|gerund|clause|打磨哪|改哪|哪里(有问题|需要|要改|不对|不行|不自然|不地道|打磨|修改)|哪里问题|什么问题|啥问题|啥意思|什么意思|我哪|我哪儿|没毛病吗|没问题吗|是不是错|问题在哪|错在哪)/i;
   const contentRe =
     /\b(for instance|for example|because|which|therefore|students?|graduates?|companies?|workplace|internships?|projects?)\b/i;
   if (scaffoldRe.test(m) && !contentRe.test(m)) return "scaffold";
@@ -507,6 +519,57 @@ export function buildScaffoldResponse(state: SessionState): string {
     );
   } else {
     lines.push(`把这一句围绕${moduleLabel}的核心信息接完整。`);
+  }
+  return lines.join("\n");
+}
+
+/** 元提问回放：当用户问"打磨哪里 / 错在哪"等，从上一轮 sentenceIssues
+ *  里直接重述具体位置，避免再让用户盲改。 */
+export function buildMetaRecallResponse(state: SessionState): string {
+  const ctx = state.coachContext;
+  const rawIssues = ctx?.lastViabilityIssues ?? [];
+  const issues: ViabilityIssue[] = rawIssues.map((it) => ({
+    kind: (ALLOWED_KIND_SET.has(it.kind as ViabilityIssueKind)
+      ? (it.kind as ViabilityIssueKind)
+      : "phrase_naturalness") as ViabilityIssueKind,
+    severityClass: it.severityClass,
+    severity: it.severity ?? 0.3,
+    note: it.note,
+    anchor: it.anchor,
+    guideZh: it.guideZh,
+    replacement: it.replacement,
+  }));
+  const pending = state.s3?.pendingSentence;
+  const lastState = ctx?.sentenceState;
+
+  if (!issues.length) {
+    // 上一轮已没有具体可指——直接告诉用户已经过关。
+    if (lastState === "stabilizable" || lastState === "refine_needed") {
+      return "上一句没有需要改的地方，已经可以写下一句了。";
+    }
+    return "我这边没拿到具体定位。你把刚才那一版再贴一次，我对着原句指出位置。";
+  }
+
+  const grouped = groupViabilityIssues(issues);
+  const lines: string[] = [];
+  if (pending) {
+    lines.push(`针对你上一版：「${pending}」`);
+  }
+  if (grouped.hard.length) {
+    lines.push("需要你自己改的位置：");
+    grouped.hard.forEach((it, idx) => {
+      lines.push(`${idx + 1}. ${formatViabilityProse(it)}`);
+    });
+  }
+  if (grouped.soft.length) {
+    lines.push(
+      grouped.hard.length
+        ? "顺手可以打磨（不强求）："
+        : "可以打磨的位置：",
+    );
+    grouped.soft.forEach((it, idx) => {
+      lines.push(`${idx + 1}. ${formatViabilityProse(it)}`);
+    });
   }
   return lines.join("\n");
 }
@@ -871,6 +934,21 @@ function formatViabilityFeedback(v: LocalViabilityResult): string {
   ].join("\n\n");
 }
 
+/** 为持久化到 coachContext.lastViabilityIssues 做轻量快照。 */
+function snapshotViabilityIssues(
+  issues: ViabilityIssue[],
+): NonNullable<NonNullable<SessionState["coachContext"]>["lastViabilityIssues"]> {
+  return issues.slice(0, 5).map((it) => ({
+    kind: it.kind,
+    severityClass: it.severityClass ?? classifyViabilityKind(it.kind),
+    severity: it.severity,
+    note: it.note,
+    anchor: it.anchor,
+    guideZh: it.guideZh,
+    replacement: it.replacement,
+  }));
+}
+
 /** 按 hard / soft 分组并按 severity 降序排列。 */
 export function groupViabilityIssues(issues: ViabilityIssue[]): {
   hard: ViabilityIssue[];
@@ -981,11 +1059,14 @@ export function decideSentenceState(input: {
     (i) => (i.severityClass ?? classifyViabilityKind(i.kind)) === "hard",
   );
   if (hasHardIssue) return "workable";
+  // 没有任何具体可指的 issue → 直接 stabilizable，不让用户盲改。
+  // （LLM scout 偶尔会用"低 score + 空 issues"表示"我感觉有问题但说不清"，
+  //  这种情况我们信任用户的修订，写入并继续。）
+  if (input.viability.issues.length === 0) return "stabilizable";
   const stabilizable =
     input.viability.score >= 0.75 && input.viability.confidence >= 0.8;
   if (stabilizable) return "stabilizable";
-  if (input.viability.issues.length > 0) return "refine_needed";
-  return "workable";
+  return "refine_needed";
 }
 
 export function looksStructurallyWorkable(s: string): boolean {
@@ -1989,6 +2070,7 @@ export function postProcessStage3Sentence(
           },
           sentenceIssues: issues,
           sentenceState,
+          lastViabilityIssues: snapshotViabilityIssues(viability.issues),
         },
       },
     };
@@ -2094,6 +2176,7 @@ export function postProcessStage3Sentence(
             },
             sentenceIssues: issues,
             sentenceState: "workable",
+            lastViabilityIssues: snapshotViabilityIssues(viability.issues),
           },
         },
       };
@@ -2167,6 +2250,7 @@ export function postProcessStage3Sentence(
           sentenceIssues: issues,
           sentenceState: "refine_needed",
           openIssue: "accept-with-correction",
+          lastViabilityIssues: snapshotViabilityIssues(viability.issues),
         },
       },
     };
@@ -2224,6 +2308,7 @@ export function postProcessStage3Sentence(
         sentenceIssue: lifecycle,
         sentenceIssues: issues,
         sentenceState: "repair_needed",
+        lastViabilityIssues: snapshotViabilityIssues(viability.issues),
       },
     },
   };

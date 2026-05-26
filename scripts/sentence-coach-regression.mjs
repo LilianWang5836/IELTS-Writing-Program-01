@@ -9,6 +9,7 @@ import {
   assessLocalViability,
   assessMeaningAlignment,
   buildAssignContextPrefix,
+  buildMetaRecallResponse,
   buildScaffoldResponse,
   classifyViabilityKind,
   decideSentenceState,
@@ -245,15 +246,15 @@ ok(
   "结构成立 + 可用性扣分 → refine_needed（不可 confirm）",
 );
 
-// 3. workable：结构成立、无可用性问题、但置信不足（LLM 兜底场景）
+// 3. 空 issues 兜底：没具体可指就不让用户盲改 → stabilizable
 const workableState = decideSentenceState({
   meaningAligned: true,
   structuralWorkable: true,
   viability: { score: 0.7, confidence: 0.6, issues: [] },
 });
 ok(
-  workableState === "workable",
-  "无 issue 但 score/confidence 不足 → workable（继续打磨）",
+  workableState === "stabilizable",
+  "空 issues + 低 confidence → stabilizable（不让用户盲改）",
 );
 
 // 4. repair_needed（meaning 未对齐）
@@ -845,6 +846,97 @@ ok(
   /已写入/.test(softProcessed.result.userVisibleText ?? ""),
   "soft only 写入提示",
 );
+
+// === 修：空 issues 不能再让用户盲改 =====================================
+ok(
+  decideSentenceState({
+    meaningAligned: true,
+    structuralWorkable: true,
+    viability: { score: 0.6, confidence: 0.85, issues: [] },
+  }) === "stabilizable",
+  "空 issues + 低 score → stabilizable（信任用户，不要盲改）",
+);
+ok(
+  decideSentenceState({
+    meaningAligned: true,
+    structuralWorkable: true,
+    viability: { score: 0.5, confidence: 0.7, issues: [] },
+  }) === "stabilizable",
+  "空 issues + 低 confidence → 仍然 stabilizable（说不清就视为 OK）",
+);
+
+// === 修：metaRe 扩展，「打磨哪里」「错在哪」等命中 meta =================
+ok(
+  detectStage3SentenceIntent("打磨哪里") === "meta",
+  "「打磨哪里」识别为 meta",
+);
+ok(
+  detectStage3SentenceIntent("错在哪") === "meta",
+  "「错在哪」识别为 meta",
+);
+ok(
+  detectStage3SentenceIntent("改哪") === "meta",
+  "「改哪」识别为 meta",
+);
+ok(
+  detectStage3SentenceIntent("哪里有问题") === "meta",
+  "「哪里有问题」识别为 meta",
+);
+ok(
+  detectStage3SentenceIntent("什么问题") === "meta",
+  "「什么问题」识别为 meta",
+);
+
+// === buildMetaRecallResponse：回放上一轮 viability issues ===============
+const metaRecallState = {
+  s3: { pendingSentence: "Students learn C++ at school." },
+  coachContext: {
+    sentenceState: "workable",
+    lastViabilityIssues: [
+      {
+        kind: "spelling",
+        severityClass: "hard",
+        severity: 0.5,
+        note: "拼写错误",
+        anchor: "fundation",
+        guideZh: "检查这个词拼写。",
+      },
+      {
+        kind: "phrase_naturalness",
+        severityClass: "soft",
+        severity: 0.3,
+        note: "语序不自然",
+        anchor: "business model language",
+        guideZh: "重新组织语序。",
+      },
+    ],
+  },
+};
+const metaReply = buildMetaRecallResponse(metaRecallState);
+ok(
+  /Students learn C\+\+ at school/.test(metaReply),
+  "meta recall 回放上一版原句",
+);
+ok(
+  /fundation/.test(metaReply) && /business model language/.test(metaReply),
+  "meta recall 列出 hard + soft anchor",
+);
+ok(
+  /需要你自己改/.test(metaReply),
+  "meta recall 区分硬错（需要你自己改）",
+);
+
+const metaRecallEmpty = buildMetaRecallResponse({
+  s3: {},
+  coachContext: { sentenceState: "stabilizable", lastViabilityIssues: [] },
+});
+ok(
+  /没有需要改|可以写下一句/.test(metaRecallEmpty),
+  "meta recall 在 stabilizable 时告诉用户已过关",
+);
+
+// === normalize 兜底已在 handle-turn 内部，无 issues 时拉满 score/confidence ===
+//   这里通过 decideSentenceState 间接保障：见上面两条测试。
 
 if (fail) process.exit(1);
 console.log("\nAll sentence coach checks passed.");

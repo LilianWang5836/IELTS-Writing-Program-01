@@ -45,6 +45,7 @@ import {
 import {
   assessMeaningAlignment,
   assessLocalViability,
+  buildMetaRecallResponse,
   buildScaffoldResponse,
   classifyViabilityKind,
   detectStage3SentenceIntent,
@@ -278,6 +279,11 @@ function normalizeViabilityFromLlm(raw: unknown): LocalViabilityResult | null {
         .filter((it): it is ViabilityIssue => !!it))
     : [];
 
+  // "说不清就视为 OK"：LLM 没列出任何具体 issue 时，把 score/confidence 拉满，
+  // 避免它用"低分 + 空 issues"逼出 fallback workable，让用户盲改。
+  if (issues.length === 0) {
+    return { score: 1, confidence: 0.9, issues: [] };
+  }
   return {
     score,
     confidence,
@@ -936,16 +942,29 @@ export async function handleTurn(
     s.subStep === "S3_2_MODULE" &&
     (s.s3?.mode === "assign" ||
       s.s3?.mode === "coach" ||
-      s.s3?.mode === "feedback") &&
-    detectStage3SentenceIntent(message) === "scaffold"
+      s.s3?.mode === "feedback")
   ) {
-    const reply = buildScaffoldResponse(s);
-    return {
-      replies: [reply],
-      state: appendChat(s, "assistant", reply),
-      requiresConfirm: false,
-      canSubmit: true,
-    };
+    const intent = detectStage3SentenceIntent(message);
+    if (intent === "scaffold") {
+      const reply = buildScaffoldResponse(s);
+      return {
+        replies: [reply],
+        state: appendChat(s, "assistant", reply),
+        requiresConfirm: false,
+        canSubmit: true,
+      };
+    }
+    if (intent === "meta") {
+      // "打磨哪里 / 哪里有问题 / 错在哪" 等元提问：直接回放上一轮 viability issues，
+      // 不再让用户重新贴一遍上一版。
+      const reply = buildMetaRecallResponse(s);
+      return {
+        replies: [reply],
+        state: appendChat(s, "assistant", reply),
+        requiresConfirm: false,
+        canSubmit: true,
+      };
+    }
   }
 
   if (s.subStep === "S3_2_MODULE" && s.s3?.mode === "assign") {

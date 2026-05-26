@@ -161,6 +161,17 @@ export interface CoachContext {
     hits: number;
     consecutiveTurns: number;
   }>;
+  /** 上一轮的 viability issues（保留 anchor/guideZh/severityClass），
+   *  供"打磨哪里"等 meta 重述回放，避免让用户再贴一遍上一版。 */
+  lastViabilityIssues?: Array<{
+    kind: string;
+    severityClass?: "hard" | "soft";
+    severity?: number;
+    note: string;
+    anchor?: string;
+    guideZh?: string;
+    replacement?: string;
+  }>;
   orchestratorGate?: {
     totalHits: number;
     consecutiveHits: number;

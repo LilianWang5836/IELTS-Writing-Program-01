@@ -150,7 +150,9 @@ export interface CoachContext {
     status: "active" | "improving" | "resolved" | "regressed";
     lastSnippet?: string;
     consecutiveTurns: number;
+    confidenceDelta?: number;
   };
+  sentenceState?: "repair_needed" | "workable" | "refine_needed" | "stabilizable";
   sentenceIssues?: Array<{
     kind: string;
     priority: "P0" | "P1" | "P2" | "P3";

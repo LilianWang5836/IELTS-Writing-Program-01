@@ -178,3 +178,14 @@ export async function callLlm(
   const raw = await chatCompletions(config, prompt);
   return parseLlmJson(raw);
 }
+
+export async function callLlmJson<T>(
+  prompt: string,
+): Promise<T> {
+  const config = resolveLlmConfig();
+  if (!config) {
+    throw new Error("LLM JSON call requires live model configuration");
+  }
+  const raw = await chatCompletions(config, prompt);
+  return JSON.parse(raw) as T;
+}

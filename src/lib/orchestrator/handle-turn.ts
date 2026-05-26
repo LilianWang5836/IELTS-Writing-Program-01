@@ -43,12 +43,15 @@ import {
 } from "@/lib/domain/stage2-coach";
 import {
   assessMeaningAlignment,
+  assessLocalViability,
   diagnoseSentence,
+  looksStructurallyWorkable,
+  type LocalViabilityResult,
   postProcessStage3Sentence,
 } from "@/lib/domain/sentence-coach";
 import type { BodyKey, WorkshopBodyKey } from "@/lib/domain/types";
 import { formatCoachDisplay } from "@/lib/llm/guard";
-import { callLlm } from "@/lib/llm/client";
+import { callLlm, callLlmJson } from "@/lib/llm/client";
 import { buildFullPrompt } from "@/lib/prompts/loader";
 import { markerWhenAdvance, shouldAdvance } from "./advance";
 import {
@@ -92,6 +95,85 @@ async function runPrompt(
     userMessage,
     subStep: state.subStep,
   });
+}
+
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+function normalizeViabilityFromLlm(raw: unknown): LocalViabilityResult | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as {
+    score?: unknown;
+    confidence?: unknown;
+    issues?: unknown;
+  };
+  const score =
+    typeof obj.score === "number" ? clamp01(obj.score) : undefined;
+  const confidence =
+    typeof obj.confidence === "number" ? clamp01(obj.confidence) : undefined;
+  if (typeof score !== "number" || typeof confidence !== "number") return null;
+
+  const issues = Array.isArray(obj.issues)
+    ? obj.issues
+        .map((it) => {
+          if (!it || typeof it !== "object") return null;
+          const i = it as { kind?: unknown; severity?: unknown; note?: unknown };
+          const kind =
+            i.kind === "collocation" ||
+            i.kind === "phrase_naturalness" ||
+            i.kind === "semantic_plausibility" ||
+            i.kind === "target_role"
+              ? i.kind
+              : null;
+          const severity =
+            typeof i.severity === "number" ? clamp01(i.severity) : 0.2;
+          const note = typeof i.note === "string" ? i.note.trim() : "";
+          if (!kind || !note) return null;
+          return { kind, severity, note };
+        })
+        .filter(
+          (
+            it,
+          ): it is {
+            kind:
+              | "collocation"
+              | "phrase_naturalness"
+              | "semantic_plausibility"
+              | "target_role";
+            severity: number;
+            note: string;
+          } => !!it,
+        )
+    : [];
+
+  return {
+    score,
+    confidence,
+    issues,
+  };
+}
+
+async function reviewViabilityWithLlm(
+  sentence: string,
+): Promise<LocalViabilityResult | null> {
+  const prompt = [
+    "You are a sentence viability evaluator for IELTS writing coaching.",
+    "Task: assess minimum linguistic naturalness only.",
+    "DO NOT evaluate argument completeness, paragraph coherence, discourse sufficiency, thesis alignment, or stance quality.",
+    "Return JSON only with this exact schema:",
+    '{"score": number, "confidence": number, "issues": [{"kind":"collocation|phrase_naturalness|semantic_plausibility|target_role","severity": number, "note": string}]}',
+    "score and confidence must be between 0 and 1.",
+    `Sentence: ${sentence}`,
+  ].join("\n");
+
+  try {
+    const raw = await callLlmJson<unknown>(prompt);
+    return normalizeViabilityFromLlm(raw);
+  } catch {
+    return null;
+  }
 }
 
 function buildVars(
@@ -214,6 +296,9 @@ function buildVars(
       base.orchestrator_snapshot = JSON.stringify(state.s3.orchestrator);
       base.current_focus_layer = state.s3.orchestrator.focusLayer;
     }
+    if (state.coachContext?.sentenceState) {
+      base.sentence_state = state.coachContext.sentenceState;
+    }
     if (state.coachContext?.orchestratorGate) {
       base.orchestrator_gate_telemetry = JSON.stringify(
         state.coachContext.orchestratorGate,
@@ -275,7 +360,28 @@ async function processLlmTurn(
   }
 
   if (prevSubStep === "S3_2_MODULE") {
-    const processed = postProcessStage3Sentence(nextState, result, userMessage);
+    let viabilityOverride: LocalViabilityResult | undefined;
+    const sentenceInput =
+      userMessage?.trim() ?? nextState.s3?.pendingSentence?.trim() ?? "";
+    const sampledTask = sampleStage3Task(nextState);
+    const sentenceTask = sampledTask?.taskType ?? undefined;
+    if (sentenceInput) {
+      const meaning = assessMeaningAlignment(nextState, sentenceInput, sentenceTask);
+      const structuralWorkable = looksStructurallyWorkable(sentenceInput);
+      if (meaning.aligned && structuralWorkable) {
+        const local = assessLocalViability(sentenceInput);
+        if (!(local.score >= 0.75 && local.confidence >= 0.8)) {
+          const llmReviewed = await reviewViabilityWithLlm(sentenceInput);
+          if (llmReviewed) viabilityOverride = llmReviewed;
+        }
+      }
+    }
+    const processed = postProcessStage3Sentence(
+      nextState,
+      result,
+      userMessage,
+      viabilityOverride,
+    );
     result = processed.result;
     nextState = processed.state;
     const reply = formatCoachDisplay(result, { stage3Sentence: true });
@@ -603,7 +709,8 @@ export async function handleTurn(
     const requiresConfirm =
       ns.subStep === "S3_2_MODULE" &&
       ns.s3?.mode === "feedback" &&
-      !!ns.s3.pendingSentence;
+      !!ns.s3.pendingSentence &&
+      ns.coachContext?.sentenceState === "stabilizable";
     return {
       replies,
       state: ns,
@@ -675,7 +782,10 @@ export async function handleTurn(
   }
 
   const requiresConfirm =
-    s.subStep === "S3_2_MODULE" && s.s3?.mode === "feedback" && !!s.s3.pendingSentence;
+    s.subStep === "S3_2_MODULE" &&
+    s.s3?.mode === "feedback" &&
+    !!s.s3.pendingSentence &&
+    s.coachContext?.sentenceState === "stabilizable";
 
   return {
     replies,
@@ -687,7 +797,11 @@ export async function handleTurn(
 
 export async function handleConfirm(state: SessionState): Promise<TurnResponse> {
   const s0 = ensureMigrated(state);
-  if (s0.subStep !== "S3_2_MODULE" || !s0.s3?.pendingSentence) {
+  if (
+    s0.subStep !== "S3_2_MODULE" ||
+    !s0.s3?.pendingSentence ||
+    s0.coachContext?.sentenceState !== "stabilizable"
+  ) {
     return {
       replies: ["当前无需确认。"],
       state: s0,

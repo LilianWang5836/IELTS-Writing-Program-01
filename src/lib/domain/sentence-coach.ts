@@ -62,6 +62,28 @@ export interface MeaningAlignmentResult {
   requiredConcepts: string[];
 }
 
+export interface ViabilityIssue {
+  kind:
+    | "collocation"
+    | "phrase_naturalness"
+    | "semantic_plausibility"
+    | "target_role";
+  severity: number;
+  note: string;
+}
+
+export interface LocalViabilityResult {
+  score: number;
+  confidence: number;
+  issues: ViabilityIssue[];
+}
+
+export type SentenceTrainingState =
+  | "repair_needed"
+  | "workable"
+  | "refine_needed"
+  | "stabilizable";
+
 export type Stage3SentenceIntent = "content" | "meta";
 type DetectableProblemKind = Exclude<
   SentenceProblemKind,
@@ -82,7 +104,6 @@ export const MAIN_ERROR_PRIORITY: Array<{
   { priority: "P1", kind: "subject_verb_broken" },
   { priority: "P1", kind: "clause_attachment" },
   { priority: "P1", kind: "cause_effect_gap" },
-  { priority: "P2", kind: "collocation" },
   { priority: "P2", kind: "noun_pile" },
 ];
 
@@ -192,8 +213,14 @@ export function assessMeaningAlignment(
   }
 
   if (module === "claim" || module === "conclusion_restate" || module === "conclusion_summary") {
-    const hasClaimObject = required.some((c) => hasConcept(c));
-    if (!hasClaimObject) missing.push("core_object");
+    const hasStanceVerb = /\b(should|must|need\s+to|ought\s+to|have\s+to)\b/i.test(sentence);
+    const hasTargetRole = /\b(universities?|university|schools?|students?|governments?|institutions?)\b/i.test(
+      sentence,
+    );
+    const hasTopicDirection = required.some((c) => hasConcept(c));
+    if (!hasStanceVerb) missing.push("claim_stance");
+    if (!hasTargetRole) missing.push("claim_target");
+    if (!hasTopicDirection) missing.push("claim_direction");
     return {
       aligned: missing.length === 0,
       missing,
@@ -418,7 +445,50 @@ function detectCollocation(s: string): boolean {
   return false;
 }
 
-function looksPassable(s: string): boolean {
+export function assessLocalViability(sentence: string): LocalViabilityResult {
+  const s = sentence.trim();
+  const issues: ViabilityIssue[] = [];
+  const checks: Array<{ re: RegExp; note: string; kind: ViabilityIssue["kind"] }> = [
+    { re: /\bsustainable\s+studying\b/i, note: "`sustainable studying` 搭配不自然", kind: "collocation" },
+    { re: /\bknowledge\s+chances\b/i, note: "`knowledge chances` 语义不自然", kind: "semantic_plausibility" },
+    { re: /\bacademic\s+students\b/i, note: "`academic students` 指称不自然", kind: "target_role" },
+    { re: /\baccumulate\s+chances\b/i, note: "`accumulate chances` 语义不成立", kind: "semantic_plausibility" },
+  ];
+  for (const c of checks) {
+    if (!c.re.test(s)) continue;
+    issues.push({ kind: c.kind, severity: 0.32, note: c.note });
+  }
+  if (/\b(chance|chances)\b/i.test(s) && /\b(knowledge|study|studying)\b/i.test(s)) {
+    if (!issues.some((i) => /knowledge chances/i.test(i.note))) {
+      issues.push({
+        kind: "phrase_naturalness",
+        severity: 0.26,
+        note: "知识相关表达与 `chances` 组合不自然",
+      });
+    }
+  }
+  const penalty = Math.min(
+    0.8,
+    issues.reduce((sum, issue) => sum + issue.severity, 0),
+  );
+  return {
+    score: Math.max(0, 1 - penalty),
+    confidence: issues.length > 0 ? 0.92 : 0.82,
+    issues,
+  };
+}
+
+function formatViabilityFeedback(v: LocalViabilityResult): string {
+  const top = v.issues[0];
+  if (!top) return "结构已成立，表达可继续微调。";
+  return [
+    `【P2 · 表达可用性】`,
+    `问题说明：${top.note}`,
+    `先只改这一处表达，再提交。`,
+  ].join("\n\n");
+}
+
+export function looksStructurallyWorkable(s: string): boolean {
   const t = s.trim();
   if (wordCount(t) < 6) return false;
   if (!hasFiniteVerb(t)) return false;
@@ -735,7 +805,7 @@ export function diagnoseSentence(
     );
   }
 
-  if (looksPassable(s)) {
+  if (looksStructurallyWorkable(s)) {
     return {
       priority: "P3",
       kind: "none",
@@ -1020,6 +1090,7 @@ export function postProcessStage3Sentence(
   state: SessionState,
   result: LlmTurnResult,
   userMessage?: string,
+  viabilityOverride?: LocalViabilityResult,
 ): { result: LlmTurnResult; state: SessionState } {
   const s3 = state.s3;
   if (!s3 || state.subStep !== "S3_2_MODULE") {
@@ -1119,6 +1190,7 @@ export function postProcessStage3Sentence(
           openIssue: "表达讨论（meta）",
           sentenceIssue: prevIssue,
           sentenceIssues: prevIssues,
+          sentenceState: nextState.coachContext?.sentenceState,
         },
       },
     };
@@ -1173,6 +1245,7 @@ export function postProcessStage3Sentence(
           openIssue: `Orchestrator(${orchestrator.focusLayer})`,
           sentenceIssue: prevIssue,
           sentenceIssues: prevIssues,
+          sentenceState: nextState.coachContext?.sentenceState,
         },
       },
     };
@@ -1198,7 +1271,13 @@ export function postProcessStage3Sentence(
                       ? "具体场景"
                       : m === "claim_relevance"
                         ? "与论点关联"
-                        : "核心对象",
+                        : m === "claim_stance"
+                          ? "立场动词（should/must 等）"
+                          : m === "claim_target"
+                            ? "目标角色（universities/students 等）"
+                            : m === "claim_direction"
+                              ? "主题方向（学术/实践/就业等）"
+                              : "核心对象",
       )
       .join("、");
 
@@ -1265,6 +1344,7 @@ export function postProcessStage3Sentence(
           openIssue: "Meaning 未对齐",
           sentenceIssue: meaningLifecycle,
           sentenceIssues: meaningIssues,
+          sentenceState: "repair_needed",
         },
       },
     };
@@ -1287,36 +1367,105 @@ export function postProcessStage3Sentence(
   );
 
   if (diagnosis.pass) {
-    const passText = "这句结构已经清楚，可以写入。请点击「确认写入」进入下一句。";
+    const viability = viabilityOverride ?? assessLocalViability(sentence);
+    const skipEscalation =
+      viability.score >= 0.75 && viability.confidence >= 0.8;
+    const stabilizable = skipEscalation;
+    const sentenceState: SentenceTrainingState = stabilizable
+      ? "stabilizable"
+      : viability.issues.length > 0
+        ? "refine_needed"
+        : "workable";
+
+    if (stabilizable) {
+      const passText = "这句结构和表达已比较稳定，可以写入。请点击「确认写入」进入下一句。";
+      next = {
+        ...next,
+        verdict: "pass",
+        advance: false,
+        userVisibleText: buildStage3OutputContract({
+          module: mod ?? null,
+          meaningOk: true,
+          meaningReason: "已覆盖当前句目标含义",
+          paragraphFit: true,
+          paragraphReason: "句子功能与当前模块匹配",
+          feedback: passText,
+          suggestedRevision: "保持此框架，后续只做词汇/语法微调。",
+          nextStep: "点击确认写入，进入下一句。",
+          orchestrator,
+        }),
+        moduleComplete: next.moduleComplete ?? true,
+        mirror: undefined,
+        coachQuestion: undefined,
+        syntaxHint: undefined,
+      };
+      return {
+        result: next,
+        state: {
+          ...nextState,
+          s3: { ...s3, mode: "feedback", pendingSentence: sentence },
+          coachContext: {
+            ...nextState.coachContext,
+            sentenceIssue: {
+              ...lifecycle,
+              confidenceDelta: (viability.score - 0.75),
+            },
+            sentenceIssues: issues,
+            sentenceState,
+          },
+        },
+      };
+    }
+
+    const viabilityFeedback = formatViabilityFeedback(viability);
+    const escalationHint =
+      sentenceState === "workable"
+        ? "结构已成立，但自然度置信度不足，先继续 refinement。"
+        : "";
     next = {
       ...next,
-      verdict: "pass",
+      verdict: "coach",
       advance: false,
       userVisibleText: buildStage3OutputContract({
         module: mod ?? null,
         meaningOk: true,
-        meaningReason: "已覆盖当前句目标含义",
+        meaningReason: "核心含义可理解，结构已成立",
         paragraphFit: true,
-        paragraphReason: "句子功能与当前模块匹配",
-        feedback: passText,
-        suggestedRevision: "保持此框架，后续只做词汇/语法微调。",
-        nextStep: "点击确认写入，进入下一句。",
+        paragraphReason: "当前句仍在本模块范围内",
+        feedback: orchestrator?.mode === "soft"
+          ? prependHint(layerHint, [escalationHint, viabilityFeedback].filter(Boolean).join("\n\n"))
+          : [escalationHint, viabilityFeedback].filter(Boolean).join("\n\n"),
+        suggestedRevision:
+          sentenceState === "workable"
+            ? "保持原意，微调表达后再提交。"
+            : "先修正这一处不自然搭配，再提交。",
+        nextStep:
+          sentenceState === "workable"
+            ? "继续 refinement，达到 stabilizable 后即可确认写入。"
+            : "保持原意，修正该片段后再发一版。",
         orchestrator,
       }),
-      moduleComplete: next.moduleComplete ?? true,
-      mirror: undefined,
-      coachQuestion: undefined,
+      mirror: viabilityFeedback,
+      coachQuestion: "先改这一处表达，再提交。",
+      moduleComplete: false,
       syntaxHint: undefined,
     };
     return {
       result: next,
       state: {
         ...nextState,
-        s3: { ...s3, mode: "feedback", pendingSentence: sentence },
+        s3: { ...s3, mode: "coach", pendingSentence: sentence },
         coachContext: {
           ...nextState.coachContext,
-          sentenceIssue: lifecycle,
+          lastQuestion: next.coachQuestion,
+          openIssue: "表达可用性",
+          sentenceIssue: {
+            ...lifecycle,
+            status: sentenceState === "refine_needed" ? "active" : "improving",
+            confidenceDelta: viability.score - 0.75,
+          },
           sentenceIssues: issues,
+          sentenceState,
         },
       },
     };
@@ -1363,6 +1512,7 @@ export function postProcessStage3Sentence(
         openIssue: diagnosis.labelZh,
         sentenceIssue: lifecycle,
         sentenceIssues: issues,
+        sentenceState: "repair_needed",
       },
     },
   };

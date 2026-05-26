@@ -62,13 +62,43 @@ export interface MeaningAlignmentResult {
   requiredConcepts: string[];
 }
 
+/** Viability issue 类别。
+ *  hard 类：拼写、主谓一致、时态、冠词、介词——用户必须自己改。
+ *  soft 类：搭配、语序、风格——可 accept-with-correction。 */
+export type ViabilityIssueKind =
+  // soft 类（保留原 4 个）
+  | "collocation"
+  | "phrase_naturalness"
+  | "semantic_plausibility"
+  | "target_role"
+  // hard 类（新增，LLM 必须能报）
+  | "grammar_agreement"
+  | "spelling"
+  | "tense"
+  | "article"
+  | "preposition";
+
+export type ViabilitySeverityClass = "hard" | "soft";
+
+export const HARD_VIABILITY_KINDS: ViabilityIssueKind[] = [
+  "grammar_agreement",
+  "spelling",
+  "tense",
+  "article",
+  "preposition",
+];
+
+export function classifyViabilityKind(
+  kind: ViabilityIssueKind,
+): ViabilitySeverityClass {
+  return HARD_VIABILITY_KINDS.includes(kind) ? "hard" : "soft";
+}
+
 export interface ViabilityIssue {
-  kind:
-    | "collocation"
-    | "phrase_naturalness"
-    | "semantic_plausibility"
-    | "target_role";
+  kind: ViabilityIssueKind;
   severity: number;
+  /** 严重度分类：hard 必须用户自改不写入，soft 可 accept-with-correction。 */
+  severityClass?: ViabilitySeverityClass;
   /** 抽象规则名（保留作日志/分类用）。 */
   note: string;
   /** 用户原句里命中的具体片段，让反馈能指到位。 */
@@ -796,6 +826,7 @@ export function assessLocalViability(sentence: string): LocalViabilityResult {
     issues.push({
       kind: rule.kind,
       severity: rule.severity,
+      severityClass: classifyViabilityKind(rule.kind),
       note: rule.note,
       anchor: pickAnchor(match),
       guideZh: rule.buildGuide?.(match),
@@ -812,6 +843,7 @@ export function assessLocalViability(sentence: string): LocalViabilityResult {
     issues.push({
       kind: "phrase_naturalness",
       severity: 0.26,
+      severityClass: "soft",
       note: "knowledge / study 相关表达与 `chances` 组合不自然",
       replacement: "opportunities to learn / gain knowledge",
     });
@@ -837,6 +869,25 @@ function formatViabilityFeedback(v: LocalViabilityResult): string {
     `问题说明：${top.note}`,
     `先只改这一处表达，再提交。`,
   ].join("\n\n");
+}
+
+/** 按 hard / soft 分组并按 severity 降序排列。 */
+export function groupViabilityIssues(issues: ViabilityIssue[]): {
+  hard: ViabilityIssue[];
+  soft: ViabilityIssue[];
+} {
+  const hard: ViabilityIssue[] = [];
+  const soft: ViabilityIssue[] = [];
+  for (const it of issues) {
+    const cls = it.severityClass ?? classifyViabilityKind(it.kind);
+    if (cls === "hard") hard.push(it);
+    else soft.push(it);
+  }
+  const bySev = (a: ViabilityIssue, b: ViabilityIssue) =>
+    (b.severity ?? 0) - (a.severity ?? 0);
+  hard.sort(bySev);
+  soft.sort(bySev);
+  return { hard: hard.slice(0, 3), soft: soft.slice(0, 3) };
 }
 
 /** Prose-form：直接告诉用户"原句片段哪里不对、怎么改"，无标签。
@@ -924,6 +975,12 @@ export function decideSentenceState(input: {
   viability: LocalViabilityResult;
 }): SentenceTrainingState {
   if (!input.meaningAligned || !input.structuralWorkable) return "repair_needed";
+  // viability 中含 hard error（拼写、主谓一致、时态、冠词、介词）→
+  // 强制 workable，让用户自己改后重新提交，不写入。
+  const hasHardIssue = input.viability.issues.some(
+    (i) => (i.severityClass ?? classifyViabilityKind(i.kind)) === "hard",
+  );
+  if (hasHardIssue) return "workable";
   const stabilizable =
     input.viability.score >= 0.75 && input.viability.confidence >= 0.8;
   if (stabilizable) return "stabilizable";
@@ -1938,99 +1995,146 @@ export function postProcessStage3Sentence(
   }
 
   if (sentenceState === "workable" || sentenceState === "refine_needed") {
-    const top = viability.issues[0];
-    // refine_needed = accept-with-correction，先肯定再点出小修，避免「驳回」语气。
     const affirmByModule: Record<string, string> = {
-      claim: "立场已经表达清楚。",
-      reason: "因果说清楚了。",
-      example: "意思和例子都到位。",
-      impact: "影响表达到位。",
-      conclusion_restate: "立场已收回。",
-      conclusion_summary: "两段已经连起来了。",
+      claim: "立场已经表达清楚",
+      reason: "因果说清楚了",
+      example: "意思和例子都到位",
+      impact: "影响表达到位",
+      conclusion_restate: "立场已收回",
+      conclusion_summary: "两段已经连起来了",
     };
-    const affirmPrefix =
-      sentenceState === "refine_needed"
-        ? (affirmByModule[mod ?? ""] ?? "意思已经传达到。") + " "
-        : "";
-    const issueLine = top
-      ? formatViabilityProse(top)
-      : "这一处表达可以再自然一点，微调后再发一版。";
-    const headline = `${affirmPrefix}${issueLine}`;
+    const affirm = affirmByModule[mod ?? ""] ?? "意思已经传达到";
+    const grouped = groupViabilityIssues(viability.issues);
+
+    // 分组渲染：hard 一栏（必须改），soft 一栏（建议）。
+    const renderGroup = (items: ViabilityIssue[]): string =>
+      items
+        .map((it, idx) => `${idx + 1}. ${formatViabilityProse(it)}`)
+        .join("\n");
+
     const detailFeedback = [
       executionCard,
       sentenceState === "workable"
-        ? "核心结构已成立，但自然度置信度不足。"
+        ? "核心结构已成立，但有需要先修的硬错或表达问题。"
         : "可理解但表达还不够自然。",
       formatViabilityFeedback(viability),
     ]
       .filter(Boolean)
       .join("\n\n");
 
-    // refine_needed = accept-with-correction：原句已可写入，coach 同条消息指出小修。
-    // workable = 仍在 refine，置信度不足，让用户再发一版。
-    if (sentenceState === "refine_needed") {
-      const acceptBody =
+    // workable = 含 hard error 或置信度不足：阻塞重写，不写入。
+    if (sentenceState === "workable") {
+      const hardItems = grouped.hard;
+      const softItems = grouped.soft;
+      const headline = hardItems.length
+        ? `${affirm}，下面这几处需要你自己改一下再发给我：`
+        : `${affirm}，但表达还需要再打磨一下：`;
+      const lines: string[] = [];
+      if (hardItems.length) {
+        lines.push(renderGroup(hardItems));
+      }
+      if (softItems.length) {
+        lines.push(
+          hardItems.length
+            ? "另外这几处可以顺手打磨（不强求）："
+            : "",
+          renderGroup(softItems),
+        );
+      }
+      if (!hardItems.length && !softItems.length) {
+        lines.push("再调一版表达发我。");
+      }
+      const body = (
         orchestrator?.mode === "soft"
-          ? prependHint(layerHint, "（已写入这一句；下面给一处建议，写下一句时可以注意。）")
-          : "（已写入这一句；下面给一处建议，写下一句时可以注意。）";
+          ? prependHint(layerHint, lines.filter(Boolean).join("\n\n"))
+          : lines.filter(Boolean).join("\n\n")
+      ).trim();
       next = {
         ...next,
-        verdict: "pass",
+        verdict: "coach",
         advance: false,
         userVisibleText: buildStage3CompactDisplay({
-          mode: "stabilizable",
+          mode: "needs_repair",
           headline,
-          body: acceptBody,
+          body,
           contract: {
             module: mod ?? null,
             meaningOk: true,
             meaningReason: "核心含义可理解，结构已成立",
-            paragraphFit: true,
-            paragraphReason: "当前句仍在本模块范围内",
+            paragraphFit: false,
+            paragraphReason: hardItems.length
+              ? "存在需要用户自改的硬错"
+              : "表达自然度仍不足",
             feedback: detailFeedback,
-            suggestedRevision: "保留原意，下次写时注意这一处。",
-            nextStep: "已写入，自动进入下一句。",
+            suggestedRevision: "保留原意，把上面标注的位置修正后再提交。",
+            nextStep: "改完上述位置后重新发一版。",
             orchestrator,
           },
         }),
         mirror: headline,
-        coachQuestion: undefined,
-        moduleComplete: next.moduleComplete ?? true,
+        coachQuestion: hardItems.length
+          ? "先把这几处自己改过来再提交。"
+          : "再调一版表达发我。",
+        moduleComplete: false,
         syntaxHint: undefined,
       };
       return {
         result: next,
         state: {
           ...nextState,
-          s3: { ...s3, mode: "feedback", pendingSentence: sentence },
+          s3: { ...s3, mode: "coach", pendingSentence: sentence },
           coachContext: {
             ...nextState.coachContext,
+            lastQuestion: next.coachQuestion,
+            openIssue: hardItems.length ? "硬错需用户自改" : "表达可用性",
             sentenceIssue: {
               ...lifecycle,
-              status: "active",
+              status: "improving",
               confidenceDelta: viability.score - 0.75,
             },
             sentenceIssues: issues,
-            sentenceState: "refine_needed",
-            openIssue: "accept-with-correction",
+            sentenceState: "workable",
           },
         },
       };
     }
 
-    // workable：阻塞重写（让用户再发一版），不自动 commit。
-    const body =
+    // refine_needed = accept-with-correction：仅 soft 类，写入并给建议。
+    const softItems = grouped.soft;
+    const issueLine = softItems[0]
+      ? formatViabilityProse(softItems[0])
+      : "这一处表达可以再自然一点。";
+    const headline = `${affirm}。${issueLine}`;
+    const extraSoftLines = softItems
+      .slice(1, 3)
+      .map((it, idx) => `${idx + 2}. ${formatViabilityProse(it)}`)
+      .join("\n");
+    const acceptBody = (
       orchestrator?.mode === "soft"
-        ? prependHint(layerHint, "保留原意，再微调一版给我。")
-        : "保留原意，再微调一版给我。";
+        ? prependHint(
+            layerHint,
+            [
+              "（已写入这一句；下面给一处建议，写下一句时可以注意。）",
+              extraSoftLines,
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          )
+        : [
+            "（已写入这一句；下面给一处建议，写下一句时可以注意。）",
+            extraSoftLines,
+          ]
+            .filter(Boolean)
+            .join("\n\n")
+    ).trim();
     next = {
       ...next,
-      verdict: "coach",
+      verdict: "pass",
       advance: false,
       userVisibleText: buildStage3CompactDisplay({
-        mode: "needs_repair",
+        mode: "stabilizable",
         headline,
-        body,
+        body: acceptBody,
         contract: {
           module: mod ?? null,
           meaningOk: true,
@@ -2038,32 +2142,31 @@ export function postProcessStage3Sentence(
           paragraphFit: true,
           paragraphReason: "当前句仍在本模块范围内",
           feedback: detailFeedback,
-          suggestedRevision: "保持原意，微调表达后再提交。",
-          nextStep: "继续 refinement，达到 stabilizable 后会自动写入。",
+          suggestedRevision: "保留原意，下次写时注意这一处。",
+          nextStep: "已写入，自动进入下一句。",
           orchestrator,
         },
       }),
       mirror: headline,
-      coachQuestion: "先改这一处表达，再提交。",
-      moduleComplete: false,
+      coachQuestion: undefined,
+      moduleComplete: next.moduleComplete ?? true,
       syntaxHint: undefined,
     };
     return {
       result: next,
       state: {
         ...nextState,
-        s3: { ...s3, mode: "coach", pendingSentence: sentence },
+        s3: { ...s3, mode: "feedback", pendingSentence: sentence },
         coachContext: {
           ...nextState.coachContext,
-          lastQuestion: next.coachQuestion,
-          openIssue: "表达可用性",
           sentenceIssue: {
             ...lifecycle,
-            status: "improving",
+            status: "active",
             confidenceDelta: viability.score - 0.75,
           },
           sentenceIssues: issues,
-          sentenceState: "workable",
+          sentenceState: "refine_needed",
+          openIssue: "accept-with-correction",
         },
       },
     };

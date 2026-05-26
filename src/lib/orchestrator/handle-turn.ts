@@ -46,11 +46,15 @@ import {
   assessMeaningAlignment,
   assessLocalViability,
   buildScaffoldResponse,
+  classifyViabilityKind,
   detectStage3SentenceIntent,
   diagnoseSentence,
   getModuleDirection,
   looksStructurallyWorkable,
   type LocalViabilityResult,
+  type ViabilityIssue,
+  type ViabilityIssueKind,
+  type ViabilitySeverityClass,
   postProcessStage3Sentence,
 } from "@/lib/domain/sentence-coach";
 import type { BodyKey, WorkshopBodyKey } from "@/lib/domain/types";
@@ -149,6 +153,70 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
+/** 把本地与 LLM 的 viability 结果合并去重：
+ *  - 优先保留本地命中的 issue（中文 anchor + guideZh 已经更精准）
+ *  - LLM 仅补充本地未覆盖的 issue（按 anchor/kind 去重）
+ *  - 最终 issues 按 hard > soft、severity 降序排列，最多保留 5 条避免噪声。 */
+function mergeViability(
+  local: LocalViabilityResult,
+  llm: LocalViabilityResult,
+): LocalViabilityResult {
+  const seen = new Set<string>();
+  const issues: ViabilityIssue[] = [];
+  const key = (i: ViabilityIssue) =>
+    `${i.kind}::${(i.anchor ?? "").toLowerCase().slice(0, 40)}`;
+  for (const it of local.issues) {
+    const k = key(it);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    issues.push({
+      ...it,
+      severityClass: it.severityClass ?? classifyViabilityKind(it.kind),
+    });
+  }
+  for (const it of llm.issues) {
+    const k = key(it);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    issues.push({
+      ...it,
+      severityClass: it.severityClass ?? classifyViabilityKind(it.kind),
+    });
+  }
+  // 排序：hard 先 + severity 降序
+  issues.sort((a, b) => {
+    const ca: ViabilitySeverityClass =
+      a.severityClass ?? classifyViabilityKind(a.kind);
+    const cb: ViabilitySeverityClass =
+      b.severityClass ?? classifyViabilityKind(b.kind);
+    if (ca !== cb) return ca === "hard" ? -1 : 1;
+    return (b.severity ?? 0) - (a.severity ?? 0);
+  });
+  const truncated = issues.slice(0, 5);
+  const penalty = Math.min(
+    0.8,
+    truncated.reduce((sum, i) => sum + (i.severity ?? 0), 0),
+  );
+  return {
+    score: Math.max(0, 1 - penalty),
+    // 本地命中 + LLM 兜底，合并后置信度取两者较高
+    confidence: Math.max(local.confidence, llm.confidence),
+    issues: truncated,
+  };
+}
+
+const ALLOWED_VIABILITY_KINDS = new Set<ViabilityIssueKind>([
+  "collocation",
+  "phrase_naturalness",
+  "semantic_plausibility",
+  "target_role",
+  "grammar_agreement",
+  "spelling",
+  "tense",
+  "article",
+  "preposition",
+]);
+
 function normalizeViabilityFromLlm(raw: unknown): LocalViabilityResult | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as {
@@ -162,37 +230,52 @@ function normalizeViabilityFromLlm(raw: unknown): LocalViabilityResult | null {
     typeof obj.confidence === "number" ? clamp01(obj.confidence) : undefined;
   if (typeof score !== "number" || typeof confidence !== "number") return null;
 
-  const issues = Array.isArray(obj.issues)
-    ? obj.issues
-        .map((it) => {
+  const issues: ViabilityIssue[] = Array.isArray(obj.issues)
+    ? (obj.issues
+        .map((it): ViabilityIssue | null => {
           if (!it || typeof it !== "object") return null;
-          const i = it as { kind?: unknown; severity?: unknown; note?: unknown };
+          const i = it as {
+            kind?: unknown;
+            severity?: unknown;
+            severityClass?: unknown;
+            note?: unknown;
+            anchor?: unknown;
+            guideZh?: unknown;
+            replacement?: unknown;
+          };
           const kind =
-            i.kind === "collocation" ||
-            i.kind === "phrase_naturalness" ||
-            i.kind === "semantic_plausibility" ||
-            i.kind === "target_role"
-              ? i.kind
+            typeof i.kind === "string" &&
+            ALLOWED_VIABILITY_KINDS.has(i.kind as ViabilityIssueKind)
+              ? (i.kind as ViabilityIssueKind)
               : null;
           const severity =
-            typeof i.severity === "number" ? clamp01(i.severity) : 0.2;
+            typeof i.severity === "number" ? clamp01(i.severity) : 0.3;
           const note = typeof i.note === "string" ? i.note.trim() : "";
           if (!kind || !note) return null;
-          return { kind, severity, note };
+          const severityClass: ViabilitySeverityClass =
+            i.severityClass === "hard" || i.severityClass === "soft"
+              ? i.severityClass
+              : classifyViabilityKind(kind);
+          const anchor = typeof i.anchor === "string" ? i.anchor.trim() : undefined;
+          const guideZh = typeof i.guideZh === "string" ? i.guideZh.trim() : undefined;
+          // hard 类 LLM 即便返回 replacement，也不直接展示——交给用户自己改。
+          const replacement =
+            severityClass === "hard"
+              ? undefined
+              : typeof i.replacement === "string"
+                ? i.replacement.trim()
+                : undefined;
+          return {
+            kind,
+            severity,
+            severityClass,
+            note,
+            anchor: anchor || undefined,
+            guideZh: guideZh || undefined,
+            replacement,
+          } satisfies ViabilityIssue;
         })
-        .filter(
-          (
-            it,
-          ): it is {
-            kind:
-              | "collocation"
-              | "phrase_naturalness"
-              | "semantic_plausibility"
-              | "target_role";
-            severity: number;
-            note: string;
-          } => !!it,
-        )
+        .filter((it): it is ViabilityIssue => !!it))
     : [];
 
   return {
@@ -259,13 +342,43 @@ async function reviewViabilityWithLlm(
   sentence: string,
 ): Promise<LocalViabilityResult | null> {
   const prompt = [
-    "You are a sentence viability evaluator for IELTS writing coaching.",
-    "Task: assess minimum linguistic naturalness only.",
-    "DO NOT evaluate argument completeness, paragraph coherence, discourse sufficiency, thesis alignment, or stance quality.",
-    "Return JSON only with this exact schema:",
-    '{"score": number, "confidence": number, "issues": [{"kind":"collocation|phrase_naturalness|semantic_plausibility|target_role","severity": number, "note": string}]}',
-    "score and confidence must be between 0 and 1.",
-    `Sentence: ${sentence}`,
+    "你是 IELTS 写作教练，为单句做 viability 检查。任务是把句子里**用户可改进**的点找出来，分类、按严重度排序。",
+    "",
+    "检查范围（覆盖所有这些，不要遗漏）：",
+    "  hard 类（用户必须自己修，不能写入）：",
+    "    - spelling：拼写错误（例如 fundation → foundation）",
+    "    - grammar_agreement：主谓一致 / which 指代单复数不一致",
+    "    - tense：时态错误或时态不一致",
+    "    - article：冠词缺失或多余",
+    "    - preposition：介词搭配错误",
+    "  soft 类（可写入，但要指出让用户下次注意）：",
+    "    - collocation：搭配不自然（如 competition advantage → competitive advantage）",
+    "    - phrase_naturalness：短语/语序不地道（如 business model language 中英语序问题）",
+    "    - semantic_plausibility：语义可疑但语法没错",
+    "    - target_role：人称/角色指代不自然",
+    "",
+    "不要评估：论点完整性、段落衔接、立场强弱、上下文是否充分——只看这一句本身。",
+    "",
+    "输出 JSON 严格如下，note / guideZh 用中文，禁止直接给整句改写：",
+    '{"score": number, "confidence": number, "issues": [',
+    '  {',
+    '    "kind": "<上述 9 种之一>",',
+    '    "severityClass": "hard" | "soft",',
+    '    "severity": 0.1~0.9,',
+    '    "anchor": "<原句里命中的具体片段，必填>",',
+    '    "note": "<中文一句话说明问题是什么>",',
+    '    "guideZh": "<中文引导：提示用户从哪里想、要查什么；不要给改后整句>"',
+    '  }',
+    "]}",
+    "",
+    "规则：",
+    "  - score/confidence 在 0~1。",
+    "  - issues 按 hard > soft、severity 降序排列。",
+    "  - 同一类问题只报一次，挑最关键的那一处。",
+    "  - hard 类禁止 replacement 字段（让用户自己改）；soft 类的 replacement 也尽量不填，优先用 guideZh 引导。",
+    "  - 没有任何问题时 issues 返回空数组，并 score=1, confidence=0.9。",
+    "",
+    `句子：${sentence}`,
   ].join("\n");
 
   try {
@@ -487,16 +600,19 @@ async function processLlmTurn(
       const effectiveStructural = structuralOverride ?? structuralWorkable;
       if (effectiveMeaning && effectiveStructural) {
         const local = assessLocalViability(sentenceInput);
-        // 本地已经命中 anchor/guide 的具体 issue，最精准——不再让 LLM 整包覆盖，
-        // 避免把"中文 anchor + 引导式 guide"换成英文长解释。
-        // 仅当本地 0 issue 且置信度不足时调 LLM 兜底（rule 盲区）。
-        const localHasIssue = local.issues.length > 0;
-        const needsScout =
-          !localHasIssue &&
-          !(local.score >= 0.75 && local.confidence >= 0.8);
+        const localHasHard = local.issues.some(
+          (i) => (i.severityClass ?? classifyViabilityKind(i.kind)) === "hard",
+        );
+        // 本地规则目前只有 soft 类，无法覆盖语法/拼写——所以即便本地命中 issue，
+        // 也仍然让 LLM 兜底扫一遍 hard error；本地若已发现 hard issue 则可省。
+        // 仅当本地满分（score≥0.75, confidence≥0.8）时跳过 LLM。
+        const fullyConfident = local.score >= 0.75 && local.confidence >= 0.8;
+        const needsScout = !localHasHard && !fullyConfident;
         if (needsScout) {
           const llmReviewed = await reviewViabilityWithLlm(sentenceInput);
-          if (llmReviewed) viabilityOverride = llmReviewed;
+          if (llmReviewed) {
+            viabilityOverride = mergeViability(local, llmReviewed);
+          }
         }
       }
     }

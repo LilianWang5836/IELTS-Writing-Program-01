@@ -3,17 +3,20 @@
  * npm run test:sentence
  */
 import {
+  HARD_VIABILITY_KINDS,
   MAIN_ERROR_PRIORITY,
   applyStudentAnchoredScaffolding,
   assessLocalViability,
   assessMeaningAlignment,
   buildAssignContextPrefix,
   buildScaffoldResponse,
+  classifyViabilityKind,
   decideSentenceState,
   detectStage3SentenceIntent,
   diagnoseSentence,
   formatSentenceCoachFeedback,
   formatViabilityProse,
+  groupViabilityIssues,
   looksStructurallyWorkable,
   postProcessStage3Sentence,
 } from "../src/lib/domain/sentence-coach.ts";
@@ -673,6 +676,174 @@ const enterConclusionState = {
 ok(
   /进入 Conclusion/.test(buildAssignContextPrefix(enterConclusionState)),
   "进入 Conclusion 时给出收束引导",
+);
+
+// === Viability hard/soft 分类与分组 =====================================
+ok(
+  HARD_VIABILITY_KINDS.includes("spelling") &&
+    HARD_VIABILITY_KINDS.includes("grammar_agreement") &&
+    HARD_VIABILITY_KINDS.includes("tense") &&
+    HARD_VIABILITY_KINDS.includes("article") &&
+    HARD_VIABILITY_KINDS.includes("preposition"),
+  "HARD_VIABILITY_KINDS 包含 5 类硬错",
+);
+ok(
+  classifyViabilityKind("collocation") === "soft" &&
+    classifyViabilityKind("phrase_naturalness") === "soft" &&
+    classifyViabilityKind("semantic_plausibility") === "soft" &&
+    classifyViabilityKind("target_role") === "soft",
+  "原 4 类 viability 仍归 soft",
+);
+ok(
+  classifyViabilityKind("spelling") === "hard" &&
+    classifyViabilityKind("grammar_agreement") === "hard",
+  "spelling / grammar_agreement 归 hard",
+);
+
+const mixedIssues = [
+  { kind: "collocation", severity: 0.3, note: "soft 1" },
+  { kind: "spelling", severity: 0.6, note: "硬错 1" },
+  { kind: "phrase_naturalness", severity: 0.4, note: "soft 2" },
+  { kind: "grammar_agreement", severity: 0.7, note: "硬错 2" },
+];
+const grouped = groupViabilityIssues(mixedIssues);
+ok(
+  grouped.hard.length === 2 && grouped.soft.length === 2,
+  "groupViabilityIssues 按 hard/soft 分组",
+);
+ok(
+  grouped.hard[0].severity > grouped.hard[1].severity,
+  "hard 组按 severity 降序",
+);
+ok(
+  grouped.soft[0].severity > grouped.soft[1].severity,
+  "soft 组按 severity 降序",
+);
+
+// === assessLocalViability 输出带 severityClass =========================
+const compViabClassed = assessLocalViability(
+  "Students should accumulate work skills, so that they can gain competition advantage.",
+);
+ok(
+  compViabClassed.issues.every(
+    (i) => i.severityClass === "soft" || i.severityClass === "hard",
+  ),
+  "本地规则产生的 issue 都带 severityClass",
+);
+
+// === decideSentenceState：含 hard error → workable，不写入 =============
+const fakeHardViab = {
+  score: 0.6,
+  confidence: 0.9,
+  issues: [
+    {
+      kind: "spelling",
+      severityClass: "hard",
+      severity: 0.4,
+      note: "拼写错误",
+      anchor: "fundation",
+      guideZh: "检查这个词拼写。",
+    },
+  ],
+};
+ok(
+  decideSentenceState({
+    meaningAligned: true,
+    structuralWorkable: true,
+    viability: fakeHardViab,
+  }) === "workable",
+  "含 hard error → workable（阻塞重写，不写入）",
+);
+
+const fakeSoftOnlyViab = {
+  score: 0.7,
+  confidence: 0.85,
+  issues: [
+    {
+      kind: "collocation",
+      severityClass: "soft",
+      severity: 0.28,
+      note: "搭配偏弱",
+      anchor: "business model language",
+      guideZh: "重新组织一下语序。",
+    },
+  ],
+};
+ok(
+  decideSentenceState({
+    meaningAligned: true,
+    structuralWorkable: true,
+    viability: fakeSoftOnlyViab,
+  }) === "refine_needed",
+  "全 soft → refine_needed（accept-with-correction）",
+);
+
+// === postProcessStage3Sentence：hard error 路径走 workable，body 含「自己改」 ==
+const hardErrorState = {
+  stage: 3,
+  subStep: "S3_2_MODULE",
+  s2: {
+    // 含「实践」「技能」「适应」概念词，保证 claim meaning aligned
+    body1Point: "大学应教授实用技能",
+    body1Angle: "实践帮助学生适应职场",
+    body2Point: "大学应支持学术研究",
+    body2Angle: "学术深度",
+  },
+  s3: {
+    currentBody: "body1",
+    modulePlan: { body1: ["claim"], body2: [], conclusion: [] },
+    moduleIndex: 0,
+    mode: "feedback",
+    pendingSentence: undefined,
+    confirmedSentences: {},
+  },
+  coachContext: {},
+};
+const sentenceWithFakeHard =
+  "Universities should prioritize practical skills because this helps students adapt.";
+// 这句本地无 issue，所以用 viabilityOverride 注入 fakeHardViab 模拟"LLM 返回 hard error"
+const hardProcessed = postProcessStage3Sentence(
+  hardErrorState,
+  { verdict: "pass", advance: false, userVisibleText: "", moduleComplete: false },
+  sentenceWithFakeHard,
+  fakeHardViab,
+);
+ok(
+  hardProcessed.state.coachContext?.sentenceState === "workable",
+  "postProcess: hard error 走 workable",
+);
+ok(
+  hardProcessed.result.verdict === "coach",
+  "postProcess: hard error verdict=coach（阻塞）",
+);
+const hardText = hardProcessed.result.userVisibleText ?? "";
+ok(
+  /自己改/.test(hardText),
+  "hard error headline/body 明确要求用户自己改",
+);
+ok(
+  /fundation/.test(hardText),
+  "hard error 反馈含 anchor",
+);
+
+// === postProcessStage3Sentence：soft only → refine_needed + 写入 =======
+const softProcessed = postProcessStage3Sentence(
+  hardErrorState,
+  { verdict: "pass", advance: false, userVisibleText: "", moduleComplete: false },
+  sentenceWithFakeHard,
+  fakeSoftOnlyViab,
+);
+ok(
+  softProcessed.state.coachContext?.sentenceState === "refine_needed",
+  "postProcess: soft only → refine_needed",
+);
+ok(
+  softProcessed.result.verdict === "pass",
+  "postProcess: soft only verdict=pass（写入）",
+);
+ok(
+  /已写入/.test(softProcessed.result.userVisibleText ?? ""),
+  "soft only 写入提示",
 );
 
 if (fail) process.exit(1);

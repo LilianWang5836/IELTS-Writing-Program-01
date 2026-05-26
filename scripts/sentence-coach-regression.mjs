@@ -452,5 +452,115 @@ ok(
   "无替换建议时仍可指出原句片段",
 );
 
+// === P3a：scaffold intent ================================================
+ok(
+  detectStage3SentenceIntent("给个提示") === "scaffold",
+  "「给个提示」应被识别为 scaffold intent",
+);
+ok(
+  detectStage3SentenceIntent("不会写") === "scaffold",
+  "「不会写」应被识别为 scaffold",
+);
+ok(
+  detectStage3SentenceIntent("给个句型") === "scaffold",
+  "「给个句型」应被识别为 scaffold",
+);
+ok(
+  detectStage3SentenceIntent("Students should adapt to workplace") === "content",
+  "内容句不应被误判 scaffold",
+);
+
+const scaffoldState = {
+  ...baseStateForBody1,
+  s3: { ...baseStateForBody1.s3, mode: "assign" },
+};
+const scaffoldText = buildScaffoldResponse(scaffoldState);
+ok(
+  /试试这个开头：/.test(scaffoldText),
+  "scaffold 响应应含「试试这个开头：」",
+);
+ok(
+  !/【|】|Keywords|Pattern：/.test(scaffoldText),
+  "scaffold 响应不带【】标签",
+);
+
+// === P3b/c：assign 上下文前缀 ============================================
+// 段首且无前序 → 空
+const freshAssignState = {
+  s2: {
+    body1Point: "P1",
+    body1Angle: "A1",
+    body2Point: "P2",
+    body2Angle: "A2",
+  },
+  s3: {
+    currentBody: "body1",
+    modulePlan: { body1: ["claim", "reason"], body2: ["claim"], conclusion: ["conclusion_summary"] },
+    moduleIndex: 0,
+    mode: "assign",
+    confirmedSentences: {},
+  },
+};
+ok(
+  buildAssignContextPrefix(freshAssignState) === "",
+  "首句无前序时不输出上下文前缀",
+);
+
+// 同段内非首句 → 「继续这一段...」
+const midBodyState = {
+  s2: freshAssignState.s2,
+  s3: {
+    currentBody: "body1",
+    modulePlan: { body1: ["claim", "reason", "example"], body2: [], conclusion: [] },
+    moduleIndex: 1,
+    mode: "assign",
+    confirmedSentences: { "body1.claim": ["This is my claim."] },
+  },
+};
+ok(
+  /继续这一段/.test(buildAssignContextPrefix(midBodyState)),
+  "同段内有前序时输出「继续这一段」前缀",
+);
+
+// 跨段进入 body2 → 「现在进入 Body 2（按蓝图：...）」
+const enterBody2State = {
+  s2: freshAssignState.s2,
+  s3: {
+    currentBody: "body2",
+    modulePlan: { body1: ["claim"], body2: ["claim"], conclusion: [] },
+    moduleIndex: 0,
+    mode: "assign",
+    confirmedSentences: { "body1.claim": ["Sentence in body1"] },
+  },
+};
+const enterBody2Prefix = buildAssignContextPrefix(enterBody2State);
+ok(
+  /进入 Body 2/.test(enterBody2Prefix) && /P2/.test(enterBody2Prefix),
+  "进入 Body 2 时明示并引用 body2Point",
+);
+
+// 跨段进入 conclusion
+const enterConclusionState = {
+  s2: freshAssignState.s2,
+  s3: {
+    currentBody: "conclusion",
+    modulePlan: {
+      body1: ["claim"],
+      body2: ["claim"],
+      conclusion: ["conclusion_summary"],
+    },
+    moduleIndex: 0,
+    mode: "assign",
+    confirmedSentences: {
+      "body1.claim": ["B1 sentence"],
+      "body2.claim": ["B2 sentence"],
+    },
+  },
+};
+ok(
+  /进入 Conclusion/.test(buildAssignContextPrefix(enterConclusionState)),
+  "进入 Conclusion 时给出收束引导",
+);
+
 if (fail) process.exit(1);
 console.log("\nAll sentence coach checks passed.");

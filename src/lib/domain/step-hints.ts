@@ -2,8 +2,10 @@ import { handoffProgress } from "./handoff";
 import type { SessionState } from "./types";
 
 export function getStepHint(state: SessionState, requiresConfirm: boolean): string {
+  // 注意：「确认写入」按钮已下线，stabilizable / refine_needed 改为自动写入。
+  // 仍保留 requiresConfirm 分支兜底（兼容旧 persist），但提示语不再要求点击按钮。
   if (requiresConfirm) {
-    return "→ 请点击「确认写入」，不要再次点提交。";
+    return "→ 这一句可以写入，刷新页面或继续写下一句即可。";
   }
 
   switch (state.subStep) {
@@ -34,7 +36,7 @@ export function getStepHint(state: SessionState, requiresConfirm: boolean): stri
         return "→ 按教练要求写一句英文，点「提交」；一次只写一句。";
       }
       if (state.s3?.mode === "feedback") {
-        return "→ 结构已够：请点击「确认写入」进入下一句。";
+        return "→ 已自动写入，请继续写下一句。";
       }
       if (state.s3?.mode === "coach") {
         return "→ 根据中文修复问句改本句后重新提交（一次只修一个问题）。";

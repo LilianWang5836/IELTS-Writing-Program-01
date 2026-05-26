@@ -73,7 +73,8 @@ function sanitizePersistedStore(raw: unknown): Partial<WritingStore> {
     messages: safeMessages,
     questions: safeQuestions,
     leftPanel: typeof s.leftPanel === "string" ? s.leftPanel : "",
-    requiresConfirm: !!s.requiresConfirm,
+    // 「确认写入」按钮已下线；强制清零 requiresConfirm，避免旧 persist 卡住 UI。
+    requiresConfirm: false,
     canSubmit: !!s.canSubmit,
   };
 }
@@ -400,7 +401,8 @@ export const useWritingStore = create<WritingStore>()(
     {
       name: STORAGE_KEY,
       storage: safeStorage,
-      version: 2,
+      // v3：「确认写入」按钮下线，强制 requiresConfirm=false。
+      version: 3,
       migrate: (persistedState) => sanitizePersistedStore(persistedState),
       skipHydration: true,
       partialize: (s) => ({

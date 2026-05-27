@@ -475,30 +475,50 @@ export function themesToHandoffPatch(
   const body2Kind: SideKind =
     pro || themes.positionLean === "balanced" ? "drawback" : "benefit";
 
-  const latestBody1 =
-    pickLatestSpecificPoint(msgs, body1Kind) ||
-    pickLatestSpecificPoint(msgs, body1Kind === "benefit" ? "drawback" : "benefit");
-  const latestBody2 =
-    pickLatestSpecificPoint(msgs, body2Kind) ||
-    pickLatestSpecificPoint(msgs, body2Kind === "benefit" ? "drawback" : "benefit");
+  const latestBody1 = pickLatestSpecificPoint(msgs, body1Kind);
+  const latestBody2 = pickLatestSpecificPoint(msgs, body2Kind);
 
-  const fallbackBody1 =
+  let fallbackBody1 =
     body1Kind === "benefit"
-      ? benefitText || themes.benefits[0] || ""
-      : drawbackText || themes.drawbacks[0] || "";
-  const fallbackBody2 =
+      ? benefitText || themes.benefits[themes.benefits.length - 1] || ""
+      : drawbackText || themes.drawbacks[themes.drawbacks.length - 1] || "";
+  let fallbackBody2 =
     body2Kind === "benefit"
-      ? benefitText || themes.benefits[0] || ""
-      : drawbackText || themes.drawbacks[0] || "";
+      ? benefitText || themes.benefits[themes.benefits.length - 1] || ""
+      : drawbackText || themes.drawbacks[themes.drawbacks.length - 1] || "";
 
-  const body1Point = trimSnippet(
+  if (body2Kind === "drawback" && themes.drawbacks.length === 0) {
+    fallbackBody2 = "";
+  }
+  if (body1Kind === "benefit" && themes.benefits.length === 0) {
+    fallbackBody1 = "";
+  }
+
+  let body1Point = trimSnippet(
     isolatePointForSide(latestBody1 || fallbackBody1, body1Kind),
     72,
   );
-  const body2Point = trimSnippet(
+  let body2Point = trimSnippet(
     isolatePointForSide(latestBody2 || fallbackBody2, body2Kind),
     72,
   );
+
+  if (body1Point && body2Point && bodyPointsTooSimilar(body1Point, body2Point)) {
+    if (body2Kind === "drawback" && themes.drawbacks.length > 0) {
+      body2Point = trimSnippet(
+        isolatePointForSide(
+          themes.drawbacks[themes.drawbacks.length - 1] ?? "",
+          "drawback",
+        ),
+        72,
+      );
+    } else {
+      body2Point = "";
+    }
+  }
+  if (body1Point && body2Point && bodyPointsTooSimilar(body1Point, body2Point)) {
+    body2Point = "";
+  }
 
   let body1Angle = "";
   let body2Angle = "";
@@ -534,30 +554,54 @@ export function themesToHandoffPatch(
   };
 }
 
+function bodyPointsTooSimilar(a: string, b: string): boolean {
+  const x = a.trim().replace(/\s/g, "");
+  const y = b.trim().replace(/\s/g, "");
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (x.length > 10 && y.length > 10 && (x.includes(y) || y.includes(x))) {
+    return true;
+  }
+  return false;
+}
+
 function looksLikeBenefitLine(text: string): boolean {
-  return /收入|就业|经济|带动|服务业|受益|增长|交流|便利|机会|发展/.test(text);
+  return /收入|就业|经济|带动|服务业|受益|增长|交流|便利|机会|发展|促进/.test(
+    text,
+  );
 }
 
 function looksLikeDrawbackLine(text: string): boolean {
-  return /拥堵|堵车|拥挤|垃圾|污染|环境|破坏|不便|噪音|成本|压力|影响居民/.test(text);
+  if (!/拥堵|堵车|拥挤|垃圾|污染|破坏|不便|噪音|成本|压力|影响居民|环境破坏|环境压力/.test(
+    text,
+  )) {
+    return false;
+  }
+  if (/环境/.test(text) && /破坏|污染|垃圾|压力|破坏/.test(text)) {
+    return true;
+  }
+  return /拥堵|堵车|拥挤|垃圾|污染|破坏|不便|噪音|成本|压力|影响居民/.test(
+    text,
+  );
 }
 
 function pickLatestSpecificPoint(msgs: string[], kind: SideKind): string {
   for (let i = msgs.length - 1; i >= 0; i--) {
     const line = msgs[i]?.trim() ?? "";
     if (!line) continue;
-    if (!isPointSpecificEnough(line)) continue;
 
     const isBenefit = looksLikeBenefitLine(line);
     const isDrawback = looksLikeDrawbackLine(line);
 
-    if (kind === "benefit" && isBenefit) {
+    if (kind === "benefit" && isBenefit && !isDrawback) {
       const isolated = isolatePointForSide(line, "benefit");
       if (isolated && isPointSpecificEnough(isolated)) return isolated;
+      if (isolated.length >= 12) return isolated;
     }
-    if (kind === "drawback" && isDrawback) {
+    if (kind === "drawback" && isDrawback && !isBenefit) {
       const isolated = isolatePointForSide(line, "drawback");
       if (isolated && isPointSpecificEnough(isolated)) return isolated;
+      if (isolated.length >= 12) return isolated;
     }
   }
   return "";

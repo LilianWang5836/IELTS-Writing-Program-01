@@ -137,6 +137,24 @@ ok(
   "坏处部分进入 Body2",
 );
 
+const dupState = stateAfterUserLines([
+  "好处更多，利大于弊",
+  "旅游业能促进当地经济发展，同时增加当地居民的就业机会",
+]);
+const dupMsgs = userMessages(dupState);
+const dupThemes = extractExplorationThemes(dupState, dupMsgs);
+const dupPatch = themesToHandoffPatch(dupThemes, dupState, dupMsgs);
+ok(
+  dupPatch.body1Point?.includes("经济") || dupPatch.body1Point?.includes("就业"),
+  "仅有好处句时 Body1 保留经济/就业",
+);
+ok(
+  !dupPatch.body2Point?.trim() ||
+    (dupPatch.body1Point !== dupPatch.body2Point &&
+      !dupPatch.body2Point?.includes("经济")),
+  "无坏处句时 Body2 不与 Body1 重复同一句好处",
+);
+
 ok(readRewriteRiskGate({ userVisibleText: "", rewriteRisk: "high" }).blockProposal, "high 拦截 proposed");
 ok(!readRewriteRiskGate({ userVisibleText: "", rewriteRisk: "medium" }).blockProposal, "medium 不拦截");
 ok(!readRewriteRiskGate({ userVisibleText: "", rewriteRisk: "low" }).blockProposal, "low 不拦截");

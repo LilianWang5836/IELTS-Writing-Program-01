@@ -15,7 +15,7 @@
     "id": "q3",
     "title": "Global tourism",
     "prompt": "International tourism has brought enormous benefits to many places. At the same time, there is concern about its impact on local inhabitants and the environment. Do the disadvantages of international tourism outweigh the advantages?",
-    "hintType": "agree"
+    "hintType": "adv_disadv"
   },
   {
     "id": "q4",

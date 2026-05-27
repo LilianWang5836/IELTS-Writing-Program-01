@@ -8,6 +8,10 @@ import {
   userMessages,
 } from "./essay-substance";
 import { explorationSideLabel } from "./stage1-exploration";
+import {
+  extractExplorationThemes,
+  reconcileMirrorAndAsk,
+} from "./stage1-exploration-themes";
 import { resolveHandoffTurnDecision } from "./handoff-turn-decision";
 import type { LlmTurnResult, SessionState, Stage1Handoff } from "./types";
 
@@ -180,7 +184,9 @@ export function postProcessStage1(
     );
   }
 
-  const { mirror, ask } = decision.coach;
+  let { mirror, ask } = decision.coach;
+  const themes = extractExplorationThemes(nextState, userMessages(nextState));
+  ask = reconcileMirrorAndAsk(mirror, ask, nextState, themes);
   const userVisible =
     [mirror, ask].filter(Boolean).join("\n\n") ||
     ask ||

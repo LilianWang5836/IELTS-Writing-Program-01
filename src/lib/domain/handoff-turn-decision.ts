@@ -24,7 +24,6 @@ import {
   userMessages,
 } from "./essay-substance";
 import {
-  brainstormFallback,
   brainstormSummaryFallback,
   explorationSideLabel,
   gapMirrorForMissingSide,
@@ -32,7 +31,12 @@ import {
 } from "./stage1-exploration";
 import {
   extractExplorationThemes,
+  getPointRefinementAsk,
   isExplorationQuestionRedundant,
+  isOpeningExplorationPrompt,
+  reconcileMirrorAndAsk,
+  sanitizeExplorationCoachAsk,
+  selectStage1CoachAsk,
   suggestStructureQuestion,
 } from "./stage1-exploration-themes";
 import { detectHandoffHelpQuestion } from "./stage2-context";
@@ -254,6 +258,30 @@ export function resolveHandoffTurnDecision(
   const lastQ = state.coachContext?.lastQuestion ?? "";
   const themes = extractExplorationThemes(state, msgs);
 
+  const llmMirrorEarly =
+    result.mirror?.trim() && result.mirror !== userMessage?.trim()
+      ? result.mirror.trim()
+      : "";
+
+  if (themes.themesComplete && !themes.readyToFinalize) {
+    const refineAsk = getPointRefinementAsk(state, themes);
+    if (refineAsk) {
+      return {
+        gap,
+        sides,
+        shouldPropose: false,
+        proposal: null,
+        coach: {
+          mirror:
+            llmMirrorEarly ||
+            "利弊和立场我都记下了，接下来把两段论点各写实一点。",
+          ask: refineAsk,
+        },
+        handoffPhase: "exploring",
+      };
+    }
+  }
+
   if (contentReady && themes.readyToFinalize && rounds >= 3) {
     const auto = repairProposalFromChat(state);
     if (auto && isHandoffProposalComplete(auto, state)) {
@@ -340,10 +368,13 @@ export function resolveHandoffTurnDecision(
           (msgs.length <= 1
             ? brainstormSummaryFallback(state)
             : "我先记下你这边的想法。"),
-        ask:
-          result.coachQuestion?.trim() ||
-          substance.coachPrompt ||
-          brainstormFallback(state),
+        ask: selectStage1CoachAsk(
+          state,
+          themes,
+          contentReady,
+          substance.coachPrompt ?? "",
+          { llmAsk: result.coachQuestion },
+        ),
       },
       handoffPhase: "exploring",
     };
@@ -398,8 +429,10 @@ export function resolveHandoffTurnDecision(
   if (userMessage && detectFrustration(userMessage)) {
     const preview = buildRecordedSidesPreview(state, msgs);
     const coachQ =
-      gapQ ||
-      substance.coachPrompt ||
+      selectStage1CoachAsk(state, themes, contentReady, substance.coachPrompt ?? "", {
+        gapQ,
+        preferGapFirst: true,
+      }) ||
       `请分别用一句话说清 ${explorationSideLabel(state, "sideA")} 和 ${explorationSideLabel(state, "sideB")}。`;
     return {
       gap,
@@ -414,7 +447,20 @@ export function resolveHandoffTurnDecision(
     };
   }
 
-  let nextQ = result.coachQuestion?.trim() || substance.coachPrompt || "";
+  let nextQ = selectStage1CoachAsk(
+    state,
+    themes,
+    contentReady,
+    substance.coachPrompt ?? "",
+    { llmAsk: result.coachQuestion, gapQ },
+  );
+  if (
+    !nextQ &&
+    themes.themesComplete &&
+    !themes.readyToFinalize
+  ) {
+    nextQ = getPointRefinementAsk(state, themes) || "";
+  }
   if (nextQ && isExplorationQuestionRedundant(nextQ, themes)) {
     if (themes.readyToFinalize) {
       const auto = repairProposalFromChat(state);
@@ -521,7 +567,14 @@ export function resolveHandoffTurnDecision(
       ? gapMirrorForMissingSide(gap, state)
       : "我们继续把两个 Body 方向写实。");
 
-  const ask = gapQ || "";
+  let ask =
+    selectStage1CoachAsk(state, themes, contentReady, substance.coachPrompt ?? "", {
+      llmAsk: nextQ || result.coachQuestion,
+      gapQ,
+      preferGapFirst: !result.coachQuestion?.trim(),
+    }) || "";
+
+  ask = reconcileMirrorAndAsk(mirror, ask, state, themes);
 
   return {
     gap,

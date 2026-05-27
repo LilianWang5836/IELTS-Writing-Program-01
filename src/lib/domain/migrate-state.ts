@@ -1,4 +1,5 @@
 import { defaultBodySegment } from "./handoff";
+import { topicImpliesProsConsWeighing } from "./stage1-question-hint";
 import type { SessionState } from "./types";
 
 /** Conclusion 段已简化为只做 conclusion_restate。
@@ -44,12 +45,23 @@ function backfillQuestionHintType(state: SessionState): void {
   }
 }
 
+/** 纠正 outweigh / 利弊权衡题误标为 agree 的老 session */
+function backfillOutweighQuestionHint(state: SessionState): void {
+  if (
+    state.questionHintType === "agree" &&
+    (state.questionId === "q3" || topicImpliesProsConsWeighing(state.topic ?? ""))
+  ) {
+    state.questionHintType = "adv_disadv";
+  }
+}
+
 /** 将旧版 state 升级到 v2 */
 export function migrateSessionState(raw: SessionState): SessionState {
   if ((raw as SessionState).version === 2) {
     pruneLegacyConclusionSummary(raw);
     backfillSubBody2Pass(raw);
     backfillQuestionHintType(raw);
+    backfillOutweighQuestionHint(raw);
     return raw;
   }
 
@@ -107,5 +119,6 @@ export function migrateSessionState(raw: SessionState): SessionState {
   pruneLegacyConclusionSummary(s);
   backfillSubBody2Pass(s);
   backfillQuestionHintType(s);
+  backfillOutweighQuestionHint(s);
   return s;
 }

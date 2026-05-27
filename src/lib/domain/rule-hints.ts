@@ -1,4 +1,5 @@
 import { anglesTooSimilar } from "./handoff";
+import { isEffectiveProsConsExploration } from "./stage1-question-hint";
 import type { ParagraphSlots, SessionState, Stage1Handoff } from "./types";
 
 export interface RuleHints {
@@ -65,9 +66,13 @@ export function buildRuleHintsBlock(state: SessionState): string {
       lines.push(
         "规则提示：已在聊天教过切入面；若学生已答范围词，可写入 proposedHandoff 的 body1Angle/body2Angle。",
       );
-    } else {
+    } else if (isEffectiveProsConsExploration(state)) {
       lines.push(
         "规则提示：利弊题先列清好处/坏处再匹配立场；利大于弊则 Body1 偏好处（可含多点）。读 substance 里的 explorationMemory，勿重复问已记录内容。够格则整理 proposedHandoff。",
+      );
+    } else {
+      lines.push(
+        "规则提示：按题型引导审题；读 substance 里的 explorationMemory，勿重复已记录内容。够格则整理 proposedHandoff。",
       );
     }
   }

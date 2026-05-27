@@ -2,10 +2,9 @@
  * Stage1 探索层：侧别命名、brainstorm 兜底、缺口话术（题目无关）。
  * sideA ↔ Body1，sideB ↔ Body2；展示名优先 handoff.body*Angle，否则 Body1/Body2。
  */
-import {
-  extractExplorationThemes,
-  isProsConsQuestionType,
-} from "./stage1-exploration-themes";
+import { resolveQuestionHintType } from "./stage1-question-hint";
+import { isProsConsQuestionType } from "./stage1-question-hint";
+import { extractExplorationThemes } from "./stage1-exploration-themes";
 import type {
   ExplorationSide,
   ExplorationSides,
@@ -49,12 +48,12 @@ export function explorationSideLabel(
 }
 
 export function brainstormFallback(state: SessionState): string {
-  const t = state.questionHintType ?? "unknown";
+  const t = resolveQuestionHintType(state);
   return HINT_TYPE_BRAINSTORM_PROMPTS[t] ?? HINT_TYPE_BRAINSTORM_PROMPTS.unknown;
 }
 
 export function brainstormSummaryFallback(state: SessionState): string {
-  const t = state.questionHintType ?? "unknown";
+  const t = resolveQuestionHintType(state);
   const label = HINT_TYPE_LABEL[t] ?? HINT_TYPE_LABEL.unknown;
   return `这是一道「${label}」题。`;
 }
@@ -78,12 +77,9 @@ export function shouldBrainstormFirst(
       .map((m) => m.content.trim())
       .filter(Boolean);
 
-  if (isProsConsQuestionType(state.questionHintType)) {
+  if (isProsConsQuestionType(resolveQuestionHintType(state))) {
     const themes = extractExplorationThemes(state, userMsgs);
-    if (themes.readyToFinalize) return false;
-    if (themes.benefits.length >= 1 && themes.drawbacks.length >= 1) {
-      return false;
-    }
+    if (themes.themesComplete) return false;
     if (rounds <= 5) return true;
     return false;
   }

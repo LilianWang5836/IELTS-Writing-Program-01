@@ -1,7 +1,11 @@
 import { isDemoEmployAcademicTopic } from "./stage1-topic-profile";
+import { resolveQuestionHintType } from "./stage1-question-hint";
 import {
   extractExplorationThemes,
+  getPointRefinementAsk,
+  isPointSpecificEnough,
   isProsConsQuestionType,
+  suggestStructureQuestion,
   themesToHandoffPatch,
 } from "./stage1-exploration-themes";
 import {
@@ -14,6 +18,7 @@ import {
 import type {
   ExplorationSide,
   ExplorationSides,
+  QuestionType,
   SessionState,
   Stage1Handoff,
 } from "./types";
@@ -351,7 +356,7 @@ function explorationSideStatusGeneric(
 ): ExplorationSides {
   const h = state.handoff ?? state.handoffProposal;
 
-  if (isProsConsQuestionType(state.questionHintType)) {
+  if (isProsConsQuestionType(resolveQuestionHintType(state))) {
     const themes = extractExplorationThemes(state, msgs);
     return {
       sideA:
@@ -516,7 +521,7 @@ export function isValidBodyPoint(
     return true;
   }
 
-  return /[\u4e00-\u9fff]/.test(t) && t.length >= 10;
+  return isPointSpecificEnough(t);
 }
 
 function lastRichAcademicMessage(msgs: string[]): string {
@@ -740,8 +745,8 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
   }
 
   const hintTypeEarly =
-    state.questionHintType ??
-    h?.questionType ??
+    h?.questionType?.trim() ||
+    resolveQuestionHintType(state) ||
     (/\bdiscuss\b|讨论|双方/i.test(blob)
       ? "discuss"
       : /advantages?\s+and\s+disadvantages?|利弊|优缺点/i.test(blob)
@@ -752,15 +757,11 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
   let body2Angle = h?.body2Angle?.trim() || "";
   let position = h?.position?.trim() || inferPosition(blob, state);
 
-  const hintType =
-    hintTypeEarly ??
-    state.questionHintType ??
-    h?.questionType ??
-    "unknown";
+  const hintType = hintTypeEarly as QuestionType;
 
-  if (!demo && isProsConsQuestionType(hintType as typeof state.questionHintType)) {
+  if (!demo && isProsConsQuestionType(hintType)) {
     const themes = extractExplorationThemes(state, msgs);
-    if (themes.readyToFinalize) {
+    if (themes.readyToFinalize && themes.themesComplete) {
       const patch = themesToHandoffPatch(themes, state);
       body1 = body1 || patch.body1Point || "";
       body2 = body2 || patch.body2Point || "";
@@ -880,13 +881,34 @@ export function assessExplorationContent(
     .join(" ")
     .toLowerCase();
 
+  const msgs = userMessages(state);
+  const hintType = resolveQuestionHintType(state);
+  if (isProsConsQuestionType(hintType)) {
+    const themes = extractExplorationThemes(state, msgs);
+    if (themes.themesComplete) {
+      return { contentReady: true };
+    }
+    const hasLean =
+      themes.positionLean !== "unknown" ||
+      /利大于弊|弊大于利|好处更多|坏处更多|好处多|坏处多|outweigh/i.test(blob);
+    const hasTask =
+      /discuss|讨论|双方|advantages?|disadvantages?|优缺点|利弊|国际旅游|tourism/i.test(
+        blob,
+      ) ||
+      (state.topic?.trim().length ?? 0) > 20;
+    return { contentReady: hasTask && hasLean };
+  }
+
   const hasTask =
-    /discuss|讨论|双方|两种观点|agree|disagree|优缺点|利弊/i.test(blob) ||
-    (state.s1?.taskUnderstanding?.trim().length ?? 0) > 8;
+    /discuss|讨论|双方|两种观点|agree|disagree|优缺点|利弊|好处|坏处/i.test(blob) ||
+    (state.s1?.taskUnderstanding?.trim().length ?? 0) > 8 ||
+    (state.topic?.trim().length ?? 0) > 20;
   const hasPosition =
-    /取决于|看情况|部分同意|分开|分流|不同学生|规划|路径|条件|反之|尽快/i.test(
+    /取决于|看情况|部分同意|利大于弊|弊大于利|好处更多|坏处更多|好处多|坏处多|优势更大|劣势更大|outweigh/i.test(
       blob,
-    ) || (state.s1?.position?.trim().length ?? 0) > 6;
+    ) ||
+    (state.handoff?.position?.trim().length ?? 0) > 6 ||
+    (state.s1?.position?.trim().length ?? 0) > 6;
   if (isDemoEmployAcademicTopic(state)) {
     const hasSideA =
       /就业|工作|职场|技能|实操|实习|job|career|employ|尽快工作/i.test(blob);
@@ -904,18 +926,39 @@ export function assessEssaySubstance(state: SessionState): EssaySubstanceAssessm
   const blob = msgs.join("\n");
 
   if (!contentReady) {
+    const hint = resolveQuestionHintType(state);
+    if (isProsConsQuestionType(hint)) {
+      const themes = extractExplorationThemes(state, msgs);
+      if (themes.positionLean !== "unknown" && !themes.benefits.length) {
+        return {
+          sufficient: false,
+          gaps: ["好处方向"],
+          coachPrompt: suggestStructureQuestion(state, themes),
+        };
+      }
+      if (themes.benefits.length && !themes.drawbacks.length) {
+        return {
+          sufficient: false,
+          gaps: ["坏处方向"],
+          coachPrompt: suggestStructureQuestion(state, themes),
+        };
+      }
+    }
+    const opening =
+      (state.coachContext?.exploreRound ?? 0) <= 1
+        ? "这题要你讨论什么？你的总体判断是什么？"
+        : "还差立场或利弊方向：你的总体判断是什么？打算从哪方面写？";
     return {
       sufficient: false,
       gaps: ["题型与任务", "你的立场", "两个 Body 方向"],
-      coachPrompt:
-        "这题要你讨论什么？你的总体判断是什么？打算从哪两个不同方面写？",
+      coachPrompt: opening,
     };
   }
 
   const sides = explorationSideStatus(state, msgs);
   const gaps: string[] = [];
 
-  const themes = isProsConsQuestionType(state.questionHintType)
+  const themes = isProsConsQuestionType(resolveQuestionHintType(state))
     ? extractExplorationThemes(state, msgs)
     : null;
 
@@ -934,17 +977,23 @@ export function assessEssaySubstance(state: SessionState): EssaySubstanceAssessm
   }
 
   const roundsHint = msgs.length;
-  const sufficient = themes?.readyToFinalize
-    ? true
-    : gaps.filter(Boolean).length === 0 &&
+  const sufficient =
+    themes?.readyToFinalize === true ||
+    (!themes &&
+      gaps.filter(Boolean).length === 0 &&
       sides.sideA &&
       sides.sideB &&
-      (roundsHint >= 2 || blob.length >= 80);
+      (roundsHint >= 2 || blob.length >= 80));
+
+  let coachPrompt = singleGapCoachPrompt(sides, state) || gaps[0] || "";
+  if (themes?.themesComplete && !themes.readyToFinalize) {
+    coachPrompt = getPointRefinementAsk(state, themes) || coachPrompt;
+  }
 
   return {
     sufficient,
     gaps: sufficient ? [] : gaps.filter(Boolean),
-    coachPrompt: singleGapCoachPrompt(sides, state) || gaps[0] || "",
+    coachPrompt,
   };
 }
 

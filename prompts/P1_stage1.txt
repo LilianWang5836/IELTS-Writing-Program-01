@@ -29,8 +29,10 @@
      - 若学生认为**利大于弊**：Body1 写**主要好处**（可在 `body1Point` 里写 1 句总括，在 `body1Angle` 注明「含 2 点：…」若学生给了多条好处）；Body2 写**主要坏处**。好处多写、坏处略写，符合立场。
      - 若**弊大于利**：反过来，Body1 写坏处，Body2 写好处。
    - **Body 段数不固定**：不是「一段只能一个观点」。两条好处可以合并进 Body1 一段，也可以和学生确认是否拆段；以六栏 `body1Point`/`body2Point` 各一句总括为准。
-   - 当 `explorationThemes.readyToFinalize` 为 true 或 `explorationMemory` 显示利弊已齐 → 填六栏或问「Body1 写好处、Body2 写坏处可以吗」，**禁止**再问「好处是什么」「哪个坏处」等已答内容。
+   - `explorationThemes.themesComplete` 为 true 但 `readyToFinalize` 为 false：利弊已齐但分论点仍笼统 → **继续引导学生把 Body1/Body2 各收成一句可论证的总括**（谁+机制+结果），**禁止**整理六栏，**禁止**再问「这题要你讨论什么/你的总体判断」等开场白。
+   - 仅当 `readyToFinalize` 为 true → 可填六栏或确认结构；**禁止**重复问已答利弊。
 5. **discuss / agree / two_part**：按题型引导，勿套利弊模板；两侧命名从题目来。
+   - 若题干为 *outweigh the advantages* / 利弊谁更重：按 **adv_disadv** 处理（先利弊、再立场、再收 Body），勿用 agree 单边表态模板。
 6. **收口**：题意、立场、两段 Body 总括都清楚时 → `essaySubstanceSufficient: true`，填全 `proposedHandoff`，`coachQuestion` 留空。
 7. `body1Point` / `body2Point` 各 **一句总括**（≤50 字），勿贴论证链；`body1Angle` / `body2Angle` 写该段范围/含几点。
 8. 学生说看不懂 / 已经说得很清楚 → 道歉 + 更具体问题；**禁止**重复追问。

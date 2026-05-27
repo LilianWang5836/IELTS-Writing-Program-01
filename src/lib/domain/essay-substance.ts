@@ -1,5 +1,10 @@
 import { isDemoEmployAcademicTopic } from "./stage1-topic-profile";
 import {
+  extractExplorationThemes,
+  isProsConsQuestionType,
+  themesToHandoffPatch,
+} from "./stage1-exploration-themes";
+import {
   buildGapProgressionMirror as buildGapProgressionMirrorLabeled,
   buildRecordedSidesPreview as buildRecordedSidesPreviewWithLabels,
   explorationSideLabel,
@@ -345,6 +350,19 @@ function explorationSideStatusGeneric(
   msgs: string[],
 ): ExplorationSides {
   const h = state.handoff ?? state.handoffProposal;
+
+  if (isProsConsQuestionType(state.questionHintType)) {
+    const themes = extractExplorationThemes(state, msgs);
+    return {
+      sideA:
+        isValidBodyPoint(h?.body1Point, "sideA", state) ||
+        themes.benefits.length >= 1,
+      sideB:
+        isValidBodyPoint(h?.body2Point, "sideB", state) ||
+        themes.drawbacks.length >= 1,
+    };
+  }
+
   const substantive = msgs.filter((m) => genericSideSubstantive(m));
   return {
     sideA:
@@ -437,6 +455,9 @@ export function isRepeatedQuestion(
     ["开放", "批判性", "教学机会"],
     ["哪些领域", "教学方法", "学习机会"],
     ["你认为大学", "应该提供哪些"],
+    ["好处", "收入", "带动", "服务业", "利大于弊"],
+    ["坏处", "弊端", "拥挤", "环境", "垃圾", "堵车"],
+    ["压过", "哪一方面", "具体是什么", "最明显"],
   ];
   for (const group of themes) {
     if (group.some((w) => prev.includes(w)) && group.some((w) => next.includes(w))) {
@@ -718,7 +739,7 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
       "";
   }
 
-  const hintType =
+  const hintTypeEarly =
     state.questionHintType ??
     h?.questionType ??
     (/\bdiscuss\b|讨论|双方/i.test(blob)
@@ -727,18 +748,40 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
         ? "adv_disadv"
         : "unknown");
 
+  let body1Angle = h?.body1Angle?.trim() || "";
+  let body2Angle = h?.body2Angle?.trim() || "";
+  let position = h?.position?.trim() || inferPosition(blob, state);
+
+  const hintType =
+    hintTypeEarly ??
+    state.questionHintType ??
+    h?.questionType ??
+    "unknown";
+
+  if (!demo && isProsConsQuestionType(hintType as typeof state.questionHintType)) {
+    const themes = extractExplorationThemes(state, msgs);
+    if (themes.readyToFinalize) {
+      const patch = themesToHandoffPatch(themes, state);
+      body1 = body1 || patch.body1Point || "";
+      body2 = body2 || patch.body2Point || "";
+      body1Angle = body1Angle || patch.body1Angle || "";
+      body2Angle = body2Angle || patch.body2Angle || "";
+      position = position || patch.position || position;
+    }
+  }
+
   return {
     questionType: String(hintType).trim() || "unknown",
     taskUnderstanding:
       h?.taskUnderstanding?.trim() || inferTask(blob, state),
-    position: h?.position?.trim() || inferPosition(blob, state),
+    position,
     body1Point: body1,
     body1Angle:
-      h?.body1Angle?.trim() ||
+      body1Angle ||
       (body1 && demo ? "就业市场与职场技能" : body1 ? explorationSideLabel(state, "sideA") : ""),
     body2Point: body2,
     body2Angle:
-      h?.body2Angle?.trim() ||
+      body2Angle ||
       (body2 && demo ? "学术深造与知识体系" : body2 ? explorationSideLabel(state, "sideB") : ""),
   };
 }
@@ -872,6 +915,10 @@ export function assessEssaySubstance(state: SessionState): EssaySubstanceAssessm
   const sides = explorationSideStatus(state, msgs);
   const gaps: string[] = [];
 
+  const themes = isProsConsQuestionType(state.questionHintType)
+    ? extractExplorationThemes(state, msgs)
+    : null;
+
   if (!sides.sideA) {
     gaps.push(singleGapCoachPrompt({ sideA: false, sideB: sides.sideB }, state));
   }
@@ -887,11 +934,12 @@ export function assessEssaySubstance(state: SessionState): EssaySubstanceAssessm
   }
 
   const roundsHint = msgs.length;
-  const sufficient =
-    gaps.filter(Boolean).length === 0 &&
-    sides.sideA &&
-    sides.sideB &&
-    (roundsHint >= 2 || blob.length >= 80);
+  const sufficient = themes?.readyToFinalize
+    ? true
+    : gaps.filter(Boolean).length === 0 &&
+      sides.sideA &&
+      sides.sideB &&
+      (roundsHint >= 2 || blob.length >= 80);
 
   return {
     sufficient,

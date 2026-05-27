@@ -2,6 +2,10 @@
  * Stage1 探索层：侧别命名、brainstorm 兜底、缺口话术（题目无关）。
  * sideA ↔ Body1，sideB ↔ Body2；展示名优先 handoff.body*Angle，否则 Body1/Body2。
  */
+import {
+  extractExplorationThemes,
+  isProsConsQuestionType,
+} from "./stage1-exploration-themes";
 import type {
   ExplorationSide,
   ExplorationSides,
@@ -62,10 +66,30 @@ export function shouldBrainstormFirst(
   sides: ExplorationSides,
   substanceSufficient: boolean,
   rounds: number,
+  msgs?: string[],
 ): boolean {
   if (!contentReady) return true;
   if (substanceSufficient) return false;
+
+  const userMsgs =
+    msgs ??
+    state.chatHistory
+      .filter((m) => m.role === "user")
+      .map((m) => m.content.trim())
+      .filter(Boolean);
+
+  if (isProsConsQuestionType(state.questionHintType)) {
+    const themes = extractExplorationThemes(state, userMsgs);
+    if (themes.readyToFinalize) return false;
+    if (themes.benefits.length >= 1 && themes.drawbacks.length >= 1) {
+      return false;
+    }
+    if (rounds <= 5) return true;
+    return false;
+  }
+
   if (rounds <= 2 && !sides.sideA && !sides.sideB) return true;
+  if (rounds <= 4 && (!sides.sideA || !sides.sideB)) return true;
   return false;
 }
 

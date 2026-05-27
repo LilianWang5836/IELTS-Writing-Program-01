@@ -67,7 +67,7 @@ export function buildRuleHintsBlock(state: SessionState): string {
       );
     } else {
       lines.push(
-        "规则提示：仅当 Body1(sideA) 与 Body2(sideB) 各有足够具体内容时才 essaySubstanceSufficient；首轮优先 brainstorm。若学生问切入面/角度，先用「讨论范围/视角」解释。两侧已齐时勿问开放/批判性/教学方法类发散题，应整理 proposedHandoff。",
+        "规则提示：利弊题先列清好处/坏处再匹配立场；利大于弊则 Body1 偏好处（可含多点）。读 substance 里的 explorationMemory，勿重复问已记录内容。够格则整理 proposedHandoff。",
       );
     }
   }

@@ -30,6 +30,11 @@ import {
   gapMirrorForMissingSide,
   shouldBrainstormFirst,
 } from "./stage1-exploration";
+import {
+  extractExplorationThemes,
+  isExplorationQuestionRedundant,
+  suggestStructureQuestion,
+} from "./stage1-exploration-themes";
 import { detectHandoffHelpQuestion } from "./stage2-context";
 import { ANGLE_TEACH_CHAT } from "./constants";
 import type {
@@ -247,6 +252,28 @@ export function resolveHandoffTurnDecision(
   const gap = expectedGap(sides, substance.sufficient);
   const gapQ = singleGapCoachPrompt(sides, state);
   const lastQ = state.coachContext?.lastQuestion ?? "";
+  const themes = extractExplorationThemes(state, msgs);
+
+  if (contentReady && themes.readyToFinalize && rounds >= 3) {
+    const auto = repairProposalFromChat(state);
+    if (auto && isHandoffProposalComplete(auto, state)) {
+      return {
+        gap: "ready",
+        sides,
+        shouldPropose: true,
+        proposal: auto,
+        coach: {
+          mirror: "",
+          ask: formatProposalCoachMessage(
+            auto,
+            "利弊和立场都清楚了，六栏整理在左侧，请核对。",
+          ),
+        },
+        handoffPhase: "proposed",
+        essaySubstanceSufficient: true,
+      };
+    }
+  }
 
   let proposal =
     resolveHandoffProposal(state, result) ??
@@ -298,6 +325,7 @@ export function resolveHandoffTurnDecision(
       sides,
       substance.sufficient,
       rounds,
+      msgs,
     ) &&
     !shouldPropose
   ) {
@@ -386,7 +414,31 @@ export function resolveHandoffTurnDecision(
     };
   }
 
-  const nextQ = result.coachQuestion?.trim() || substance.coachPrompt || "";
+  let nextQ = result.coachQuestion?.trim() || substance.coachPrompt || "";
+  if (nextQ && isExplorationQuestionRedundant(nextQ, themes)) {
+    if (themes.readyToFinalize) {
+      const auto = repairProposalFromChat(state);
+      if (auto && isHandoffProposalComplete(auto, state)) {
+        return {
+          gap: "ready",
+          sides,
+          shouldPropose: true,
+          proposal: auto,
+          coach: {
+            mirror: "前面说的利弊我都记下了。",
+            ask: formatProposalCoachMessage(
+              auto,
+              "六栏整理在左侧，请核对；若要改结构再说一声。",
+            ),
+          },
+          handoffPhase: "proposed",
+          essaySubstanceSufficient: true,
+        };
+      }
+    }
+    nextQ = suggestStructureQuestion(state, themes);
+  }
+
   if (
     nextQ &&
     /body\s*2|论点.*不完整|补充完整|描述不完整/i.test(nextQ) &&
@@ -436,15 +488,26 @@ export function resolveHandoffTurnDecision(
     };
   }
 
-  if (nextQ && isRepeatedQuestion(lastQ, nextQ, state)) {
+  if (
+    nextQ &&
+    (isRepeatedQuestion(lastQ, nextQ, state) ||
+      isExplorationQuestionRedundant(nextQ, themes))
+  ) {
+    const replacement =
+      themes.readyToFinalize
+        ? suggestStructureQuestion(state, themes)
+        : gapQ || nextQ;
     return {
       gap,
       sides,
       shouldPropose: false,
       proposal: null,
       coach: {
-        mirror: llmMirror || buildRecordedSidesPreview(state, msgs) || "我们继续填空式问题。",
-        ask: gapQ || nextQ,
+        mirror:
+          llmMirror ||
+          buildRecordedSidesPreview(state, msgs) ||
+          "前面说的我都记下了。",
+        ask: replacement,
       },
       handoffPhase: "exploring",
     };

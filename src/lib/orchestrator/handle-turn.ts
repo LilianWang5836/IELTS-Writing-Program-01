@@ -34,6 +34,10 @@ import {
   postProcessStage1,
 } from "@/lib/domain/stage1-coach";
 import {
+  buildExplorationMemorySummary,
+  extractExplorationThemes,
+} from "@/lib/domain/stage1-exploration-themes";
+import {
   buildStage1SubmitFeedback,
   enrichHandoffFromChat,
   sanitizeHandoffProposal,
@@ -632,7 +636,9 @@ function buildVars(
   if (state.subStep === "S1_EVAL" && !state.handoffLocked) {
     const substance = assessEssaySubstance(state);
     const { contentReady } = assessExplorationContent(state, userMessage);
-    const explorationSides = explorationSideStatus(state, userMessages(state));
+    const msgs = userMessages(state);
+    const explorationSides = explorationSideStatus(state, msgs);
+    const themes = extractExplorationThemes(state, msgs);
     base.substance_assessment = JSON.stringify({
       contentReady,
       substanceSufficient: substance.sufficient,
@@ -640,6 +646,8 @@ function buildVars(
       gaps: substance.gaps,
       handoffPhase: state.coachContext?.handoffPhase ?? "exploring",
       exploreRound: state.coachContext?.exploreRound ?? 0,
+      explorationThemes: themes,
+      explorationMemory: buildExplorationMemorySummary(state, themes),
     });
   }
   if (state.subStep === "S2_2_BODY1" || state.subStep === "S2_3_BODY2") {

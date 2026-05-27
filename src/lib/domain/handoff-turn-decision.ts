@@ -33,7 +33,6 @@ import {
   extractExplorationThemes,
   getPointRefinementAsk,
   isExplorationQuestionRedundant,
-  isOpeningExplorationPrompt,
   reconcileMirrorAndAsk,
   sanitizeExplorationCoachAsk,
   selectStage1CoachAsk,

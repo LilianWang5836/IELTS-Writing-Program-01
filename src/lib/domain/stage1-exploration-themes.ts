@@ -20,6 +20,8 @@ export interface ExplorationThemes {
   readyToFinalize: boolean;
 }
 
+type SideKind = "benefit" | "drawback";
+
 function trimSnippet(s: string, max = 48): string {
   const t = s.trim().replace(/^[,，、\s]+|[,，、\s]+$/g, "");
   if (t.length <= max) return t;
@@ -125,6 +127,7 @@ export function extractExplorationThemes(
     const patch = themesToHandoffPatch(
       { benefits, drawbacks, positionLean, themesComplete, readyToFinalize: false },
       state,
+      msgs,
     );
     readyToFinalize =
       isPointSpecificEnough(patch.body1Point) &&
@@ -174,7 +177,14 @@ export function getPointRefinementAsk(
   themes: ExplorationThemes,
 ): string | null {
   if (!themes.themesComplete) return null;
-  const patch = themesToHandoffPatch(themes, state);
+  const patch = themesToHandoffPatch(
+    themes,
+    state,
+    state.chatHistory
+      .filter((m) => m.role === "user")
+      .map((m) => m.content.trim())
+      .filter(Boolean),
+  );
   const pro = themes.positionLean === "pro";
   const body1Candidate = patch.body1Point || "";
   const body2Candidate = patch.body2Point || "";
@@ -367,6 +377,7 @@ function brainstormAngleQuestion(
 export function themesToHandoffPatch(
   themes: ExplorationThemes,
   state: SessionState,
+  msgs: string[] = [],
 ): Partial<Stage1Handoff> {
   const pro = themes.positionLean === "pro";
   const con = themes.positionLean === "con";
@@ -374,14 +385,29 @@ export function themesToHandoffPatch(
   const benefitText = themes.benefits.join("；");
   const drawbackText = themes.drawbacks.join("；");
 
-  const body1Point = trimSnippet(
-    pro ? benefitText || themes.benefits[0] || "" : drawbackText || themes.drawbacks[0] || "",
-    72,
-  );
-  const body2Point = trimSnippet(
-    pro ? drawbackText || themes.drawbacks[0] || "" : benefitText || themes.benefits[0] || "",
-    72,
-  );
+  const body1Kind: SideKind =
+    pro || themes.positionLean === "balanced" ? "benefit" : "drawback";
+  const body2Kind: SideKind =
+    pro || themes.positionLean === "balanced" ? "drawback" : "benefit";
+
+  const latestBody1 =
+    pickLatestSpecificPoint(msgs, body1Kind) ||
+    pickLatestSpecificPoint(msgs, body1Kind === "benefit" ? "drawback" : "benefit");
+  const latestBody2 =
+    pickLatestSpecificPoint(msgs, body2Kind) ||
+    pickLatestSpecificPoint(msgs, body2Kind === "benefit" ? "drawback" : "benefit");
+
+  const fallbackBody1 =
+    body1Kind === "benefit"
+      ? benefitText || themes.benefits[0] || ""
+      : drawbackText || themes.drawbacks[0] || "";
+  const fallbackBody2 =
+    body2Kind === "benefit"
+      ? benefitText || themes.benefits[0] || ""
+      : drawbackText || themes.drawbacks[0] || "";
+
+  const body1Point = trimSnippet(latestBody1 || fallbackBody1, 72);
+  const body2Point = trimSnippet(latestBody2 || fallbackBody2, 72);
 
   let body1Angle = "";
   let body2Angle = "";
@@ -415,6 +441,29 @@ export function themesToHandoffPatch(
     body2Angle,
     position,
   };
+}
+
+function looksLikeBenefitLine(text: string): boolean {
+  return /收入|就业|经济|带动|服务业|受益|增长|交流|便利|机会|发展/.test(text);
+}
+
+function looksLikeDrawbackLine(text: string): boolean {
+  return /拥堵|堵车|拥挤|垃圾|污染|环境|破坏|不便|噪音|成本|压力|影响居民/.test(text);
+}
+
+function pickLatestSpecificPoint(msgs: string[], kind: SideKind): string {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const line = msgs[i]?.trim() ?? "";
+    if (!line) continue;
+    if (!isPointSpecificEnough(line)) continue;
+
+    const isBenefit = looksLikeBenefitLine(line);
+    const isDrawback = looksLikeDrawbackLine(line);
+
+    if (kind === "benefit" && isBenefit) return line;
+    if (kind === "drawback" && isDrawback) return line;
+  }
+  return "";
 }
 
 /** 规则层统一选出本轮 coachQuestion（避免 LLM 空问时露出开场兜底） */

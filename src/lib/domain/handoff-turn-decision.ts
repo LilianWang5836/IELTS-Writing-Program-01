@@ -36,8 +36,10 @@ import {
   reconcileMirrorAndAsk,
   sanitizeExplorationCoachAsk,
   selectStage1CoachAsk,
+  suggestPointRefinementQuestion,
   suggestStructureQuestion,
 } from "./stage1-exploration-themes";
+import type { ExplorationThemes } from "./stage1-exploration-themes";
 import { detectHandoffHelpQuestion } from "./stage2-context";
 import { ANGLE_TEACH_CHAT } from "./constants";
 import type {
@@ -105,6 +107,44 @@ function shouldForceProposal(
     return true;
   }
   return false;
+}
+
+type RefinementTarget = "body1" | "body2";
+
+function refinementTargetFromAsk(ask: string): RefinementTarget | null {
+  if (/Body\s*1|好处还想再写实|Body1/.test(ask)) return "body1";
+  if (/Body\s*2|坏处可以再具体|Body2/.test(ask)) return "body2";
+  return null;
+}
+
+function messageSeemsToRefineTarget(
+  message: string,
+  target: RefinementTarget,
+  themes: ExplorationThemes,
+): boolean {
+  const m = message.trim();
+  if (!m) return false;
+
+  const objectRe = /游客|居民|当地|本地人|餐馆|酒店|景区|环境|道路|生活/;
+  const relationalRe =
+    /导致|造成|带来|带动|增加|减少|让|使得|因为|通过|带动|破坏|影响|提升|挤出|促进|促使/;
+  const benefitKw =
+    /收入|就业|服务业|经济|消费|食宿|餐馆|酒店|带动|促进|文化|交流/;
+  const drawbackKw =
+    /拥堵|堵车|拥挤|垃圾|污染|环境|破坏|不便|影响|耗时|节假日/;
+
+  if (!objectRe.test(m) || !relationalRe.test(m)) return false;
+
+  if (themes.positionLean === "balanced") {
+    return benefitKw.test(m) || drawbackKw.test(m);
+  }
+
+  const pro = themes.positionLean === "pro";
+  const expectsBenefit =
+    (target === "body1" && pro) || (target === "body2" && !pro);
+
+  const kw = expectsBenefit ? benefitKw : drawbackKw;
+  return kw.test(m);
 }
 
 export interface ResolveHandoffTurnInput {
@@ -265,6 +305,45 @@ export function resolveHandoffTurnDecision(
   if (themes.themesComplete && !themes.readyToFinalize) {
     const refineAsk = getPointRefinementAsk(state, themes);
     if (refineAsk) {
+      // 防复读：当上一轮问的是 Body1/Body2 分论点细化，且用户本轮回答看起来已回应该目标
+      // 则切到另一个 Body 的细化问题；否则早退分支会一直吐同一句模板。
+      const lastTarget = refinementTargetFromAsk(lastQ);
+      const curr = userMessage?.trim() ?? "";
+      if (lastTarget && curr) {
+        const alreadyAnswered = messageSeemsToRefineTarget(
+          curr,
+          lastTarget,
+          themes,
+        );
+        if (alreadyAnswered) {
+          const otherTarget: RefinementTarget =
+            lastTarget === "body1" ? "body2" : "body1";
+          const pro = themes.positionLean === "pro";
+          const altAsk = suggestPointRefinementQuestion(
+            state,
+            themes,
+            otherTarget,
+            pro,
+          );
+          const cleanAltAsk = sanitizeExplorationCoachAsk(altAsk, themes);
+          if (cleanAltAsk) {
+            return {
+              gap,
+              sides,
+              shouldPropose: false,
+              proposal: null,
+              coach: {
+                mirror:
+                  lastTarget === "body1"
+                    ? "很好，你把 Body1 写实了。接下来把 Body2 也收成一句可论证的总括。"
+                    : "很好，你把 Body2 写实了。接下来把 Body1 也写实一点。",
+                ask: cleanAltAsk,
+              },
+              handoffPhase: "exploring",
+            };
+          }
+        }
+      }
       return {
         gap,
         sides,

@@ -762,7 +762,7 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
   if (!demo && isProsConsQuestionType(hintType)) {
     const themes = extractExplorationThemes(state, msgs);
     if (themes.readyToFinalize && themes.themesComplete) {
-      const patch = themesToHandoffPatch(themes, state);
+      const patch = themesToHandoffPatch(themes, state, msgs);
       body1 = body1 || patch.body1Point || "";
       body2 = body2 || patch.body2Point || "";
       body1Angle = body1Angle || patch.body1Angle || "";

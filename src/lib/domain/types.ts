@@ -204,6 +204,9 @@ export interface SessionState {
   sessionId: string;
   questionId: string;
   topic: string;
+  /** 题库标注的题型，stage 1 引导分流要用（discuss / agree / adv_disadv ...）。
+   *  老 session 没有此字段时按 "unknown" 处理，会走通用 generic 路径。 */
+  questionHintType?: QuestionType;
   stage: 1 | 2 | 3;
   subStep: SubStep;
   markers: {

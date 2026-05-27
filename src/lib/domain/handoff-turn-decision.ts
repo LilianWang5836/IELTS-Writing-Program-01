@@ -24,6 +24,11 @@ import {
   userMessages,
 } from "./essay-substance";
 import { detectHandoffHelpQuestion } from "./stage2-context";
+import { isDemoEmployAcademicTopic } from "./stage1-topic-profile";
+import {
+  resolveGenericExploreDecision,
+  type GenericExploreDecision,
+} from "./stage1-generic-explore";
 import { ANGLE_TEACH_CHAT } from "./constants";
 import type { LlmTurnResult, SessionState, Stage1Handoff } from "./types";
 
@@ -96,10 +101,41 @@ function repairProposalFromChat(state: SessionState): Stage1Handoff | null {
   return sanitizeHandoffProposal(built, state);
 }
 
+/** 通用题目把 generic 决策映射到旧 HandoffTurnDecision 形状。
+ *  不调用 essay-substance 的 employ/academic 函数；sides 字段总是为 false，
+ *  上层渲染若依赖 sides 也只会收到中性结果。 */
+function adaptGenericToHandoffDecision(
+  generic: GenericExploreDecision,
+): HandoffTurnDecision {
+  const sides = { employ: false, academic: false };
+  const gap: HandoffGap =
+    generic.gap === "ready"
+      ? "ready"
+      : generic.gap === "none"
+        ? "none"
+        : "ready";
+  return {
+    gap,
+    sides,
+    shouldPropose: generic.shouldPropose,
+    proposal: generic.proposal,
+    coach: generic.coach,
+    handoffPhase: generic.handoffPhase,
+    proposalSummary: generic.proposalSummary,
+    essaySubstanceSufficient: generic.essaySubstanceSufficient,
+  };
+}
+
 export function resolveHandoffTurnDecision(
   input: ResolveHandoffTurnInput,
 ): HandoffTurnDecision {
   const { state, result, userMessage } = input;
+
+  if (!isDemoEmployAcademicTopic(state)) {
+    const generic = resolveGenericExploreDecision({ state, result, userMessage });
+    return adaptGenericToHandoffDecision(generic);
+  }
+
   const phase = state.coachContext?.handoffPhase ?? "exploring";
 
   if (userMessage?.trim() && detectHandoffHelpQuestion(userMessage)) {

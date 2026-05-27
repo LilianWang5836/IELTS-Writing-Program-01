@@ -9,6 +9,7 @@ export function createInitialState(question: Question): SessionState {
     sessionId: uuidv4(),
     questionId: question.id,
     topic: question.prompt,
+    questionHintType: question.hintType,
     stage: 1,
     subStep: "S1_AWAIT",
     markers: {

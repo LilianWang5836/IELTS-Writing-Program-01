@@ -35,11 +35,21 @@ function backfillSubBody2Pass(state: SessionState): void {
   }
 }
 
+/** 老 session 没有 questionHintType 字段时按 unknown 兜底；stage 1 探索分流会
+ *  把 unknown 视为 generic 路径，不会再注入"就业/技能"等 demo 题硬话术。 */
+function backfillQuestionHintType(state: SessionState): void {
+  const s = state as SessionState & { questionHintType?: string };
+  if (typeof s.questionHintType !== "string") {
+    s.questionHintType = "unknown";
+  }
+}
+
 /** 将旧版 state 升级到 v2 */
 export function migrateSessionState(raw: SessionState): SessionState {
   if ((raw as SessionState).version === 2) {
     pruneLegacyConclusionSummary(raw);
     backfillSubBody2Pass(raw);
+    backfillQuestionHintType(raw);
     return raw;
   }
 
@@ -96,5 +106,6 @@ export function migrateSessionState(raw: SessionState): SessionState {
 
   pruneLegacyConclusionSummary(s);
   backfillSubBody2Pass(s);
+  backfillQuestionHintType(s);
   return s;
 }

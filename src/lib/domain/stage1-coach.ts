@@ -9,7 +9,7 @@ import {
   userMessages,
 } from "./essay-substance";
 import { resolveHandoffTurnDecision } from "./handoff-turn-decision";
-import { buildOutputContract } from "./output-contract";
+import { isDemoEmployAcademicTopic } from "./stage1-topic-profile";
 import type { LlmTurnResult, SessionState, Stage1Handoff } from "./types";
 
 export {
@@ -23,12 +23,16 @@ function proposalCoachResponse(
   result: LlmTurnResult,
   summary: string,
 ): { result: LlmTurnResult; state: SessionState } {
+  const isDemo = isDemoEmployAcademicTopic(nextState);
+  const fallbackSummary = isDemo
+    ? "两侧都够写两段了，六栏整理在左侧，请核对。"
+    : "六栏整理稿已在左侧，请核对。";
   const briefSummary =
     result.proposalSummary?.trim() && !isMostlyEnglish(result.proposalSummary)
       ? result.proposalSummary.trim().slice(0, 60)
       : summary?.includes("记下")
-        ? "两侧都够写两段了，六栏整理在左侧，请核对。"
-        : summary?.trim() || "两侧都够写两段了，六栏整理在左侧，请核对。";
+        ? fallbackSummary
+        : summary?.trim() || fallbackSummary;
   const msg = formatProposalCoachMessage(finalProposal, briefSummary);
   return {
     result: {
@@ -37,17 +41,7 @@ function proposalCoachResponse(
       advance: false,
       mirror: "",
       coachQuestion: "",
-      userVisibleText: buildOutputContract({
-        module: "stage1:planning",
-        meaningOk: true,
-        meaningReason: "审题与立场信息已够生成方案",
-        paragraphFit: true,
-        paragraphReason: "两侧分论点已成型，可进入下一阶段",
-        feedback: msg,
-        suggestedRevision: "核对六栏是否符合你的真实意图。",
-        nextStep: "若无误，继续进入 Body 链条构建。",
-        orchestrator: nextState.s3?.orchestrator,
-      }),
+      userVisibleText: msg,
       essaySubstanceSufficient: true,
     },
     state: {
@@ -72,7 +66,10 @@ export function detectFrustration(message: string): boolean {
   return FRUSTRATION_RE.test(message);
 }
 
-/** 按轮次变化的短反馈，避免每轮重复同一句 */
+/** 按轮次变化的短反馈，避免每轮重复同一句。
+ *
+ *  这里所有 employ/academic 字眼仅在 demo 题（q2 大学就业 vs 学术）适用；
+ *  generic 题直接交给 LLM mirror，本函数返回空串避免污染。 */
 export function buildExplorationSummary(
   state: SessionState,
   contentReady: boolean,
@@ -80,6 +77,11 @@ export function buildExplorationSummary(
   userMessage?: string,
 ): string {
   if (!contentReady) return "";
+  if (!isDemoEmployAcademicTopic(state)) {
+    return substanceSufficient
+      ? "我整理一版审题定稿到左侧，请核对。"
+      : "";
+  }
   const sides = explorationSideStatus(userMessages(state));
   if (substanceSufficient) {
     const preview = buildRecordedSidesPreview(userMessages(state));
@@ -190,7 +192,10 @@ export function postProcessStage1(
   }
 
   const { mirror, ask } = decision.coach;
-  const userVisible = [mirror, ask].filter(Boolean).join("\n\n");
+  const userVisible =
+    [mirror, ask].filter(Boolean).join("\n\n") ||
+    ask ||
+    "继续按提示补充即可。";
 
   return {
     result: {
@@ -199,27 +204,7 @@ export function postProcessStage1(
       advance: false,
       mirror,
       coachQuestion: ask,
-      userVisibleText: buildOutputContract({
-        module: "stage1:planning",
-        meaningOk: decision.gap === "ready",
-        meaningReason:
-          decision.gap === "ready"
-            ? "题意与立场已清楚"
-            : "还在补齐题意/立场信息",
-        paragraphFit: decision.gap === "ready",
-        paragraphReason:
-          decision.gap === "ready"
-            ? "可进入下一阶段"
-            : "先补齐两侧观点与理由",
-        feedback: userVisible || ask || "继续按提示补充即可。",
-        suggestedRevision:
-          decision.gap === "ready"
-            ? "确认两侧观点是否准确表达你的立场。"
-            : "围绕缺口补一句更具体的内容。",
-        nextStep:
-          ask || (decision.gap === "ready" ? "确认后进入 Stage2。" : "按问题继续补充。"),
-        orchestrator: nextState.s3?.orchestrator,
-      }),
+      userVisibleText: userVisible,
       essaySubstanceSufficient:
         decision.essaySubstanceSufficient ?? decision.gap === "ready",
     },

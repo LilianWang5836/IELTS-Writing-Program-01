@@ -35,6 +35,79 @@ function pushUnique(arr: string[], piece: string): void {
   arr.push(t);
 }
 
+function isExplorationPositionOnlyLine(message: string): boolean {
+  const t = message.trim();
+  if (t.length > 88) return false;
+  if (
+    /取决于|看情况|部分同意|利大于弊|弊大于利|好处更多|坏处更多|好处多|坏处多|outweigh/i.test(
+      t,
+    ) &&
+    !/例如|比如|因为|所以|促进|破坏|导致|收入|就业|环境|游客|景区|居民/i.test(t)
+  ) {
+    return true;
+  }
+  if (/好处.*坏处|坏处.*好处/.test(t) && t.length < 36 && !/[。；;]/.test(t)) {
+    return true;
+  }
+  return false;
+}
+
+/** 同条消息里「好处…。坏处，…」拆开，避免整句写入 Body1 */
+function splitProsConsInMessage(message: string): {
+  benefitPart: string;
+  drawbackPart: string;
+} {
+  const m = message.trim();
+  if (!m || isExplorationPositionOnlyLine(m)) {
+    return { benefitPart: "", drawbackPart: "" };
+  }
+
+  const afterPeriod = m.match(
+    /^(.*?)[。；;]\s*(?:坏处|劣势|弊端)[：:，,]?\s*(.+)$/s,
+  );
+  if (afterPeriod?.[1] && afterPeriod[2]) {
+    return {
+      benefitPart: afterPeriod[1]
+        .replace(/(?:好处|优势|利)[：:]\s*/gi, "")
+        .trim(),
+      drawbackPart: afterPeriod[2].trim(),
+    };
+  }
+
+  return { benefitPart: "", drawbackPart: "" };
+}
+
+/** 利大于弊题：从混合句或 LLM 草案中只保留该 Body 对应一侧 */
+export function sanitizeBodyPointForLean(
+  text: string,
+  body: "body1" | "body2",
+  positionLean: PositionLean,
+): string {
+  let kind: SideKind = body === "body1" ? "benefit" : "drawback";
+  if (positionLean === "pro") {
+    kind = body === "body1" ? "benefit" : "drawback";
+  } else if (positionLean === "con") {
+    kind = body === "body1" ? "drawback" : "benefit";
+  }
+  return trimSnippet(isolatePointForSide(text, kind), 72);
+}
+
+function isolatePointForSide(text: string, kind: SideKind): string {
+  const t = text.trim();
+  if (!t) return "";
+  const { benefitPart, drawbackPart } = splitProsConsInMessage(t);
+  if (kind === "benefit") {
+    if (benefitPart) return benefitPart;
+    if (/(?:坏处|劣势|弊端)/.test(t)) {
+      return t.split(/(?:坏处|劣势|弊端)[：:，,]?\s*/i)[0]?.trim() ?? "";
+    }
+    return t;
+  }
+  if (drawbackPart) return drawbackPart;
+  const after = t.match(/(?:坏处|劣势|弊端)[：:，,]?\s*([^。；;]+)/)?.[1];
+  return after?.trim() ?? "";
+}
+
 function extractLabeledParts(message: string): {
   benefits: string[];
   drawbacks: string[];
@@ -42,40 +115,52 @@ function extractLabeledParts(message: string): {
   const benefits: string[] = [];
   const drawbacks: string[] = [];
   const m = message.trim();
+  if (isExplorationPositionOnlyLine(m)) {
+    return { benefits: [], drawbacks: [] };
+  }
 
-  const benefitAfter = m.match(/(?:好处|优势|利)[：:]\s*([^；;\n]+)/);
+  const split = splitProsConsInMessage(m);
+  if (split.benefitPart) pushUnique(benefits, split.benefitPart);
+  if (split.drawbackPart) pushUnique(drawbacks, split.drawbackPart);
+  const rest = split.benefitPart || split.drawbackPart ? "" : m;
+
+  const benefitAfter = rest.match(/(?:好处|优势|利)[：:]\s*([^；;\n]+)/);
   if (benefitAfter?.[1]) {
     const cleaned = benefitAfter[1].split(/[，,]\s*(?:坏处|劣势|弊)/)[0].trim();
     pushUnique(benefits, cleaned);
   }
 
-  const drawbackAfter = m.match(/(?:坏处|劣势|弊|弊端)[：:]\s*([^；;\n]+)/);
+  const drawbackAfter = m.match(/(?:坏处|劣势|弊|弊端)[：:，,]?\s*([^；;\n]+)/);
   if (drawbackAfter?.[1]) {
     const cleaned = drawbackAfter[1].split(/[，,]\s*(?:好处|优势)/)[0].trim();
     pushUnique(drawbacks, cleaned);
   }
 
-  const beforeDrawback = m.split(/(?:坏处|劣势|弊|弊端)[：:]/)[0];
+  const beforeDrawback = rest.split(/(?:坏处|劣势|弊|弊端)[：:]/)[0];
   if (/好处|优势/.test(beforeDrawback) && !benefitAfter) {
     const chunk = beforeDrawback.replace(/.*(?:好处|优势)[：:]?\s*/, "");
     if (chunk.length > 4) pushUnique(benefits, chunk);
   }
 
-  if (/拥堵|堵车|拥挤/.test(m) && !/好处|优势/.test(m.slice(0, 8))) {
-    pushUnique(drawbacks, m.match(/拥堵[^，,。；;]*/)?.[0] ?? "交通拥堵、出行不便");
+  const src = rest || m;
+  if (/拥堵|堵车|拥挤/.test(src) && !/好处|优势/.test(src.slice(0, 8))) {
+    pushUnique(drawbacks, src.match(/拥堵[^，,。；;]*/)?.[0] ?? "交通拥堵、出行不便");
   }
-  if (/垃圾|污染|环境破坏|环境/.test(m)) {
+  if (/垃圾|污染|环境破坏|环境/.test(src)) {
     pushUnique(
       drawbacks,
-      m.match(/[^，,。；;]*(?:垃圾|污染|环境)[^，,。；;]*/)?.[0] ??
+      src.match(/[^，,。；;]*(?:垃圾|污染|环境)[^，,。；;]*/)?.[0] ??
         "旅游带来的环境压力",
     );
   }
-  if (/收入|服务业|带动|就业|经济/.test(m) && !/坏处|劣势|弊/.test(m.slice(0, 6))) {
+  if (
+    /收入|服务业|带动|就业|经济|发展/.test(src) &&
+    !/(?:坏处|劣势|弊|弊端)/.test(src)
+  ) {
     pushUnique(
       benefits,
-      m.match(/[^，,。；;]*(?:收入|服务业|带动)[^，,。；;]*/)?.[0] ??
-        m.slice(0, 40),
+      src.match(/[^，,。；;]*(?:收入|服务业|带动|发展)[^，,。；;]*/)?.[0] ??
+        src.slice(0, 40),
     );
   }
 
@@ -406,8 +491,14 @@ export function themesToHandoffPatch(
       ? benefitText || themes.benefits[0] || ""
       : drawbackText || themes.drawbacks[0] || "";
 
-  const body1Point = trimSnippet(latestBody1 || fallbackBody1, 72);
-  const body2Point = trimSnippet(latestBody2 || fallbackBody2, 72);
+  const body1Point = trimSnippet(
+    isolatePointForSide(latestBody1 || fallbackBody1, body1Kind),
+    72,
+  );
+  const body2Point = trimSnippet(
+    isolatePointForSide(latestBody2 || fallbackBody2, body2Kind),
+    72,
+  );
 
   let body1Angle = "";
   let body2Angle = "";
@@ -460,8 +551,14 @@ function pickLatestSpecificPoint(msgs: string[], kind: SideKind): string {
     const isBenefit = looksLikeBenefitLine(line);
     const isDrawback = looksLikeDrawbackLine(line);
 
-    if (kind === "benefit" && isBenefit) return line;
-    if (kind === "drawback" && isDrawback) return line;
+    if (kind === "benefit" && isBenefit) {
+      const isolated = isolatePointForSide(line, "benefit");
+      if (isolated && isPointSpecificEnough(isolated)) return isolated;
+    }
+    if (kind === "drawback" && isDrawback) {
+      const isolated = isolatePointForSide(line, "drawback");
+      if (isolated && isPointSpecificEnough(isolated)) return isolated;
+    }
   }
   return "";
 }

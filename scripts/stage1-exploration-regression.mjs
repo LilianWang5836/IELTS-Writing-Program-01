@@ -13,6 +13,7 @@ import { postProcessStage1 } from "../src/lib/domain/stage1-coach.ts";
 import {
   extractExplorationThemes,
   isOpeningExplorationPrompt,
+  themesToHandoffPatch,
 } from "../src/lib/domain/stage1-exploration-themes.ts";
 import {
   resolveQuestionHintType,
@@ -116,6 +117,24 @@ ok(
 ok(
   /Body|具体|写实|论点/.test(visible) || !result.coachQuestion?.trim(),
   "总结轮应细化分论点或不再追问",
+);
+
+const mixedMsg =
+  "能够促进旅游业发展，增加本地居民的收入。坏处，可能会破坏景区环境";
+const mixedState = stateAfterUserLines([
+  "好处多于坏处（利大于弊）",
+  mixedMsg,
+]);
+const mixedMsgs = userMessages(mixedState);
+const mixedThemes = extractExplorationThemes(mixedState, mixedMsgs);
+const mixedPatch = themesToHandoffPatch(mixedThemes, mixedState, mixedMsgs);
+ok(
+  mixedPatch.body1Point?.includes("收入") && !/坏处|破坏景区/.test(mixedPatch.body1Point ?? ""),
+  "同条消息利弊混写时 Body1 不含坏处句",
+);
+ok(
+  mixedPatch.body2Point?.includes("环境") || mixedPatch.body2Point?.includes("破坏"),
+  "坏处部分进入 Body2",
 );
 
 ok(readRewriteRiskGate({ userVisibleText: "", rewriteRisk: "high" }).blockProposal, "high 拦截 proposed");

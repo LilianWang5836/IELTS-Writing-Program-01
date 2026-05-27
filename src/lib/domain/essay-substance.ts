@@ -5,6 +5,7 @@ import {
   getPointRefinementAsk,
   isPointSpecificEnough,
   isProsConsQuestionType,
+  sanitizeBodyPointForLean,
   suggestStructureQuestion,
   themesToHandoffPatch,
 } from "./stage1-exploration-themes";
@@ -795,6 +796,9 @@ export function sanitizeHandoffProposal(
   const sides = explorationSideStatus(state, msgs);
   const ruleBuilt = buildHandoffFromChat(state);
   const out: Stage1Handoff = { ...proposal };
+  const themes = isProsConsQuestionType(resolveQuestionHintType(state))
+    ? extractExplorationThemes(state, msgs)
+    : null;
 
   if (!sides.sideA) {
     out.body1Point = "";
@@ -808,6 +812,13 @@ export function sanitizeHandoffProposal(
     );
     if (!out.body1Angle?.trim() && ruleBuilt.body1Angle) {
       out.body1Angle = ruleBuilt.body1Angle;
+    }
+    if (themes && out.body1Point?.trim()) {
+      out.body1Point = sanitizeBodyPointForLean(
+        out.body1Point,
+        "body1",
+        themes.positionLean,
+      );
     }
   }
 
@@ -823,6 +834,13 @@ export function sanitizeHandoffProposal(
     );
     if (!out.body2Angle?.trim() && ruleBuilt.body2Angle) {
       out.body2Angle = ruleBuilt.body2Angle;
+    }
+    if (themes && out.body2Point?.trim()) {
+      out.body2Point = sanitizeBodyPointForLean(
+        out.body2Point,
+        "body2",
+        themes.positionLean,
+      );
     }
   }
   if (

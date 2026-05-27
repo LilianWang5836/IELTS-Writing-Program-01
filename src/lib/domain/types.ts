@@ -11,6 +11,7 @@ export type SubStep =
   | "S1_EVAL"
   | "S2_2_BODY1"
   | "S2_3_BODY2"
+  | "S2_4_CONCLUSION"
   | "S3_1_BLUEPRINT"
   | "S3_2_MODULE"
   | "S3_3_BODY_CHECK"
@@ -209,6 +210,9 @@ export interface SessionState {
     stage1Pass: boolean;
     subPointsPass: boolean;
     subBody1Pass: boolean;
+    /** body2 完成、可进入 conclusion 子环节（S2_4_CONCLUSION） */
+    subBody2Pass: boolean;
+    /** 整个 stage 2 完成（含 conclusion 子环节），可进 stage 3 */
     stage2Pass: boolean;
   };
   handoff?: Stage1Handoff;

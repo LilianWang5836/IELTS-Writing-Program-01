@@ -22,10 +22,24 @@ function pruneLegacyConclusionSummary(state: SessionState): void {
   }
 }
 
+/** Stage 2 新增 conclusion 子环节后，老 session 的 markers 缺
+ *  subBody2Pass 字段。这个字段仅用作"body2 已确认链条、可进 conclusion"
+ *  的标志：若老 session 的 stage2Pass 已为 true（已进 stage 3），把
+ *  subBody2Pass 也补为 true 让状态机一致；否则按 false 兜底。 */
+function backfillSubBody2Pass(state: SessionState): void {
+  const m = state.markers as SessionState["markers"] & {
+    subBody2Pass?: boolean;
+  };
+  if (typeof m.subBody2Pass !== "boolean") {
+    m.subBody2Pass = m.stage2Pass === true;
+  }
+}
+
 /** 将旧版 state 升级到 v2 */
 export function migrateSessionState(raw: SessionState): SessionState {
   if ((raw as SessionState).version === 2) {
     pruneLegacyConclusionSummary(raw);
+    backfillSubBody2Pass(raw);
     return raw;
   }
 
@@ -81,5 +95,6 @@ export function migrateSessionState(raw: SessionState): SessionState {
   }
 
   pruneLegacyConclusionSummary(s);
+  backfillSubBody2Pass(s);
   return s;
 }

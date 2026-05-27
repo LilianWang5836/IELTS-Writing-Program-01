@@ -33,6 +33,9 @@ export const MARKERS = {
   STAGE_1_PASS: "[STAGE_1_PASS]",
   SUB_POINTS_PASS: "[SUB_POINTS_PASS]",
   SUB_BODY_1_PASS: "[SUB_BODY_1_PASS]",
+  /** body2 完成 → 进入 conclusion 子环节（S2_4_CONCLUSION） */
+  SUB_BODY_2_PASS: "[SUB_BODY_2_PASS]",
+  /** conclusion 子环节完成 → 进入 stage 3 蓝图 */
   STAGE_2_PASS: "[STAGE_2_PASS]",
 } as const;
 

@@ -140,14 +140,32 @@ export function applyStage2Body2Advance(
   };
   return {
     ...state,
+    // body2 通过 → 进入 conclusion 子环节（不再直接 stage 3）。
+    subStep: "S2_4_CONCLUSION",
+    markers: { ...state.markers, subBody2Pass: true },
+    coachContext: {},
+    s2: {
+      ...state.s2!,
+      body2,
+      body2Logic: logic,
+    },
+  };
+}
+
+/** Conclusion 子环节通过：写入 conclusionPoint，进 stage 3 蓝图。 */
+export function applyStage2ConclusionAdvance(
+  state: SessionState,
+  conclusionPoint: string,
+): SessionState {
+  return {
+    ...state,
     stage: 3,
     subStep: "S3_1_BLUEPRINT",
     markers: { ...state.markers, stage2Pass: true },
     coachContext: {},
     s2: {
       ...state.s2!,
-      body2,
-      body2Logic: logic,
+      conclusionPoint: conclusionPoint.trim(),
     },
   };
 }
@@ -193,6 +211,10 @@ export function markerForSubStep(
     case "S2_2_BODY1":
       return MARKERS.SUB_BODY_1_PASS;
     case "S2_3_BODY2":
+      // body2 通过 → SUB_BODY_2_PASS（进 conclusion 子环节）
+      return MARKERS.SUB_BODY_2_PASS;
+    case "S2_4_CONCLUSION":
+      // conclusion 通过 → STAGE_2_PASS（进 stage 3 蓝图）
       return MARKERS.STAGE_2_PASS;
     default:
       return null;

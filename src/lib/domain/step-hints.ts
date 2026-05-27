@@ -31,6 +31,8 @@ export function getStepHint(state: SessionState, requiresConfirm: boolean): stri
       return "→ 写出 Body1 整段论证（可中文、可乱序）；教练会拆链条并追问缺口。";
     case "S2_3_BODY2":
       return "→ 写出 Body2 论证；注意与 Body1 不同角度。";
+    case "S2_4_CONCLUSION":
+      return "→ 用一句中文写出你的最终立场（结论段只做这一件事）。";
     case "S3_2_MODULE":
       if (state.s3?.mode === "assign") {
         return "→ 按教练要求写一句英文，点「提交」；一次只写一句。";

@@ -15,6 +15,7 @@ export function createInitialState(question: Question): SessionState {
       stage1Pass: false,
       subPointsPass: false,
       subBody1Pass: false,
+      subBody2Pass: false,
       stage2Pass: false,
     },
     handoff: { ...EMPTY_HANDOFF },
@@ -128,6 +129,11 @@ export function buildLeftPanelText(state: SessionState): string {
           undefined,
         ),
       );
+      parts.push("");
+    }
+    if (state.subStep === "S2_4_CONCLUSION" || state.s2.conclusionPoint) {
+      parts.push("【Conclusion 立场（中文目标）】");
+      parts.push(state.s2.conclusionPoint || "（请用一句中文写出最终立场）");
       parts.push("");
     }
   }

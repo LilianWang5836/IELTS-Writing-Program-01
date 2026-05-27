@@ -6,6 +6,7 @@ function resolveModuleLabel(state: SessionState, subStep: SessionState["subStep"
   if (subStep === "S1_EVAL") return "stage1:planning";
   if (subStep === "S2_2_BODY1") return "body1:global";
   if (subStep === "S2_3_BODY2") return "body2:global";
+  if (subStep === "S2_4_CONCLUSION") return "conclusion:planning";
   if (subStep === "S3_2_MODULE") {
     const task = sampleStage3Task(state);
     return task?.taskType ?? "sentence";

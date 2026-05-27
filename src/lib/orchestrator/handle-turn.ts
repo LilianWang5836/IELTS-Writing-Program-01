@@ -1,4 +1,4 @@
-import { STAGE1_OPENING, MODULE_LABELS } from "@/lib/domain/constants";
+import { MARKERS, STAGE1_OPENING, MODULE_LABELS } from "@/lib/domain/constants";
 import { applyHandoffToState, validateHandoff } from "@/lib/domain/handoff";
 import { sampleStage3Task, resolveStage3Module } from "@/lib/domain/stage3-task-sampler";
 import { buildRuleHintsBlock, ruleHintsForHandoff } from "@/lib/domain/rule-hints";
@@ -71,6 +71,7 @@ import {
   applyHandoffAdvance,
   applyStage2Body1Advance,
   applyStage2Body2Advance,
+  applyStage2ConclusionAdvance,
   appendMarker,
   bodyTaskAfterBody1,
   bodyTaskAfterHandoff,
@@ -935,9 +936,59 @@ export async function handleConfirmChainProposal(
   }
 
   s = applyStage2Body2Advance(s, synthetic, proposal.draft);
-  let reply = "Body2 论证链已确认，正在准备逐句写作…";
+  // body2 完成 → 不再立刻进 stage 3，而是先走 conclusion 子环节，
+  //   让学生用一句中文写出最终立场，作为 stage 3 conclusion_restate 的目标。
+  const reply = buildStage2ConclusionPrompt(s);
   replies.push(reply);
   s = appendChat(s, "assistant", reply);
+
+  return {
+    replies,
+    state: s,
+    requiresConfirm: false,
+    canSubmit: true,
+  };
+}
+
+/**
+ * Stage 2 conclusion 子环节：用户给一句中文 conclusion 立场后，
+ * 写入 s2.conclusionPoint，自动推进到 stage 3，调 P3_1 生成蓝图、
+ * P3_2 拉起第一个 module assign。第一条 reply 末尾附 STAGE_2_PASS marker。
+ */
+async function handleStage2ConclusionSubmit(
+  state: SessionState,
+  message: string,
+): Promise<TurnResponse> {
+  const text = message.trim();
+
+  // 极简校验：必须有内容；太短（< 4 字符）说明可能是误触。
+  if (!text) {
+    const reply = buildStage2ConclusionPrompt(state);
+    return {
+      replies: [reply],
+      state: appendChat(state, "assistant", reply),
+      requiresConfirm: false,
+      canSubmit: true,
+    };
+  }
+  if (text.length < 4) {
+    const reply =
+      "请用一句完整的中文写出你的立场（比如「大学应该兼顾实用技能与学术深度，根据学生的职业方向调整侧重」）。";
+    return {
+      replies: [reply],
+      state: appendChat(state, "assistant", reply),
+      requiresConfirm: false,
+      canSubmit: true,
+    };
+  }
+
+  let s = applyStage2ConclusionAdvance(state, text);
+  let firstReply = `Conclusion 立场已记录：「${text}」。\n\n下面进入逐句写作（Stage 3）。`;
+  // 第一条 reply 末尾加 STAGE_2_PASS marker，让 advance 路径与现有约定一致。
+  firstReply = appendMarker(firstReply, MARKERS.STAGE_2_PASS);
+
+  const replies: string[] = [firstReply];
+  s = appendChat(s, "assistant", firstReply);
 
   const bp = await processLlmTurn(s, "P3_1");
   replies.push(bp.reply);
@@ -955,6 +1006,34 @@ export async function handleConfirmChainProposal(
     requiresConfirm: false,
     canSubmit: s.subStep !== "COMPLETED",
   };
+}
+
+/** Stage 2 conclusion 子环节的入口提示：
+ *  - 提醒结论段只做"重申立场"
+ *  - 引用 stage 1 的 position + body1/body2 的分论点作为参考
+ *  - 让学生用一句中文写出 conclusionPoint */
+function buildStage2ConclusionPrompt(state: SessionState): string {
+  const h = state.handoff;
+  const s2 = state.s2;
+  const lines: string[] = [
+    "Body 2 论证链已确认。",
+    "",
+    "下面进入 **Conclusion 环节**——按 IELTS 写作惯例，结论段只做一件事：**重申立场**。",
+    "",
+    "请用**一句中文**写出你这篇文章的最终立场（这就是 stage 3 conclusion 句的中文目标）。",
+  ];
+  const refs: string[] = [];
+  if (h?.position?.trim()) refs.push(`你在审题阶段的立场：${h.position.trim()}`);
+  if (s2?.body1Point?.trim()) refs.push(`Body 1 分论点：${s2.body1Point.trim()}`);
+  if (s2?.body2Point?.trim()) refs.push(`Body 2 分论点：${s2.body2Point.trim()}`);
+  if (refs.length > 0) {
+    lines.push("");
+    lines.push("可参考：");
+    refs.forEach((r) => lines.push(`- ${r}`));
+  }
+  lines.push("");
+  lines.push("直接发一句中文给我，我接住后就进入逐句写作。");
+  return lines.join("\n");
 }
 
 export async function handleConfirmHandoffProposal(
@@ -1074,6 +1153,13 @@ export async function handleTurn(
   let s = ensureMigrated(state);
   s = applyOrchestratorShadow(s, message);
   s = appendChat(s, "user", message);
+
+  // Stage 2 conclusion 子环节：纯对话直处理，不调 LLM 模板，
+  //   必须放在 resolvePromptModule (会返回 NONE) 之前拦截。
+  if (s.subStep === "S2_4_CONCLUSION") {
+    return await handleStage2ConclusionSubmit(s, message);
+  }
+
   const moduleId = resolvePromptModule(s);
 
   if (moduleId === "OPENING" || moduleId === "NONE") {

@@ -10,6 +10,10 @@ export function resolvePromptModule(state: SessionState): PromptModuleId | "OPEN
       return "P2_2";
     case "S2_3_BODY2":
       return "P2_3";
+    case "S2_4_CONCLUSION":
+      // Conclusion 子环节走对话直接处理（不调 LLM 模板），返回 NONE
+      // 让 handle-turn.ts 走 handleStage2ConclusionSubmit 路径。
+      return "NONE";
     case "S3_1_BLUEPRINT":
       return "P3_1";
     case "S3_2_MODULE":

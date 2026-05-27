@@ -1,13 +1,19 @@
+import { HANDOFF_FIELD_ORDER } from "./constants";
+import { EMPTY_HANDOFF } from "./handoff";
 import { isDemoEmployAcademicTopic } from "./stage1-topic-profile";
 import { resolveQuestionHintType } from "./stage1-question-hint";
 import {
+  bodyPointsTooSimilar,
   extractExplorationThemes,
   getPointRefinementAsk,
   isPointSpecificEnough,
   isProsConsQuestionType,
+  looksLikeBenefitLine,
+  looksLikeDrawbackLine,
   sanitizeBodyPointForLean,
   suggestStructureQuestion,
   themesToHandoffPatch,
+  type PositionLean,
 } from "./stage1-exploration-themes";
 import {
   buildGapProgressionMirror as buildGapProgressionMirrorLabeled,
@@ -359,13 +365,14 @@ function explorationSideStatusGeneric(
 
   if (isProsConsQuestionType(resolveQuestionHintType(state))) {
     const themes = extractExplorationThemes(state, msgs);
+    const lean = themes.positionLean;
     return {
       sideA:
         isValidBodyPoint(h?.body1Point, "sideA", state) ||
         themes.benefits.length >= 1,
       sideB:
-        isValidBodyPoint(h?.body2Point, "sideB", state) ||
-        themes.drawbacks.length >= 1,
+        themes.drawbacks.length >= 1 ||
+        prosConsBody2CountsAsSide(h?.body2Point, lean, state),
     };
   }
 
@@ -376,6 +383,75 @@ function explorationSideStatusGeneric(
     sideB:
       isValidBodyPoint(h?.body2Point, "sideB", state) || substantive.length >= 2,
   };
+}
+
+function prosConsBody2CountsAsSide(
+  point: string | undefined,
+  lean: PositionLean,
+  state: SessionState,
+): boolean {
+  const t = point?.trim() ?? "";
+  if (!t || !isValidBodyPoint(t, "sideB", state)) return false;
+  if (lean === "con" || lean === "balanced") {
+    return looksLikeBenefitLine(t) || !looksLikeDrawbackLine(t);
+  }
+  if (lean === "pro") return looksLikeDrawbackLine(t);
+  return true;
+}
+
+/** 探索中把聊天主题同步进六栏（仅填已有讨论的栏，供左侧实时显示） */
+export function explorationHandoffPreview(
+  state: SessionState,
+): Partial<Stage1Handoff> | null {
+  if (!isProsConsQuestionType(resolveQuestionHintType(state))) return null;
+  const msgs = userMessages(state);
+  const themes = extractExplorationThemes(state, msgs);
+  if (themes.positionLean === "unknown") return null;
+  if (!themes.benefits.length && !themes.drawbacks.length) return null;
+  return themesToHandoffPatch(themes, state, msgs);
+}
+
+export function mergeExplorationIntoHandoff(
+  handoff: Stage1Handoff,
+  preview: Partial<Stage1Handoff> | null,
+): Stage1Handoff {
+  if (!preview) return handoff;
+  const out: Stage1Handoff = { ...handoff };
+  for (const k of HANDOFF_FIELD_ORDER) {
+    const p = preview[k]?.trim();
+    if (!p) continue;
+    if (
+      k === "body1Point" ||
+      k === "body2Point" ||
+      k === "body1Angle" ||
+      k === "body2Angle"
+    ) {
+      out[k] = p;
+    } else if (!out[k]?.trim()) {
+      out[k] = p;
+    }
+  }
+  return out;
+}
+
+/** 左侧六栏展示稿：探索预览 + 待确认提案优先于旧 draft */
+export function effectiveHandoffDraft(
+  state: SessionState,
+  handoffDraft: Stage1Handoff | null,
+): Stage1Handoff {
+  let base: Stage1Handoff = {
+    ...EMPTY_HANDOFF,
+    ...(handoffDraft ?? state.handoff ?? {}),
+  };
+  base = mergeExplorationIntoHandoff(base, explorationHandoffPreview(state));
+  if (
+    state.handoffProposal &&
+    (state.coachContext?.handoffPhase === "proposed" ||
+      state.coachContext?.handoffPhase === "editing")
+  ) {
+    return { ...base, ...state.handoffProposal };
+  }
+  return base;
 }
 
 /** Body1(sideA) / Body2(sideB) 是否已有可写一段的实质方向 */
@@ -869,6 +945,35 @@ export function sanitizeHandoffProposal(
     out.body2Angle ?? "",
     ruleBuilt.body2Angle ?? "",
   );
+
+  if (
+    out.body1Point?.trim() &&
+    out.body2Point?.trim() &&
+    bodyPointsTooSimilar(out.body1Point, out.body2Point) &&
+    themes
+  ) {
+    if (themes.positionLean === "pro") {
+      out.body2Point =
+        themes.drawbacks.length > 0
+          ? sanitizeBodyPointForLean(
+              themes.drawbacks[themes.drawbacks.length - 1] ?? "",
+              "body2",
+              "pro",
+            )
+          : "";
+    } else if (themes.positionLean === "con") {
+      out.body1Point =
+        themes.benefits.length > 0
+          ? sanitizeBodyPointForLean(
+              themes.benefits[themes.benefits.length - 1] ?? "",
+              "body1",
+              "con",
+            )
+          : "";
+    } else {
+      out.body2Point = "";
+    }
+  }
 
   return isHandoffProposalComplete(out, state) ? out : null;
 }

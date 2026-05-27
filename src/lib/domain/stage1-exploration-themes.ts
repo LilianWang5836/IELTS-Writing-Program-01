@@ -146,11 +146,16 @@ function extractLabeledParts(message: string): {
   if (/拥堵|堵车|拥挤/.test(src) && !/好处|优势/.test(src.slice(0, 8))) {
     pushUnique(drawbacks, src.match(/拥堵[^，,。；;]*/)?.[0] ?? "交通拥堵、出行不便");
   }
-  if (/垃圾|污染|环境破坏|环境/.test(src)) {
+  if (/垃圾|污染|环境破坏|环境压力/.test(src)) {
     pushUnique(
       drawbacks,
-      src.match(/[^，,。；;]*(?:垃圾|污染|环境)[^，,。；;]*/)?.[0] ??
+      src.match(/[^，,。；;]*(?:垃圾|污染|环境破坏|环境压力)[^，,。；;]*/)?.[0] ??
         "旅游带来的环境压力",
+    );
+  } else if (/环境/.test(src) && /破坏|污染|垃圾|压力/.test(src)) {
+    pushUnique(
+      drawbacks,
+      src.match(/[^，,。；;]*环境[^，,。；;]*/)?.[0] ?? "旅游带来的环境压力",
     );
   }
   if (
@@ -554,7 +559,7 @@ export function themesToHandoffPatch(
   };
 }
 
-function bodyPointsTooSimilar(a: string, b: string): boolean {
+export function bodyPointsTooSimilar(a: string, b: string): boolean {
   const x = a.trim().replace(/\s/g, "");
   const y = b.trim().replace(/\s/g, "");
   if (!x || !y) return false;
@@ -565,13 +570,13 @@ function bodyPointsTooSimilar(a: string, b: string): boolean {
   return false;
 }
 
-function looksLikeBenefitLine(text: string): boolean {
+export function looksLikeBenefitLine(text: string): boolean {
   return /收入|就业|经济|带动|服务业|受益|增长|交流|便利|机会|发展|促进/.test(
     text,
   );
 }
 
-function looksLikeDrawbackLine(text: string): boolean {
+export function looksLikeDrawbackLine(text: string): boolean {
   if (!/拥堵|堵车|拥挤|垃圾|污染|破坏|不便|噪音|成本|压力|影响居民|环境破坏|环境压力/.test(
     text,
   )) {
@@ -598,7 +603,7 @@ function pickLatestSpecificPoint(msgs: string[], kind: SideKind): string {
       if (isolated && isPointSpecificEnough(isolated)) return isolated;
       if (isolated.length >= 12) return isolated;
     }
-    if (kind === "drawback" && isDrawback && !isBenefit) {
+    if (kind === "drawback" && isDrawback) {
       const isolated = isolatePointForSide(line, "drawback");
       if (isolated && isPointSpecificEnough(isolated)) return isolated;
       if (isolated.length >= 12) return isolated;

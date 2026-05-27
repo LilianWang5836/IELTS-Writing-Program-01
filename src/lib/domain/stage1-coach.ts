@@ -1,9 +1,11 @@
 import {
   buildRecordedSidesPreview,
+  explorationHandoffPreview,
   explorationSideStatus,
   formatProposalCoachMessage,
   isMostlyEnglish,
   isHandoffProposalComplete,
+  mergeExplorationIntoHandoff,
   userAnsweredBothSidesInMessage,
   userMessages,
 } from "./essay-substance";
@@ -136,7 +138,7 @@ export function postProcessStage1(
   userMessage?: string,
 ): { result: LlmTurnResult; state: SessionState } {
   const rounds = (state.coachContext?.exploreRound ?? 0) + 1;
-  const baseHandoff = mergeExtractedToHandoff(
+  const mergedExtracted = mergeExtractedToHandoff(
     state.handoff ?? {
       taskUnderstanding: "",
       position: "",
@@ -147,6 +149,10 @@ export function postProcessStage1(
     },
     result.extracted,
     isExplorationHandoffMerge(state),
+  );
+  const baseHandoff = mergeExplorationIntoHandoff(
+    mergedExtracted,
+    explorationHandoffPreview({ ...state, handoff: mergedExtracted }),
   );
 
   const nextState: SessionState = {

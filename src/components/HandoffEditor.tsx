@@ -2,9 +2,9 @@
 
 import {
   canSubmitStage1Handoff,
-  EMPTY_HANDOFF,
   handoffProgress,
 } from "@/lib/domain/handoff";
+import { effectiveHandoffDraft } from "@/lib/domain/essay-substance";
 import {
   HANDOFF_ANGLE_HELP,
   HANDOFF_FIELD_LABELS,
@@ -83,7 +83,7 @@ export function HandoffEditor() {
     setInsertTarget,
   } = useWritingStore();
 
-  const draft = handoffDraft ?? state?.handoff ?? EMPTY_HANDOFF;
+  const draft = effectiveHandoffDraft(state, handoffDraft);
   const { filled, total } = handoffProgress(draft);
   const maySubmit = state ? canSubmitStage1Handoff(state, draft) : false;
   const showProposal =

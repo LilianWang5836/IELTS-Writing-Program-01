@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { EMPTY_HANDOFF } from "@/lib/domain/handoff";
+import { effectiveHandoffDraft } from "@/lib/domain/essay-substance";
 import { defaultHandoffTarget } from "@/lib/domain/router";
 import type {
   WorkshopBodyKey,
@@ -328,10 +329,10 @@ export const useWritingStore = create<WritingStore>()(
           const replies = normalizeReplies(data.replies);
           set({
             state: data.state,
-            handoffDraft:
-              data.state.coachContext?.handoffPhase === "proposed"
-                ? get().handoffDraft
-                : data.state.handoff ?? get().handoffDraft,
+            handoffDraft: effectiveHandoffDraft(
+              data.state,
+              get().handoffDraft,
+            ),
             insertTarget: data.state.handoffLocked
               ? get().insertTarget
               : defaultHandoffTarget(data.state),

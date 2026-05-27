@@ -1,9 +1,33 @@
 import { defaultBodySegment } from "./handoff";
 import type { SessionState } from "./types";
 
+/** Conclusion 段已简化为只做 conclusion_restate。
+ *  老 session 的 modulePlan.conclusion 可能含 "conclusion_summary"——
+ *  在每次 migrate 入口（无论 version）都做一次幂等清理，避免遗留 module
+ *  让 stage 3 进入死路径。 */
+function pruneLegacyConclusionSummary(state: SessionState): void {
+  const plan = state.s3?.modulePlan;
+  if (plan && Array.isArray(plan.conclusion)) {
+    const filtered = plan.conclusion.filter(
+      (m): m is "conclusion_restate" | "evaluation" =>
+        m !== ("conclusion_summary" as unknown as typeof m),
+    );
+    plan.conclusion = filtered.length > 0 ? filtered : ["conclusion_restate"];
+  }
+  const bp = state.s3?.blueprint?.conclusion as
+    | { restateDirection?: string; summaryLogicDirection?: unknown }
+    | undefined;
+  if (bp && "summaryLogicDirection" in bp) {
+    delete bp.summaryLogicDirection;
+  }
+}
+
 /** 将旧版 state 升级到 v2 */
 export function migrateSessionState(raw: SessionState): SessionState {
-  if ((raw as SessionState).version === 2) return raw;
+  if ((raw as SessionState).version === 2) {
+    pruneLegacyConclusionSummary(raw);
+    return raw;
+  }
 
   const s = { ...raw, version: 2 as const };
 
@@ -56,5 +80,6 @@ export function migrateSessionState(raw: SessionState): SessionState {
     s.handoffLocked = true;
   }
 
+  pruneLegacyConclusionSummary(s);
   return s;
 }

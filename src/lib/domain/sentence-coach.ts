@@ -23,9 +23,8 @@ export function getModuleDirection(state: SessionState): string {
     }
   }
   if (mod && bp.conclusion) {
-    return mod === "conclusion_restate"
-      ? bp.conclusion.restateDirection
-      : bp.conclusion.summaryLogicDirection;
+    // conclusion 段已简化：只剩 conclusion_restate。
+    return bp.conclusion.restateDirection;
   }
   return "";
 }
@@ -238,14 +237,6 @@ export function assessMeaningAlignment(
   const required = concepts.slice(0, 3);
   const missing: string[] = [];
 
-  // conclusion_summary 需要的是「连接两段」，单独算 body1/body2 各自概念集。
-  const body1Concepts = detectOutlineConcepts(
-    `${s2.body1Point ?? ""} ${s2.body1Angle ?? ""}`,
-  );
-  const body2Concepts = detectOutlineConcepts(
-    `${s2.body2Point ?? ""} ${s2.body2Angle ?? ""}`,
-  );
-
   const hasConcept = (c: string) => hasAnyCue(sentence, CONCEPT_CUES[c] ?? []);
   const hasScene = /\b(at school|in class|in companies|at work|in workplace|during internship|in internships?)\b/i.test(
     sentence,
@@ -310,27 +301,6 @@ export function assessMeaningAlignment(
     if (!hasStanceVerb) missing.push("claim_stance");
     if (!hasTargetRole) missing.push("claim_target");
     if (!hasTopicDirection) missing.push("claim_direction");
-    return {
-      aligned: missing.length === 0,
-      missing,
-      requiredConcepts: required,
-    };
-  }
-
-  if (mod === "conclusion_summary") {
-    // summary 的局部功能：连接 body1 与 body2，要么概念两侧都触达，要么使用对比/并列连接词。
-    const hasLinkConnector =
-      /\b(although|while|whereas|in\s+contrast|on\s+the\s+other\s+hand|at\s+the\s+same\s+time|both|either|together|combined|balance|trade-off|trade\s+off|complement)\b/i.test(
-        sentence,
-      ) ||
-      /\b(depend|depending|whether|if|otherwise|vice\s+versa)\b/i.test(sentence);
-    const hasBody1Hit =
-      body1Concepts.length === 0 || body1Concepts.some((c) => hasConcept(c));
-    const hasBody2Hit =
-      body2Concepts.length === 0 || body2Concepts.some((c) => hasConcept(c));
-    const bothSides = hasBody1Hit && hasBody2Hit;
-    if (!hasLinkConnector && !bothSides) missing.push("summary_link");
-    if (!bothSides) missing.push("summary_two_sides");
     return {
       aligned: missing.length === 0,
       missing,
@@ -1034,12 +1004,6 @@ function inferPatternByModule(module: string | null): string[] {
   if (module === "conclusion_restate") {
     return ["In conclusion, X should ...", "Universities/Schools should ... so that ..."];
   }
-  if (module === "conclusion_summary") {
-    return [
-      "Whether ... depends on ...",
-      "Although X, Y; therefore ...",
-    ];
-  }
   return ["Subject + Verb + Result"];
 }
 
@@ -1147,7 +1111,7 @@ function scaffoldingFor(
           starterStructures: ["原因句 + , which / because + 结果"],
         };
       }
-      if (module === "claim" || module === "conclusion_restate" || module === "conclusion_summary") {
+      if (module === "claim" || module === "conclusion_restate") {
         return {
           ...base,
           hintZh: "用立场动词+目标角色+方向，把主张说清。",
@@ -1533,7 +1497,6 @@ const MODULE_LABEL_ZH: Record<string, string> = {
   example: "举例句（Example）",
   impact: "影响句（Impact）",
   conclusion_restate: "重申立场",
-  conclusion_summary: "总结两段关系",
 };
 
 export function formatAssignPromptZh(
@@ -2061,7 +2024,6 @@ export function postProcessStage3Sentence(
       example: "意思和例子都到位",
       impact: "影响表达到位",
       conclusion_restate: "立场已收回",
-      conclusion_summary: "两段已经连起来了",
     };
     const affirm = affirmByModule[mod ?? ""] ?? "意思已经传达到";
     const grouped = groupViabilityIssues(viability.issues);

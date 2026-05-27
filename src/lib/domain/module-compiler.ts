@@ -15,19 +15,20 @@ export function compileModulePlan(
       return {
         body1: withImpact,
         body2: withImpact,
-        conclusion: ["conclusion_restate", "conclusion_summary"],
+        conclusion: ["conclusion_restate"],
       };
     case "discuss":
       return {
         body1: body,
         body2: body,
-        conclusion: ["conclusion_restate", "conclusion_summary", "evaluation"],
+        // discuss 题保留 evaluation 二段（个人立场评价），但已不再做 summary 中转。
+        conclusion: ["conclusion_restate", "evaluation"],
       };
     default:
       return {
         body1: body,
         body2: body,
-        conclusion: ["conclusion_restate", "conclusion_summary"],
+        conclusion: ["conclusion_restate"],
       };
   }
 }

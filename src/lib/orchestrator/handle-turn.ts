@@ -678,10 +678,7 @@ function buildVars(
         base.module_direction = dir;
       }
     } else if (mod && bp.conclusion) {
-      base.module_direction =
-        mod === "conclusion_restate"
-          ? bp.conclusion.restateDirection
-          : bp.conclusion.summaryLogicDirection;
+      base.module_direction = bp.conclusion.restateDirection;
     }
     if (state.subStep === "S3_3_BODY_CHECK") {
       base.body_sentences = integrateBodySentences(state, body);

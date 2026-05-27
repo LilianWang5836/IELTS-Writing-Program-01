@@ -45,5 +45,4 @@ export const MODULE_LABELS: Record<string, string> = {
   impact: "Impact — 结果/影响",
   evaluation: "Evaluation — 平衡判断",
   conclusion_restate: "Conclusion — 重申立场",
-  conclusion_summary: "Conclusion — 总结两论点关系",
 };

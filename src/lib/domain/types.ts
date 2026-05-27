@@ -24,8 +24,7 @@ export type ModuleId =
   | "example"
   | "impact"
   | "evaluation"
-  | "conclusion_restate"
-  | "conclusion_summary";
+  | "conclusion_restate";
 
 export type BodyKey = "body1" | "body2" | "conclusion";
 
@@ -137,8 +136,8 @@ export interface Blueprint {
   body1: BlueprintBody;
   body2: BlueprintBody;
   conclusion: {
+    /** Stage 3 conclusion 段唯一目标：重申立场。 */
     restateDirection: string;
-    summaryLogicDirection: string;
   };
 }
 
@@ -227,6 +226,10 @@ export interface SessionState {
     body2: BodySegment;
     body1Logic?: LogicFill;
     body2Logic?: LogicFill;
+    /** Stage 2 conclusion 子环节的产出：用户对 conclusion 这一句的中文目标
+     *  （重申立场）。Stage 3 的 restateDirection 优先用它。
+     *  老 session 没有这个字段时，blueprint 退回到 handoff.position。 */
+    conclusionPoint?: string;
   };
   s3?: {
     orchestrator?: {

@@ -342,6 +342,7 @@ ok(
 );
 
 // === Conclusion 模块 meaning gate 回归 ==================================
+//   Conclusion 段已简化：只剩 conclusion_restate（重申立场）。
 const conclusionState = {
   s2: {
     body1Point: "大学应教授实用技能，使毕业生能迅速找到工作",
@@ -351,30 +352,10 @@ const conclusionState = {
   },
   s3: {
     currentBody: "conclusion",
-    modulePlan: { body1: [], body2: [], conclusion: ["conclusion_summary"] },
+    modulePlan: { body1: [], body2: [], conclusion: ["conclusion_restate"] },
     moduleIndex: 0,
   },
 };
-
-const summaryDrift = assessMeaningAlignment(
-  conclusionState,
-  "Universities should keep growing in many directions.",
-  "conclusion_summary",
-);
-ok(
-  !summaryDrift.aligned,
-  "conclusion_summary 句未连接两段时应被拦截（不再 early-return 通过）",
-);
-
-const summaryGood = assessMeaningAlignment(
-  conclusionState,
-  "Whether universities prioritize practical skills or academic research depends on students' career goals.",
-  "conclusion_summary",
-);
-ok(
-  summaryGood.aligned,
-  "conclusion_summary 同时点到两段概念 + 含连接词时应通过",
-);
 
 const restateDrift = assessMeaningAlignment(
   conclusionState,
@@ -384,6 +365,16 @@ const restateDrift = assessMeaningAlignment(
 ok(
   !restateDrift.aligned,
   "conclusion_restate 缺立场动词/方向时应被拦截",
+);
+
+const restateGood = assessMeaningAlignment(
+  conclusionState,
+  "Universities should prioritize practical skills so graduates can adapt to workplace demands.",
+  "conclusion_restate",
+);
+ok(
+  restateGood.aligned,
+  "conclusion_restate 含立场动词 + 目标角色 + 方向时应通过",
 );
 
 // === academic + 动名词 / enter + work 自然度规则 =========================
@@ -624,7 +615,7 @@ const freshAssignState = {
   },
   s3: {
     currentBody: "body1",
-    modulePlan: { body1: ["claim", "reason"], body2: ["claim"], conclusion: ["conclusion_summary"] },
+    modulePlan: { body1: ["claim", "reason"], body2: ["claim"], conclusion: ["conclusion_restate"] },
     moduleIndex: 0,
     mode: "assign",
     confirmedSentences: {},
@@ -676,7 +667,7 @@ const enterConclusionState = {
     modulePlan: {
       body1: ["claim"],
       body2: ["claim"],
-      conclusion: ["conclusion_summary"],
+      conclusion: ["conclusion_restate"],
     },
     moduleIndex: 0,
     mode: "assign",

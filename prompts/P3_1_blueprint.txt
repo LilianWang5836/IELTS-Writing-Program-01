@@ -22,10 +22,11 @@
   → claim / reason / support direction（同上）
 
 ### Conclusion
-- Function: overall judgement
+- Function: 重申立场（仅此一项；不再做两段连接/总结）
 - Logic skeleton:
-  → restate position: 重申 Stage 1 总体判断（允许部分同意 / 权衡 / 条件判断）
-  → summary logic: 总结两个论点对立或支撑关系
+  → restate position: 重申 Stage 1 / Stage 2 conclusionPoint 的立场。
+  → blueprint.conclusion.restateDirection 来自 stage2 conclusionPoint，
+    若缺失退回 handoff.position。
 
 ## 输出后立即进入 3.2（见【流程规划】）
 不得等待用户确认
@@ -38,6 +39,6 @@
   "modulePlan": {
     "body1": ["claim","reason","example"],
     "body2": ["claim","reason","example"],
-    "conclusion": ["conclusion_restate","conclusion_summary"]
+    "conclusion": ["conclusion_restate"]
   }
 }

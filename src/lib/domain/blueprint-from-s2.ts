@@ -33,9 +33,6 @@ export function normalizeBlueprint(
       restateDirection:
         fromLlm.conclusion?.restateDirection?.trim() ||
         base.conclusion.restateDirection,
-      summaryLogicDirection:
-        fromLlm.conclusion?.summaryLogicDirection?.trim() ||
-        base.conclusion.summaryLogicDirection,
     },
   };
 }
@@ -71,25 +68,17 @@ export function buildBlueprintFromStage2(state: SessionState): Blueprint {
       : "用一个具体例子或数据支持你的论证（Give concrete support）",
   });
 
+  // Conclusion 段已简化为只做"重申立场"。优先级：
+  //   1) Stage 2 用户专门写的 conclusionPoint（最贴目标内容）
+  //   2) Stage 1 handoff 的 position（早期立场）
+  //   3) body1Point fallback（万一 stage 1 漏填）
   const restateDir = (() => {
-    const stance = h?.position?.trim() || s2?.body1Point?.trim() || "";
+    const conclusionPoint = s2?.conclusionPoint?.trim();
+    const stance =
+      conclusionPoint || h?.position?.trim() || s2?.body1Point?.trim() || "";
     return stance
       ? `重申立场：${stance}（Restate position）`
-      : "重申立场：再说一次你在引言里给出的 position（Restate position）";
-  })();
-
-  const summaryDir = (() => {
-    const p1 = s2?.body1Point?.trim();
-    const p2 = s2?.body2Point?.trim();
-    const a1 = s2?.body1Angle?.trim();
-    const a2 = s2?.body2Angle?.trim();
-    if (p1 && p2) {
-      return `连接两段：用一句话把 Body 1「${p1}」与 Body 2「${p2}」串起来（Link two paragraphs）`;
-    }
-    if (a1 && a2) {
-      return `连接两段：从「${a1}」过渡到「${a2}」，用一句话把两段核心连起来（Link two paragraphs）`;
-    }
-    return "连接两段：用一句过渡把 Body 1 和 Body 2 的核心串起来（Link two paragraphs）";
+      : "重申立场：再说一次你在引言里给出的立场（Restate position）";
   })();
 
   return {
@@ -103,7 +92,6 @@ export function buildBlueprintFromStage2(state: SessionState): Blueprint {
     },
     conclusion: {
       restateDirection: restateDir,
-      summaryLogicDirection: summaryDir,
     },
   };
 }

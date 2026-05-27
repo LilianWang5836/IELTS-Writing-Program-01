@@ -471,7 +471,7 @@ export function mockLlmResponse(
         modulePlan: {
           body1: ["claim", "reason", "example"],
           body2: ["claim", "reason", "example"],
-          conclusion: ["conclusion_restate", "conclusion_summary"],
+          conclusion: ["conclusion_restate"],
         },
       };
 

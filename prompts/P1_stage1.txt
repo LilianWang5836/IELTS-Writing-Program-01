@@ -34,9 +34,15 @@
 5. **discuss / agree / two_part**：按题型引导，勿套利弊模板；两侧命名从题目来。
    - 若题干为 *outweigh the advantages* / 利弊谁更重：按 **adv_disadv** 处理（先利弊、再立场、再收 Body），勿用 agree 单边表态模板。
 6. **收口**：题意、立场、两段 Body 总括都清楚时 → `essaySubstanceSufficient: true`，填全 `proposedHandoff`，`coachQuestion` 留空。
-7. `body1Point` / `body2Point` 各 **一句总括**（≤50 字），勿贴论证链；`body1Angle` / `body2Angle` 写该段范围/含几点。
-8. 学生说看不懂 / 已经说得很清楚 → 道歉 + 更具体问题；**禁止**重复追问。
-9. advance 永远 false。
+7. **改写幅度（必评估）**：填 `proposedHandoff` 前，比较学生原话与六栏草案：
+   - 仅措辞顺化、同义替换、语序调整 → `rewriteRisk: "low"`
+   - 有少量推断但学生可接受 → `rewriteRisk: "medium"`
+   - **本质改动**（学生未说的机制/对象/措施、断言变强、新增「可控/显著」等判断、扩写完整让步链）→ `rewriteRisk: "high"`
+   - `rewriteRisk` 为 **high** 时：`essaySubstanceSufficient` 必须为 **false**，**禁止**整理六栏；用 `rewriteFollowUpAsk` 让学生自己补一句（指出哪一栏、缺什么依据）。
+   - `rewriteRisk` 为 low/medium 时可整理六栏。
+8. `body1Point` / `body2Point` 各 **一句总括**（≤50 字），勿贴论证链；`body1Angle` / `body2Angle` 写该段范围/含几点。
+9. 学生说看不懂 / 已经说得很清楚 → 道歉 + 更具体问题；**禁止**重复追问。
+10. advance 永远 false。
 
 ## 用户本轮回答
 {{user_message}}
@@ -49,6 +55,11 @@
   "coachQuestion": "只问一个新问题；可整理时留空",
   "userVisibleText": "与 mirror 同义或更短",
   "essaySubstanceSufficient": false,
+  "rewriteRisk": "low",
+  "rewriteReasons": [],
+  "rewriteFollowUpAsk": "",
+  "rewriteMirror": "",
+  "rewriteRiskAppliesTo": [],
   "gapsRemaining": [],
   "proposalSummary": "仅当 essaySubstanceSufficient 为 true",
   "proposedHandoff": {

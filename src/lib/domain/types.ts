@@ -307,6 +307,8 @@ export interface LanguageSupport {
   starterStructures?: string[];
 }
 
+export type RewriteRiskLevel = "low" | "medium" | "high";
+
 export interface LlmTurnResult {
   verdict: "pass" | "fail" | "assign" | "coach";
   /** 为 true 时系统才切 subStep / 打暗号 */
@@ -314,6 +316,12 @@ export interface LlmTurnResult {
   mirror?: string;
   coachQuestion?: string;
   userVisibleText: string;
+  /** LLM：拟整理六栏相对用户原话的改写幅度；仅 high 时规则拦截 proposed */
+  rewriteRisk?: RewriteRiskLevel;
+  rewriteReasons?: string[];
+  rewriteFollowUpAsk?: string;
+  rewriteMirror?: string;
+  rewriteRiskAppliesTo?: string[];
   logicBreakdown?: LogicBreakdown;
   languageSupport?: LanguageSupport;
   extracted?: Record<string, unknown>;

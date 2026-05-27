@@ -19,6 +19,7 @@ import {
   topicImpliesProsConsWeighing,
 } from "../src/lib/domain/stage1-question-hint.ts";
 import { migrateSessionState } from "../src/lib/domain/migrate-state.ts";
+import { readRewriteRiskGate } from "../src/lib/domain/stage1-rewrite-risk.ts";
 
 const TOURISM_PROMPT =
   "International tourism has brought enormous benefits to many places. At the same time, there is concern about its impact on local inhabitants and the environment. Do the disadvantages of international tourism outweigh the advantages?";
@@ -115,6 +116,76 @@ ok(
 ok(
   /Body|具体|写实|论点/.test(visible) || !result.coachQuestion?.trim(),
   "总结轮应细化分论点或不再追问",
+);
+
+ok(readRewriteRiskGate({ userVisibleText: "", rewriteRisk: "high" }).blockProposal, "high 拦截 proposed");
+ok(!readRewriteRiskGate({ userVisibleText: "", rewriteRisk: "medium" }).blockProposal, "medium 不拦截");
+ok(!readRewriteRiskGate({ userVisibleText: "", rewriteRisk: "low" }).blockProposal, "low 不拦截");
+
+const sShort = stateAfterUserLines([
+  "好处和坏处哪个多，我觉得好处更多",
+  "好处：促进当地经济发展；坏处：可能会对景区带来环境破坏",
+]);
+const inflatedProposal = {
+  taskUnderstanding: "讨论国际旅游对经济与环境的影响并权衡利弊",
+  position: "利大于弊",
+  body1Point: "国际旅游业能显著促进当地经济发展并提升居民收入。",
+  body2Point: "虽然旅游业会给当地环境带来一定压力，但这种破坏是可控的。",
+  body1Angle: "侧重经济效益与就业",
+  body2Angle: "侧重环境影响及应对",
+  questionType: "adv_disadv",
+};
+const blocked = postProcessStage1(
+  { ...sShort, coachContext: { ...sShort.coachContext, exploreRound: 2 } },
+  {
+    verdict: "coach",
+    advance: false,
+    mirror: "利弊和立场我都记下了。",
+    coachQuestion: "",
+    userVisibleText: "",
+    essaySubstanceSufficient: true,
+    rewriteRisk: "high",
+    rewriteReasons: ["added_new_mechanism", "strengthened_claim"],
+    rewriteFollowUpAsk:
+      "你提到环境破坏，但「破坏可控」需要你自己补一句：对谁、通过什么措施、为什么可控？",
+    rewriteMirror: "我先不整理进左侧，因为有几处判断还不是你原话里的。",
+    proposedHandoff: inflatedProposal,
+    proposalSummary: "总体利大于弊。",
+  },
+);
+ok(
+  blocked.state.coachContext?.handoffPhase === "exploring",
+  "rewriteRisk=high 时不进入 proposed",
+);
+ok(
+  !/确认整理并填入/.test(blocked.result.userVisibleText ?? ""),
+  "high 时不展示整理确认话术",
+);
+ok(
+  blocked.result.coachQuestion?.includes("可控"),
+  "high 时用 LLM rewriteFollowUpAsk",
+);
+
+const allowed = postProcessStage1(
+  { ...sShort, coachContext: { ...sShort.coachContext, exploreRound: 2 } },
+  {
+    verdict: "coach",
+    advance: false,
+    mirror: "",
+    coachQuestion: "",
+    userVisibleText: "",
+    essaySubstanceSufficient: true,
+    rewriteRisk: "medium",
+    rewriteFollowUpAsk: "",
+    rewriteMirror: "",
+    proposedHandoff: inflatedProposal,
+    proposalSummary: "利弊与立场已齐。",
+  },
+);
+ok(
+  allowed.state.coachContext?.handoffPhase === "proposed" ||
+    /确认整理并填入/.test(allowed.result.userVisibleText ?? ""),
+  "rewriteRisk=medium 仍可按原流程 proposed",
 );
 
 if (fail) {

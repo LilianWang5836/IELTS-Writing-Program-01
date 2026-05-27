@@ -13,6 +13,7 @@ import {
   reconcileMirrorAndAsk,
 } from "./stage1-exploration-themes";
 import { resolveHandoffTurnDecision } from "./handoff-turn-decision";
+import { readRewriteRiskGate } from "./stage1-rewrite-risk";
 import type { LlmTurnResult, SessionState, Stage1Handoff } from "./types";
 
 export {
@@ -164,6 +165,45 @@ export function postProcessStage1(
   });
 
   if (decision.shouldPropose && decision.proposal) {
+    const rewriteGate = readRewriteRiskGate(result);
+    if (rewriteGate.blockProposal) {
+      const ask =
+        rewriteGate.followUpAsk ||
+        decision.coach.ask ||
+        "请把你刚说的观点收成一句更具体的总括（谁 + 发生什么 + 带来什么结果），我再整理左侧。";
+      const mirror =
+        rewriteGate.mirrorNote ||
+        result.mirror?.trim() ||
+        "我先不直接整理进左侧：六栏里有几处是你还没明确说到的判断。请按下面问题补一句你自己的说法。";
+      const userVisible =
+        [mirror, ask].filter(Boolean).join("\n\n") ||
+        ask ||
+        "请补充一句更具体的分论点。";
+
+      return {
+        result: {
+          ...result,
+          verdict: "coach",
+          advance: false,
+          mirror,
+          coachQuestion: ask,
+          userVisibleText: userVisible,
+          essaySubstanceSufficient: false,
+          proposedHandoff: undefined,
+          proposalSummary: undefined,
+        },
+        state: {
+          ...nextState,
+          handoffProposal: undefined,
+          coachContext: {
+            ...nextState.coachContext,
+            handoffPhase: "exploring",
+            lastQuestion: ask,
+          },
+        },
+      };
+    }
+
     const summary = buildExplorationSummary(
       nextState,
       true,

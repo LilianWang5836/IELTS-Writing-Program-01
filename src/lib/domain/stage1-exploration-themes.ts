@@ -63,7 +63,7 @@ function splitProsConsInMessage(message: string): {
   }
 
   const afterPeriod = m.match(
-    /^(.*?)[。；;]\s*(?:坏处|劣势|弊端)[：:，,]?\s*(.+)$/s,
+    /^(.*?)[。；;]\s*(?:坏处|劣势|弊端)[：:，,]?\s*([\s\S]+)$/,
   );
   if (afterPeriod?.[1] && afterPeriod[2]) {
     return {

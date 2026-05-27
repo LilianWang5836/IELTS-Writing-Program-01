@@ -83,14 +83,14 @@ export function HandoffEditor() {
     setInsertTarget,
   } = useWritingStore();
 
+  if (!state) return null;
+
   const draft = effectiveHandoffDraft(state, handoffDraft);
   const { filled, total } = handoffProgress(draft);
-  const maySubmit = state ? canSubmitStage1Handoff(state, draft) : false;
+  const maySubmit = canSubmitStage1Handoff(state, draft);
   const showProposal =
-    !!state?.handoffProposal &&
+    !!state.handoffProposal &&
     state.coachContext?.handoffPhase === "proposed";
-
-  if (!state) return null;
 
   if (state.handoffLocked && state.handoff) {
     return <ReadonlyHandoff h={state.handoff} />;

@@ -67,7 +67,7 @@ export function buildRuleHintsBlock(state: SessionState): string {
       );
     } else {
       lines.push(
-        "规则提示：仅当就业侧与学术侧各有足够具体内容时才 essaySubstanceSufficient；首轮勿收口。若学生问切入面/角度，先用「讨论范围/视角」解释。两侧已齐时勿问开放/批判性/教学方法类发散题，应整理 proposedHandoff。",
+        "规则提示：仅当 Body1(sideA) 与 Body2(sideB) 各有足够具体内容时才 essaySubstanceSufficient；首轮优先 brainstorm。若学生问切入面/角度，先用「讨论范围/视角」解释。两侧已齐时勿问开放/批判性/教学方法类发散题，应整理 proposedHandoff。",
       );
     }
   }
@@ -83,7 +83,7 @@ export function buildRuleHintsBlock(state: SessionState): string {
         "规则提示：单源 TurnDecision——以当前缺环为锚，一轮只写主槽；词规则仅守门。禁止 mirror 肯定后重复同一环长模板。",
       );
       lines.push(
-        "规则提示：按 Claim→Reason→Example→Link 推进；Link 须有就业/求职结果；advance 永远 false。",
+        "规则提示：按 Claim→Reason→Example→Link 推进；Link 须回扣本段分论点；advance 永远 false。",
       );
       if (state.coachContext?.chainBuildStep) {
         lines.push(

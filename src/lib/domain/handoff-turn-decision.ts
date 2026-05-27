@@ -1,5 +1,5 @@
 /**
- * Stage1 单源回合决策：缺 employ / academic / 可整理 为锚。
+ * Stage1 单源回合决策：缺 sideA(Body1) / sideB(Body2) / 可整理 为锚。
  */
 import {
   assessEssaySubstance,
@@ -23,27 +23,29 @@ import {
   userAnsweredExplorationGap,
   userMessages,
 } from "./essay-substance";
-import { detectHandoffHelpQuestion } from "./stage2-context";
-import { isDemoEmployAcademicTopic } from "./stage1-topic-profile";
 import {
-  resolveGenericExploreDecision,
-  type GenericExploreDecision,
-} from "./stage1-generic-explore";
+  brainstormFallback,
+  brainstormSummaryFallback,
+  explorationSideLabel,
+  gapMirrorForMissingSide,
+  shouldBrainstormFirst,
+} from "./stage1-exploration";
+import { detectHandoffHelpQuestion } from "./stage2-context";
 import { ANGLE_TEACH_CHAT } from "./constants";
-import type { LlmTurnResult, SessionState, Stage1Handoff } from "./types";
+import type {
+  ExplorationSide,
+  ExplorationSides,
+  HandoffGap,
+  LlmTurnResult,
+  SessionState,
+  Stage1Handoff,
+} from "./types";
 
-const FRUSTRATION_RE =
-  /看不懂|不懂你的|不清楚|不明白|已经说|说得很清楚|什么意思|别绕|听不懂/i;
-
-function detectFrustration(message: string): boolean {
-  return FRUSTRATION_RE.test(message);
-}
-
-export type HandoffGap = "employ" | "academic" | "ready" | "none";
+export type { HandoffGap, ExplorationSides };
 
 export interface HandoffTurnDecision {
   gap: HandoffGap;
-  sides: { employ: boolean; academic: boolean };
+  sides: ExplorationSides;
   shouldPropose: boolean;
   proposal: Stage1Handoff | null;
   coach: { mirror: string; ask: string };
@@ -58,32 +60,39 @@ const PROPOSAL_NUDGE =
 
 const MAX_EXPLORE_ROUNDS = 4;
 
+const FRUSTRATION_RE =
+  /看不懂|不懂你的|不清楚|不明白|已经说|说得很清楚|什么意思|别绕|听不懂/i;
+
+function detectFrustration(message: string): boolean {
+  return FRUSTRATION_RE.test(message);
+}
+
 function expectedGap(
-  sides: { employ: boolean; academic: boolean },
+  sides: ExplorationSides,
   sufficient: boolean,
 ): HandoffGap {
-  if (sufficient || (sides.employ && sides.academic)) return "ready";
-  if (!sides.employ) return "employ";
-  if (!sides.academic) return "academic";
+  if (sufficient || (sides.sideA && sides.sideB)) return "ready";
+  if (!sides.sideA) return "sideA";
+  if (!sides.sideB) return "sideB";
   return "ready";
 }
 
 function shouldForceProposal(
   contentReady: boolean,
   sufficient: boolean,
-  sides: { employ: boolean; academic: boolean },
+  sides: ExplorationSides,
   rounds: number,
   userMessage?: string,
 ): boolean {
   if (!contentReady) return false;
   if (sufficient) return true;
-  if (sides.employ && sides.academic) return true;
-  if (rounds >= MAX_EXPLORE_ROUNDS && sides.employ && sides.academic) return true;
+  if (sides.sideA && sides.sideB) return true;
+  if (rounds >= MAX_EXPLORE_ROUNDS && sides.sideA && sides.sideB) return true;
   if (
     userMessage &&
     /看不懂|已经说|说得很清楚|重复/.test(userMessage) &&
-    sides.employ &&
-    sides.academic
+    sides.sideA &&
+    sides.sideB
   ) {
     return true;
   }
@@ -101,55 +110,28 @@ function repairProposalFromChat(state: SessionState): Stage1Handoff | null {
   return sanitizeHandoffProposal(built, state);
 }
 
-/** 通用题目把 generic 决策映射到旧 HandoffTurnDecision 形状。
- *  不调用 essay-substance 的 employ/academic 函数；sides 字段总是为 false，
- *  上层渲染若依赖 sides 也只会收到中性结果。 */
-function adaptGenericToHandoffDecision(
-  generic: GenericExploreDecision,
-): HandoffTurnDecision {
-  const sides = { employ: false, academic: false };
-  const gap: HandoffGap =
-    generic.gap === "ready"
-      ? "ready"
-      : generic.gap === "none"
-        ? "none"
-        : "ready";
-  return {
-    gap,
-    sides,
-    shouldPropose: generic.shouldPropose,
-    proposal: generic.proposal,
-    coach: generic.coach,
-    handoffPhase: generic.handoffPhase,
-    proposalSummary: generic.proposalSummary,
-    essaySubstanceSufficient: generic.essaySubstanceSufficient,
-  };
+function otherSide(side: ExplorationSide): ExplorationSide {
+  return side === "sideA" ? "sideB" : "sideA";
 }
 
 export function resolveHandoffTurnDecision(
   input: ResolveHandoffTurnInput,
 ): HandoffTurnDecision {
   const { state, result, userMessage } = input;
-
-  if (!isDemoEmployAcademicTopic(state)) {
-    const generic = resolveGenericExploreDecision({ state, result, userMessage });
-    return adaptGenericToHandoffDecision(generic);
-  }
-
   const phase = state.coachContext?.handoffPhase ?? "exploring";
 
   if (userMessage?.trim() && detectHandoffHelpQuestion(userMessage)) {
     const h = state.handoff ?? state.handoffProposal;
-    const body2Bad = isIncompleteBodyPoint(h?.body2Point, "academic");
+    const body2Bad = isIncompleteBodyPoint(h?.body2Point, "sideB");
     if (state.handoffLocked || phase === "editing") {
       return {
         gap: "none",
-        sides: explorationSideStatus(userMessages(state)),
+        sides: explorationSideStatus(state),
         shouldPropose: false,
         proposal: state.handoffProposal ?? null,
         coach: {
           mirror: body2Bad
-            ? "⑤ Body2 分论点在左侧被截断了，请直接改那一栏补全整句（学术侧：持续学习、领域积累），保存后再点「提交审题定稿」。"
+            ? `⑤ Body2 分论点在左侧被截断了，请直接改那一栏补全整句（${explorationSideLabel(state, "sideB")}），保存后再点「提交审题定稿」。`
             : "审题定稿已在左侧；请核对六栏，无误后点「提交审题定稿」，再进入 Body1 搭链。",
           ask: body2Bad
             ? "改好后无需在右侧重聊，左侧保存即可。"
@@ -161,7 +143,7 @@ export function resolveHandoffTurnDecision(
     if (phase === "proposed" && state.handoffProposal) {
       return {
         gap: "none",
-        sides: explorationSideStatus(userMessages(state)),
+        sides: explorationSideStatus(state),
         shouldPropose: false,
         proposal: state.handoffProposal,
         coach: { mirror: "", ask: PROPOSAL_NUDGE },
@@ -177,10 +159,10 @@ export function resolveHandoffTurnDecision(
         result.mirror?.trim() && result.mirror !== userMessage.trim()
           ? result.mirror
           : "";
-      const bad = isIncompleteBodyPoint(h.body2Point, "academic");
+      const bad = isIncompleteBodyPoint(h.body2Point, "sideB");
       return {
         gap: "none",
-        sides: explorationSideStatus(userMessages(state)),
+        sides: explorationSideStatus(state),
         shouldPropose: false,
         proposal: null,
         coach: {
@@ -190,7 +172,7 @@ export function resolveHandoffTurnDecision(
               ? "左侧 Body2 分论点不完整，请补全后再提交定稿。"
               : "定稿在左侧；确认无误后点「提交审题定稿」。"),
           ask: bad
-            ? "在左侧 ⑤ 栏补全学术侧分论点一句即可。"
+            ? `在左侧 ⑤ 栏补全 ${explorationSideLabel(state, "sideB")} 分论点一句即可。`
             : "无误后点「提交审题定稿」。",
         },
         handoffPhase: "editing",
@@ -201,12 +183,12 @@ export function resolveHandoffTurnDecision(
   const existingProposal = state.handoffProposal;
   if (
     existingProposal &&
-    isHandoffProposalComplete(existingProposal) &&
+    isHandoffProposalComplete(existingProposal, state) &&
     phase === "proposed"
   ) {
     return {
       gap: "none",
-      sides: explorationSideStatus(userMessages(state)),
+      sides: explorationSideStatus(state),
       shouldPropose: false,
       proposal: existingProposal,
       coach: { mirror: "", ask: PROPOSAL_NUDGE },
@@ -216,15 +198,15 @@ export function resolveHandoffTurnDecision(
 
   if (
     existingProposal &&
-    (!isHandoffProposalComplete(existingProposal) ||
-      isIncompleteBodyPoint(existingProposal.body2Point, "academic") ||
-      isIncompleteBodyPoint(existingProposal.body1Point, "employ"))
+    (!isHandoffProposalComplete(existingProposal, state) ||
+      isIncompleteBodyPoint(existingProposal.body2Point, "sideB") ||
+      isIncompleteBodyPoint(existingProposal.body1Point, "sideA"))
   ) {
     const repaired = repairProposalFromChat(state);
-    if (repaired && isHandoffProposalComplete(repaired)) {
+    if (repaired && isHandoffProposalComplete(repaired, state)) {
       return {
         gap: "ready",
-        sides: explorationSideStatus(userMessages(state)),
+        sides: explorationSideStatus(state),
         shouldPropose: true,
         proposal: repaired,
         coach: {
@@ -245,7 +227,7 @@ export function resolveHandoffTurnDecision(
     if (prop) {
       return {
         gap: "ready",
-        sides: explorationSideStatus(userMessages(state)),
+        sides: explorationSideStatus(state),
         shouldPropose: true,
         proposal: prop,
         coach: {
@@ -258,12 +240,12 @@ export function resolveHandoffTurnDecision(
   }
 
   const msgs = userMessages(state);
-  const sides = explorationSideStatus(msgs);
+  const sides = explorationSideStatus(state, msgs);
   const substance = assessEssaySubstance(state);
   const { contentReady } = assessExplorationContent(state, userMessage);
   const rounds = state.coachContext?.exploreRound ?? 0;
   const gap = expectedGap(sides, substance.sufficient);
-  const gapQ = singleGapCoachPrompt(sides);
+  const gapQ = singleGapCoachPrompt(sides, state);
   const lastQ = state.coachContext?.lastQuestion ?? "";
 
   let proposal =
@@ -274,7 +256,7 @@ export function resolveHandoffTurnDecision(
 
   const shouldPropose =
     !!proposal &&
-    isHandoffProposalComplete(proposal) &&
+    isHandoffProposalComplete(proposal, state) &&
     shouldForceProposal(contentReady, substance.sufficient, sides, rounds, userMessage);
 
   const llmMirror =
@@ -288,11 +270,11 @@ export function resolveHandoffTurnDecision(
       repairProposalFromChat(state) ??
       proposal;
     const intro =
-      isIncompleteBodyPoint(repaired.body2Point, "academic") ||
-      isIncompleteBodyPoint(repaired.body1Point, "employ")
+      isIncompleteBodyPoint(repaired.body2Point, "sideB") ||
+      isIncompleteBodyPoint(repaired.body1Point, "sideA")
         ? "六栏已整理，但分论点需你核对补全（尤其 Body2）。"
         : result.proposalSummary?.trim() ||
-          "两侧都够写两段了，六栏整理在左侧，请核对。";
+          "两个 Body 方向都够写两段了，六栏整理在左侧，请核对。";
     proposal = repaired;
     return {
       gap: "ready",
@@ -309,18 +291,48 @@ export function resolveHandoffTurnDecision(
     };
   }
 
-  const askedSide = gapSideFromCoachQuestion(lastQ);
+  if (
+    shouldBrainstormFirst(
+      state,
+      contentReady,
+      sides,
+      substance.sufficient,
+      rounds,
+    ) &&
+    !shouldPropose
+  ) {
+    return {
+      gap,
+      sides,
+      shouldPropose: false,
+      proposal: null,
+      coach: {
+        mirror:
+          llmMirror ||
+          (msgs.length <= 1
+            ? brainstormSummaryFallback(state)
+            : "我先记下你这边的想法。"),
+        ask:
+          result.coachQuestion?.trim() ||
+          substance.coachPrompt ||
+          brainstormFallback(state),
+      },
+      handoffPhase: "exploring",
+    };
+  }
+
+  const askedSide = gapSideFromCoachQuestion(lastQ, state);
   if (
     contentReady &&
     !substance.sufficient &&
     askedSide &&
     gapQ &&
     userMessage?.trim() &&
-    userAnsweredExplorationGap(userMessage, askedSide)
+    userAnsweredExplorationGap(userMessage, askedSide, state)
   ) {
-    const mirror = buildGapProgressionMirror(askedSide, msgs);
+    const mirror = buildGapProgressionMirror(askedSide, state, msgs);
     return {
-      gap: askedSide === "employ" ? "academic" : "employ",
+      gap: otherSide(askedSide),
       sides,
       shouldPropose: false,
       proposal: null,
@@ -341,6 +353,7 @@ export function resolveHandoffTurnDecision(
     },
     userMessage,
     contentReady,
+    state,
   );
   if (angleTeach.needed && !state.coachContext?.angleTeachDone) {
     return {
@@ -355,11 +368,11 @@ export function resolveHandoffTurnDecision(
   }
 
   if (userMessage && detectFrustration(userMessage)) {
-    const preview = buildRecordedSidesPreview(msgs);
+    const preview = buildRecordedSidesPreview(state, msgs);
     const coachQ =
       gapQ ||
       substance.coachPrompt ||
-      "就业/技能一侧、学术/知识一侧各用一句话说清即可。";
+      `请分别用一句话说清 ${explorationSideLabel(state, "sideA")} 和 ${explorationSideLabel(state, "sideB")}。`;
     return {
       gap,
       sides,
@@ -377,11 +390,11 @@ export function resolveHandoffTurnDecision(
   if (
     nextQ &&
     /body\s*2|论点.*不完整|补充完整|描述不完整/i.test(nextQ) &&
-    sides.employ &&
-    sides.academic
+    sides.sideA &&
+    sides.sideB
   ) {
     const repaired = repairProposalFromChat(state);
-    if (repaired && isHandoffProposalComplete(repaired)) {
+    if (repaired && isHandoffProposalComplete(repaired, state)) {
       return {
         gap: "ready",
         sides,
@@ -402,10 +415,10 @@ export function resolveHandoffTurnDecision(
 
   if (
     isDivergentCoachQuestion(nextQ) &&
-    sides.employ &&
-    sides.academic &&
+    sides.sideA &&
+    sides.sideB &&
     proposal &&
-    isHandoffProposalComplete(proposal)
+    isHandoffProposalComplete(proposal, state)
   ) {
     return {
       gap: "ready",
@@ -414,43 +427,38 @@ export function resolveHandoffTurnDecision(
       proposal,
       coach: {
         mirror: "",
-        ask: formatProposalCoachMessage(proposal, "两侧都够写两段了，六栏整理在左侧，请核对。"),
+        ask: formatProposalCoachMessage(
+          proposal,
+          "两个 Body 方向都够写两段了，六栏整理在左侧，请核对。",
+        ),
       },
       handoffPhase: "proposed",
     };
   }
 
-  if (nextQ && isRepeatedQuestion(lastQ, nextQ)) {
+  if (nextQ && isRepeatedQuestion(lastQ, nextQ, state)) {
     return {
       gap,
       sides,
       shouldPropose: false,
       proposal: null,
       coach: {
-        mirror: llmMirror || buildRecordedSidesPreview(msgs) || "我们继续填空式问题。",
+        mirror: llmMirror || buildRecordedSidesPreview(state, msgs) || "我们继续填空式问题。",
         ask: gapQ || nextQ,
       },
       handoffPhase: "exploring",
     };
   }
 
-  const preview = buildRecordedSidesPreview(msgs);
+  const preview = buildRecordedSidesPreview(state, msgs);
   const mirror =
     llmMirror ||
     preview ||
-    (gap === "employ"
-      ? "题型和立场有了，先补就业/技能一侧。"
-      : gap === "academic"
-        ? "先补学术/知识一侧。"
-        : "我们继续把两侧写实。");
+    (gap === "sideA" || gap === "sideB"
+      ? gapMirrorForMissingSide(gap, state)
+      : "我们继续把两个 Body 方向写实。");
 
-  const ask =
-    gapQ ||
-    (gap === "employ"
-      ? "就业/技能一侧：用一句话说清这段想写什么（实习、项目、职场能力）。"
-      : gap === "academic"
-        ? "学术/知识一侧：用一句话说清（长期学习、研究兴趣）。"
-        : "");
+  const ask = gapQ || "";
 
   return {
     gap,

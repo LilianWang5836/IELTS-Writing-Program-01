@@ -632,7 +632,7 @@ function buildVars(
   if (state.subStep === "S1_EVAL" && !state.handoffLocked) {
     const substance = assessEssaySubstance(state);
     const { contentReady } = assessExplorationContent(state, userMessage);
-    const explorationSides = explorationSideStatus(userMessages(state));
+    const explorationSides = explorationSideStatus(state, userMessages(state));
     base.substance_assessment = JSON.stringify({
       contentReady,
       substanceSufficient: substance.sufficient,

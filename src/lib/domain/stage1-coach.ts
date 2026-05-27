@@ -2,14 +2,13 @@ import {
   buildRecordedSidesPreview,
   explorationSideStatus,
   formatProposalCoachMessage,
-  gapSideFromCoachQuestion,
   isMostlyEnglish,
   isHandoffProposalComplete,
   userAnsweredBothSidesInMessage,
   userMessages,
 } from "./essay-substance";
+import { explorationSideLabel } from "./stage1-exploration";
 import { resolveHandoffTurnDecision } from "./handoff-turn-decision";
-import { isDemoEmployAcademicTopic } from "./stage1-topic-profile";
 import type { LlmTurnResult, SessionState, Stage1Handoff } from "./types";
 
 export {
@@ -23,10 +22,7 @@ function proposalCoachResponse(
   result: LlmTurnResult,
   summary: string,
 ): { result: LlmTurnResult; state: SessionState } {
-  const isDemo = isDemoEmployAcademicTopic(nextState);
-  const fallbackSummary = isDemo
-    ? "两侧都够写两段了，六栏整理在左侧，请核对。"
-    : "六栏整理稿已在左侧，请核对。";
+  const fallbackSummary = "六栏整理稿已在左侧，请核对。";
   const briefSummary =
     result.proposalSummary?.trim() && !isMostlyEnglish(result.proposalSummary)
       ? result.proposalSummary.trim().slice(0, 60)
@@ -66,10 +62,6 @@ export function detectFrustration(message: string): boolean {
   return FRUSTRATION_RE.test(message);
 }
 
-/** 按轮次变化的短反馈，避免每轮重复同一句。
- *
- *  这里所有 employ/academic 字眼仅在 demo 题（q2 大学就业 vs 学术）适用；
- *  generic 题直接交给 LLM mirror，本函数返回空串避免污染。 */
 export function buildExplorationSummary(
   state: SessionState,
   contentReady: boolean,
@@ -77,26 +69,23 @@ export function buildExplorationSummary(
   userMessage?: string,
 ): string {
   if (!contentReady) return "";
-  if (!isDemoEmployAcademicTopic(state)) {
-    return substanceSufficient
-      ? "我整理一版审题定稿到左侧，请核对。"
-      : "";
-  }
-  const sides = explorationSideStatus(userMessages(state));
+  const sides = explorationSideStatus(state);
   if (substanceSufficient) {
-    const preview = buildRecordedSidesPreview(userMessages(state));
+    const preview = buildRecordedSidesPreview(state);
     return preview
-      ? `${preview}两侧都够写两段了，我帮你整理一版审题定稿。`
-      : "两侧都够写两段了，我帮你整理一版审题定稿。";
+      ? `${preview}两个 Body 方向都够写两段了，我帮你整理一版审题定稿。`
+      : "两个 Body 方向都够写两段了，我帮你整理一版审题定稿。";
   }
-  if (sides.academic && !sides.employ) {
-    return "学术侧方向有了，请再补一句就业/技能侧：这段想写什么、为什么。";
+  if (sides.sideB && !sides.sideA) {
+    const label = explorationSideLabel(state, "sideA");
+    return `${explorationSideLabel(state, "sideB")}有了，请再补一句 ${label}：这段想写什么、为什么。`;
   }
-  if (sides.employ && !sides.academic) {
-    return "就业侧方向有了，请再补一句学术/知识侧：这段想写什么、为什么。";
+  if (sides.sideA && !sides.sideB) {
+    const label = explorationSideLabel(state, "sideB");
+    return `${explorationSideLabel(state, "sideA")}有了，请再补一句 ${label}：这段想写什么、为什么。`;
   }
   if (userAnsweredBothSidesInMessage(userMessage)) {
-    return "两侧方向有了，再各用一句话说清 Body1、Body2 各写什么，我就能整理定稿。";
+    return "两个方向有了，再各用一句话说清 Body1、Body2 各写什么，我就能整理定稿。";
   }
   const rounds = state.coachContext?.exploreRound ?? 0;
   if (rounds <= 1) {
@@ -105,7 +94,6 @@ export function buildExplorationSummary(
   return "两条线方向有了，再补具体一点就能整理定稿。";
 }
 
-/** 探索阶段只合并题意/立场，避免 Body 栏被 LLM 占位导致左侧误亮「可提交」 */
 function isExplorationHandoffMerge(state: SessionState): boolean {
   const phase = state.coachContext?.handoffPhase ?? "exploring";
   return phase === "exploring";
@@ -136,6 +124,7 @@ function mergeExtractedToHandoff(
     body2Angle: handoff.body2Angle || ex.body2Angle || "",
   };
 }
+
 export function postProcessStage1(
   state: SessionState,
   result: LlmTurnResult,

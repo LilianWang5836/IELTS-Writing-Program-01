@@ -6,6 +6,16 @@ export type QuestionType =
   | "pos_neg"
   | "unknown";
 
+/** Stage1 探索侧：sideA = Body1，sideB = Body2（不再绑定就业/学术语义） */
+export type ExplorationSide = "sideA" | "sideB";
+
+export type HandoffGap = ExplorationSide | "ready" | "none";
+
+export interface ExplorationSides {
+  sideA: boolean;
+  sideB: boolean;
+}
+
 export type SubStep =
   | "S1_AWAIT"
   | "S1_EVAL"

@@ -10,6 +10,7 @@ import {
   userMessages,
 } from "../src/lib/domain/essay-substance.ts";
 import { postProcessStage1 } from "../src/lib/domain/stage1-coach.ts";
+import { resolveHandoffTurnDecision } from "../src/lib/domain/handoff-turn-decision.ts";
 import {
   extractExplorationThemes,
   isOpeningExplorationPrompt,
@@ -153,6 +154,39 @@ ok(
     (dupPatch.body1Point !== dupPatch.body2Point &&
       !dupPatch.body2Point?.includes("经济")),
   "无坏处句时 Body2 不与 Body1 重复同一句好处",
+);
+
+const refineFlow = stateAfterUserLines([
+  "好处和坏处哪个更多，我觉得好处更多",
+  "好处：促进当地经济发展，和居民就业；坏处：破坏景区环境",
+  "游客带动购物，餐饮住宿等行业的发展，餐馆酒店规模扩大，收益增加，行业需要更多从业人员",
+]);
+const refineState = {
+  ...refineFlow,
+  coachContext: {
+    ...refineFlow.coachContext,
+    exploreRound: 4,
+    lastQuestion:
+      "Body2 的坏处请再具体一点：对谁、造成什么不便或破坏？用一句话写出能展开论证的总括。",
+  },
+};
+const body2Answer =
+  "对景区的环境带来不良影响，特别是自然景区，游客增多可能导致垃圾增多等";
+const refineDecision = resolveHandoffTurnDecision({
+  state: refineState,
+  result: { verdict: "coach", advance: false },
+  userMessage: body2Answer,
+});
+ok(
+  !/Body1 的好处还想再写实/.test(refineDecision.coach.ask ?? ""),
+  "Body2 答完后不再复读 Body1 细化模板",
+);
+ok(
+  refineDecision.shouldPropose ||
+    /确认整理|六栏|核对/.test(
+      [refineDecision.coach.ask, refineDecision.coach.mirror].join(" "),
+    ),
+  "Body1+Body2 均已写实时应进入整理或提示核对六栏",
 );
 
 ok(readRewriteRiskGate({ userVisibleText: "", rewriteRisk: "high" }).blockProposal, "high 拦截 proposed");

@@ -105,7 +105,11 @@ function isolatePointForSide(text: string, kind: SideKind): string {
   }
   if (drawbackPart) return drawbackPart;
   const after = t.match(/(?:坏处|劣势|弊端)[：:，,]?\s*([^。；;]+)/)?.[1];
-  return after?.trim() ?? "";
+  if (after?.trim()) return after.trim();
+  if (looksLikeDrawbackLine(t) && !/(?:好处|优势|利大于)/.test(t)) {
+    return t;
+  }
+  return "";
 }
 
 function extractLabeledParts(message: string): {
@@ -214,14 +218,16 @@ export function extractExplorationThemes(
 
   let readyToFinalize = false;
   if (themesComplete) {
-    const patch = themesToHandoffPatch(
-      { benefits, drawbacks, positionLean, themesComplete, readyToFinalize: false },
-      state,
-      msgs,
-    );
+    const themesSnapshot = {
+      benefits,
+      drawbacks,
+      positionLean,
+      themesComplete,
+      readyToFinalize: false,
+    };
     readyToFinalize =
-      isPointSpecificEnough(patch.body1Point) &&
-      isPointSpecificEnough(patch.body2Point);
+      isBodyRefinementSatisfied("body1", themesSnapshot, state, msgs) &&
+      isBodyRefinementSatisfied("body2", themesSnapshot, state, msgs);
   }
 
   return { benefits, drawbacks, positionLean, themesComplete, readyToFinalize };
@@ -262,27 +268,64 @@ export function isOpeningExplorationPrompt(text: string): boolean {
   );
 }
 
+/** 用户本条是否在细化某一 Body 的分论点（与 handoff 回合决策共用） */
+export function userMessageRefinesBody(
+  message: string,
+  body: "body1" | "body2",
+  themes: ExplorationThemes,
+): boolean {
+  const m = message.trim();
+  if (!m) return false;
+
+  const objectRe = /游客|居民|当地|本地人|餐馆|酒店|景区|环境|道路|生活|行业|从业/;
+  const relationalRe =
+    /导致|造成|带来|带动|增加|减少|让|使得|因为|通过|破坏|影响|提升|挤出|促进|促使|扩大|需要/;
+  const benefitKw =
+    /收入|就业|服务业|经济|消费|食宿|餐馆|酒店|带动|促进|文化|交流|收益|购物|餐饮|住宿/;
+  const drawbackKw =
+    /拥堵|堵车|拥挤|垃圾|污染|环境|破坏|不便|影响|耗时|节假日|不良/;
+
+  if (!objectRe.test(m) || !relationalRe.test(m)) return false;
+
+  if (themes.positionLean === "balanced") {
+    return benefitKw.test(m) || drawbackKw.test(m);
+  }
+
+  const pro = themes.positionLean === "pro";
+  const expectsBenefit =
+    (body === "body1" && pro) || (body === "body2" && !pro);
+  const kw = expectsBenefit ? benefitKw : drawbackKw;
+  return kw.test(m);
+}
+
+/** 该 Body 是否已有够具体的分论点（整理稿或聊天中任一条写实回答） */
+export function isBodyRefinementSatisfied(
+  body: "body1" | "body2",
+  themes: ExplorationThemes,
+  state: SessionState,
+  msgs: string[],
+): boolean {
+  const patch = themesToHandoffPatch(themes, state, msgs);
+  const point = body === "body1" ? patch.body1Point : patch.body2Point;
+  if (isPointSpecificEnough(point)) return true;
+  return msgs.some((m) => userMessageRefinesBody(m, body, themes));
+}
+
 export function getPointRefinementAsk(
   state: SessionState,
   themes: ExplorationThemes,
+  msgs: string[] = state.chatHistory
+    .filter((m) => m.role === "user")
+    .map((m) => m.content.trim())
+    .filter(Boolean),
 ): string | null {
   if (!themes.themesComplete) return null;
-  const patch = themesToHandoffPatch(
-    themes,
-    state,
-    state.chatHistory
-      .filter((m) => m.role === "user")
-      .map((m) => m.content.trim())
-      .filter(Boolean),
-  );
   const pro = themes.positionLean === "pro";
-  const body1Candidate = patch.body1Point || "";
-  const body2Candidate = patch.body2Point || "";
 
-  if (!isPointSpecificEnough(body1Candidate)) {
+  if (!isBodyRefinementSatisfied("body1", themes, state, msgs)) {
     return suggestPointRefinementQuestion(state, themes, "body1", pro);
   }
-  if (!isPointSpecificEnough(body2Candidate)) {
+  if (!isBodyRefinementSatisfied("body2", themes, state, msgs)) {
     return suggestPointRefinementQuestion(state, themes, "body2", pro);
   }
   return null;

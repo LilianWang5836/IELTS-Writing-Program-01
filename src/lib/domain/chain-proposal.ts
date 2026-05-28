@@ -1,3 +1,4 @@
+import type { CoverageState } from "./chain-discourse";
 import { areChainSlotsSemanticallyValid } from "./chain-scaffold";
 import type {
   ChainProposal,
@@ -12,16 +13,18 @@ export type { ChainPhase, ChainProposal } from "./types";
 export function isChainProposalComplete(
   p: ChainProposal | null | undefined,
   body: WorkshopBodyKey = "body1",
+  coverage?: CoverageState,
 ): boolean {
   if (!p?.chainSummary?.trim()) return false;
   const s = p.slots ?? {};
   const draftOk = (p.draft?.trim().length ?? 0) >= 12;
-  return draftOk && areChainSlotsSemanticallyValid(s, body);
+  return draftOk && areChainSlotsSemanticallyValid(s, body, coverage);
 }
 
 export function chainProposalFromResult(
   result: LlmTurnResult,
   target: "body1" | "body2",
+  coverage?: CoverageState,
 ): ChainProposal | null {
   const raw = result.chainProposal as ChainProposal | undefined;
   const bd = result.logicBreakdown;
@@ -50,7 +53,7 @@ export function chainProposalFromResult(
     slots: slots ?? {},
     draft,
   };
-  return isChainProposalComplete(proposal, target) ? proposal : null;
+  return isChainProposalComplete(proposal, target, coverage) ? proposal : null;
 }
 
 export function formatChainProposalCoachMessage(

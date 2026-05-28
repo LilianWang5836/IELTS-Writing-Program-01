@@ -1,8 +1,10 @@
 /**
  * Stage2 单源回合决策：expectedStep 为锚，LLM 理解 + 规则守门，一轮只写主槽。
  */
+import { isDiscourseArgumentReady } from "./chain-discourse";
 import {
   areChainSlotsSemanticallyValid,
+  coachPromptForCoverageNeed,
   exampleFollowUpCoachPrompt,
   getChainBuildContext,
   getNextChainBuildStep,
@@ -329,13 +331,13 @@ function buildProcessMetaCoach(input: {
   if (/分论点|论点.*(可以|行吗|够)|claim/i.test(msg)) {
     mirror =
       mirror ||
-      "分论点已由审题定稿，左侧 Claim 不用再写；我们按环节补原因→举例→段末收束即可。";
+      "分论点已由审题定稿，左侧 Claim 不用再写；我们按功能补齐论证（机制/支撑/收束）即可。";
   } else if (/需要提供什么|要写什么|干什么/i.test(msg)) {
     mirror =
       mirror ||
       `论点已在左侧；当前请先补${stepHint}（一句中文即可）。`;
   } else {
-    mirror = mirror || "好的，我们按搭链环节往下走。";
+    mirror = mirror || "好的，我们按论证功能往下补齐。";
   }
 
   const ask =
@@ -387,16 +389,16 @@ function buildCoverageCoachMessage(input: {
     });
   }
 
-  if (advanceTo === "ready") {
+  if (advanceTo === "ready" && isDiscourseArgumentReady(coverage.scores)) {
     return {
       mirror:
         llmMirror ||
-        "原因、举例和段末收束都齐了，请看左侧链条与下方进度；要改哪一环直接说。",
+        "本段论证链已闭环，请看左侧链条与下方进度；要改哪一层直接说。",
       ask: "",
     };
   }
 
-  const hint = coverageCoachHint(currentNeed, body);
+  const hint = coverageCoachHint(currentNeed, body, ctx);
   const scores = coverage.scores;
   const partial =
     currentNeed !== "ready" &&
@@ -719,7 +721,9 @@ export function resolveChainTurnDecision(
     body,
   );
 
-  const workflow = buildParagraphWorkflowState(coverageScores);
+  const workflow = buildParagraphWorkflowState(coverageScores, {
+    canPropose: isDiscourseArgumentReady(coverageScores),
+  });
 
   const coach = buildCoverageCoachMessage({
     currentNeed,

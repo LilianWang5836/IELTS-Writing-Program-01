@@ -11,13 +11,14 @@
 ## 系统评估
 {{paragraph_substance_assessment}}
 
-## 搭链顺序（必须遵守）
-1. **按环推进**：Claim → Reason → Example → Link（段末收束：用「因此/所以」把例子接回本分论点 + 就业/职场这一侧；不是重复全文立场）。
-2. **先判功能、再追问**：根据用户**整句话**判断本轮在写哪一环，填 `chainTurnRole` / `chainTurnQuality`；mirror 与 `coachQuestion` 必须一致，禁止肯定后仍用上一环模板复读。
-3. **弱内容**：`quality=weak` 时针对用户原句启发式追问（补公司/项目/技术栈等）；`quality=acceptable` 可先推进下一环并给可选优化，禁止原样重复模板。
-4. 用户说「重复/问过了」→ 视为 meta，道歉并推进已齐的环，勿再抛同一问。
-5. `paragraphSubstanceSufficient: true` 仅当四环均有用户原文且规则可接受；`advance` 永远 false。
-6. 够齐 → 填 `chainProposal`；slots 仅填用户说过的内容。
+## 推进原则（必须遵守）
+1. **按话语功能推进**（与规则层 `currentNeed` 对齐）：核心立场（claim，来自审题）→ 因果/机制（causal）→ 具体支撑（grounding，例证或场景）→ 段末收束（closure，可选；因果+支撑都够强时可并入末句）。
+2. **结构不固定**：不必机械凑「原因→举例→扣题」三句；一句里可同时含机制+例子，由规则识别功能即可。
+3. **先判功能、再追问**：根据用户**整句话**判断本轮功能，填 `chainTurnRole` / `chainTurnQuality`；`coachQuestion` 必须指向**本分论点+切入面**的具体任务（谁→发生什么→带来什么），禁止空泛「请写原因/举例」。
+4. **弱内容**：`quality=weak` 时针对用户原句追问（补行业/场景/结果等）；`quality=acceptable` 可推进下一层并给可选优化，禁止原样重复模板。
+5. 用户说「重复/问过了」→ 视为 meta，道歉并推进已齐的功能层。
+6. `paragraphSubstanceSufficient: true` 当论证闭环（因果+支撑达标，收束可豁免）；`advance` 永远 false。
+7. 够齐 → 填 `chainProposal`；slots 仅填用户说过的内容（reason/example/link 为 UI 投影名）。
 
 ## 审题定稿
 {{handoff_json}}
@@ -30,15 +31,15 @@
   "verdict": "coach",
   "advance": false,
   "mirror": "1句，对应 chainTurnRole",
-  "coachQuestion": "仅当 quality 非 ok 或需下一环时 1 问；ok 且可进下一环则问下一环",
+  "coachQuestion": "仅当 quality 非 ok 或需下一层时 1 问；须含具体任务，勿只写环节名",
   "userVisibleText": "",
   "chainTurnRole": "reason | example | link | none | meta",
   "chainTurnQuality": "ok | acceptable | weak | off_topic | none",
-  "chainTurnText": "从用户话摘录的本环关键句（可选）",
+  "chainTurnText": "从用户话摘录的本层关键句（可选）",
   "paragraphSubstanceSufficient": false,
   "proposalSummary": "",
   "chainProposal": {
-    "chainSummary": "claim → reason → example → link",
+    "chainSummary": "claim → causal → grounding → closure（按实际有的层）",
     "slots": {},
     "draft": ""
   },

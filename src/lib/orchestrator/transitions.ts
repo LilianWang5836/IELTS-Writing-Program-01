@@ -49,14 +49,14 @@ export function body1TaskMessage(body1Point?: string, body1Angle?: string): stri
     : "";
   return [
     anchor,
-    "我们一起搭 Body1 论证链：论点已来自审题，请按环节补原因→举例→扣题；齐了之后左侧确认链条。",
+    "我们一起把 Body1 写成一段完整论证：左侧会标出还缺「因果机制 / 具体支撑 / 收束」；齐了之后确认链条。",
   ]
     .filter(Boolean)
     .join("\n");
 }
 
 const BODY1_TASK =
-  "我们一起搭 Body1 论证链：论点已来自审题，请按环节补原因→举例→扣题；齐了之后左侧确认链条。";
+  "我们一起把 Body1 写成一段完整论证：论点来自审题，按提示补机制/支撑/收束，齐了后确认链条。";
 export function body2TaskMessage(body2Point?: string, body2Angle?: string): string {
   const p = body2Point?.trim();
   const a = body2Angle?.trim();
@@ -65,14 +65,14 @@ export function body2TaskMessage(body2Point?: string, body2Angle?: string): stri
     : "";
   return [
     anchor,
-    "我们一起搭 Body2 论证链：论点已来自审题，请按环节补原因→举例→扣题；齐了之后左侧确认链条。",
+    "我们一起把 Body2 写成一段完整论证：左侧会标出还缺「因果机制 / 具体支撑 / 收束」；齐了之后确认链条。",
   ]
     .filter(Boolean)
     .join("\n");
 }
 
 const BODY2_TASK =
-  "我们一起搭 Body2 论证链：论点已来自审题，请按环节补原因→举例→扣题；齐了之后左侧确认链条。";
+  "我们一起把 Body2 写成一段完整论证：论点来自审题，按提示补机制/支撑/收束，齐了后确认链条。";
 
 export function applyHandoffAdvance(state: SessionState): SessionState {
   const h = state.handoff!;

@@ -89,11 +89,33 @@ export function updateCoverage(
   return next;
 }
 
+const STRONG_CAUSAL = 0.85;
+const STRONG_GROUNDING = 0.82;
+
+/** 论证闭环：立场 + 因果层 + 落地层；收束可独立成句，也可由强因果+强支撑豁免 */
+export function isDiscourseArgumentReady(coverage: CoverageState): boolean {
+  if (coverage.claim < THRESHOLD.claim) return false;
+  if (coverage.causal < THRESHOLD.causal) return false;
+  if (coverage.grounding < THRESHOLD.grounding) return false;
+  if (coverage.closure >= THRESHOLD.closure) return true;
+  return (
+    coverage.causal >= STRONG_CAUSAL && coverage.grounding >= STRONG_GROUNDING
+  );
+}
+
 export function getNextNeed(coverage: CoverageState): CoverageNeed {
   if (coverage.claim < THRESHOLD.claim) return "claim";
   if (coverage.causal < THRESHOLD.causal) return "causal";
   if (coverage.grounding < THRESHOLD.grounding) return "grounding";
-  if (coverage.closure < THRESHOLD.closure) return "closure";
+  if (coverage.closure < THRESHOLD.closure) {
+    if (
+      coverage.causal >= STRONG_CAUSAL &&
+      coverage.grounding >= STRONG_GROUNDING
+    ) {
+      return "ready";
+    }
+    return "closure";
+  }
   return "ready";
 }
 
@@ -106,7 +128,7 @@ export function needToBuildStep(need: CoverageNeed): ChainBuildStep {
 }
 
 export function isCoverageReady(coverage: CoverageState): boolean {
-  return getNextNeed(coverage) === "ready";
+  return isDiscourseArgumentReady(coverage);
 }
 
 export function coverageToParagraphCoverage(
@@ -148,9 +170,13 @@ export function coverageToBuildStep(
 
 function onTopic(t: string, body: WorkshopBodyKey): boolean {
   if (body === "body1") {
-    return /就业|工作|技能|实习|项目|职场|课本|实践|面试|公司|技术栈/.test(t);
+    return /就业|工作|技能|实习|项目|职场|课本|实践|面试|公司|技术栈|游客|旅游|景区|餐饮|住宿|购物|当地|收入|产业|经济|就业|居民|行业|从业|收益|发展|带动/.test(
+      t,
+    );
   }
-  return /学术|知识|研究|领域|深造|理论|课程|积累|学习|医学|读研|科研/.test(t);
+  return /学术|知识|研究|领域|深造|理论|课程|积累|学习|医学|读研|科研|环境|污染|垃圾|破坏|拥堵|居民|生活|景区|游客|影响|不便/.test(
+    t,
+  );
 }
 
 export function isClosurePrimarySentence(
@@ -180,11 +206,15 @@ export function hasFunctionalClosure(
   if (body === "body1") {
     return (
       isLinkSentence(s, body, claim) ||
-      (/就业|求职|面试|上岗|工作|适应|对口|offer/.test(s) &&
-        /才能|有助于|更|利于|实现|落到|支撑/.test(s)) ||
+      (/就业|求职|面试|上岗|工作|适应|对口|offer|收入|产业|经济|就业|居民/.test(
+        s,
+      ) &&
+        /才能|有助于|更|利于|实现|落到|支撑|带动|增加/.test(s)) ||
       (/因此|所以/.test(s) &&
-        /实践|实习|项目|技能|职场/.test(s) &&
-        /才能|有助于|更|面试|就业|适应/.test(s))
+        /实践|实习|项目|技能|职场|旅游|游客|产业|收入|就业|经济|当地/.test(
+          s,
+        ) &&
+        /才能|有助于|更|面试|就业|适应|带动|促进/.test(s))
     );
   }
 
@@ -235,9 +265,9 @@ function scoreGrounding(t: string, body: WorkshopBodyKey): number {
   if (s.length < 12) return 0;
 
   if (hasExampleLead(s) && s.length >= 18) {
-    let score = 0.68;
-    if (/比如|例如|比方说/.test(s)) score += 0.12;
-    if (isExampleSentence(s, body) && !isWeakExampleSentence(s, body)) score += 0.15;
+    let score = 0.56;
+    if (/比如|例如|比方说/.test(s)) score += 0.08;
+    if (isExampleSentence(s, body) && !isWeakExampleSentence(s, body)) score += 0.08;
     return Math.min(0.95, score);
   }
 
@@ -246,15 +276,24 @@ function scoreGrounding(t: string, body: WorkshopBodyKey): number {
   }
 
   if (body === "body1") {
-    if (/比如|例如|实习|公司|技术栈|岗位|编程|计算机/.test(s) && s.length >= 22) {
-      return 0.55;
+    if (
+      /比如|例如|实习|公司|技术栈|岗位|编程|计算机|餐馆|酒店|景区|旺季|购物|餐饮|住宿/.test(
+        s,
+      ) &&
+      s.length >= 22
+    ) {
+      return 0.62;
     }
-    if (/实习|项目|公司/.test(s) && !/比如|例如/.test(s)) {
-      return 0.32;
+    if (
+      /实习|项目|公司|餐馆|酒店|景区|游客|行业/.test(s) &&
+      !/比如|例如/.test(s) &&
+      s.length >= 20
+    ) {
+      return 0.38;
     }
   } else {
     if (/比如|例如|医学生|课程|研究|导师|课题|病理/.test(s) && s.length >= 20) {
-      return 0.58;
+      return 0.62;
     }
     if (/医学生|课程|研究/.test(s) && !/比如|例如/.test(s)) {
       return 0.3;
@@ -462,21 +501,32 @@ export function seedClaimOnSlots(
 export function coverageCoachHint(
   need: CoverageNeed,
   body: WorkshopBodyKey,
+  ctx?: { bodyPoint?: string; bodyAngle?: string },
 ): string {
+  const point = ctx?.bodyPoint?.trim() || "";
+  const angle = ctx?.bodyAngle?.trim() || "";
+  const scope = angle || point.slice(0, 24) || (body === "body1" ? "本分论点" : "本分论点");
+
   if (need === "ready") return "";
   if (need === "claim") return "论点来自审题定稿，无需再写 Claim。";
   if (need === "causal") {
+    if (point && /经济|收入|就业|产业|旅游|游客/.test(point)) {
+      return `请用一句话补因果链：在「${scope}」下，游客/消费怎样经过哪一步（行业、岗位等）带来 ${/就业/.test(point) ? "就业或收入" : "你所写的好处"}？`;
+    }
     return body === "body1"
-      ? "请补：为什么职场技能需要项目/实习来补（因果机制）。"
+      ? `请补：在「${scope}」下，为什么该分论点成立（谁→发生什么→带来什么结果）？`
       : "请补：为什么系统积累是学术深造的基础。";
   }
   if (need === "grounding") {
+    if (point && /环境|污染|垃圾|破坏|景区/.test(point)) {
+      return "请补：一个具体场景（例如某类景区/游客增多→垃圾或环境压力），建议用「例如/比如」开头。";
+    }
     return body === "body1"
-      ? "请补：具体实习/项目/岗位例子（建议用「例如/比如」）。"
+      ? `请补：一句具体场景（与「${scope}」相关，例如/比如…），不要用「合理」代替例子。`
       : "请补：课程、研究或训练场景的例子。";
   }
   return body === "body1"
-    ? "请补：段末收束到就业/求职结果（因此/所以）。"
+    ? `请补：用「因此/所以」把上文收束到「${scope}」或分论点（一句即可）。`
     : "请补：段末收束到学术深造/长期积累。";
 }
 

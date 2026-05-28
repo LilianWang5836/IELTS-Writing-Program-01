@@ -14,9 +14,11 @@ import {
   detectFunctionsFromSentence,
   getNextNeed,
   hasFunctionalClosure,
+  isDiscourseArgumentReady,
   isParagraphCoverageComplete,
   needToBuildStep,
 } from "../src/lib/domain/chain-discourse.ts";
+import { assessParagraphSubstance } from "../src/lib/domain/paragraph-substance.ts";
 import { detectChainUserIntent } from "../src/lib/domain/stage2-context.ts";
 import {
   deriveChainWorkflowStatus,
@@ -446,6 +448,38 @@ const wfMissing = deriveChainWorkflowStatus({
   hasProposalDraft: false,
 });
 ok(wfMissing.kind === "building", "缺多环 → Building argument");
+
+const tourismMsgs = [
+  "游客带动购物，餐饮住宿等行业的发展，餐馆酒店规模扩大，收益增加，行业需要更多从业人员",
+  "对景区的环境带来不良影响，特别是自然景区，游客增多可能导致垃圾增多等",
+];
+const tourismClaim =
+  "游客带动购物，餐饮住宿等行业的发展，餐馆酒店规模扩大，收益增加，行业需要更多从业人员";
+const tourismMem = buildDiscourseMemory(tourismMsgs, "body1", tourismClaim);
+const tourismCov = aggregateCoverage(tourismMem, "body1");
+ok(
+  isDiscourseArgumentReady(tourismCov) || tourismCov.grounding >= 0.6,
+  "旅游题 Body1 因果+支撑可被 discourse 识别",
+);
+const tourismState = {
+  chatHistory: tourismMsgs.map((content) => ({ role: "user", content, ts: 1 })),
+  stage: 2,
+  s2: {
+    body1Point: tourismClaim,
+    body1Angle: "主要好处（经济等）",
+    body1: { slots: {}, draft: "" },
+    body2: { slots: {}, draft: "" },
+  },
+};
+const tourismSub = assessParagraphSubstance(tourismState, "body1", undefined, {
+  claim: tourismClaim,
+  reason: tourismMsgs[0],
+  example: "例如景区周边餐馆旺季需要更多服务员",
+});
+ok(
+  tourismSub.sufficient || tourismSub.gaps.every((g) => g.startsWith("可选收束")),
+  "旅游题 substance 不因缺独立 link 槽而卡死",
+);
 
 if (fail) {
   process.exit(1);

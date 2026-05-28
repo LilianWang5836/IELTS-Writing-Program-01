@@ -13,6 +13,7 @@ import {
   detectChainProcessQuestion,
   exampleFollowUpCoachPrompt,
   formatChainSkeleton,
+  coachPromptForCoverageNeed,
   getChainBuildContext,
   getNextChainBuildStep,
   isChainStepFilled,
@@ -22,7 +23,14 @@ import {
   normalizeHandoffClaimForChain,
   type ChainBuildStep,
 } from "./chain-scaffold";
-import { isParagraphCoverageComplete } from "./chain-discourse";
+import {
+  aggregateCoverage,
+  buildDiscourseMemory,
+  getNextNeed,
+  isDiscourseArgumentReady,
+  isParagraphCoverageComplete,
+  needToBuildStep,
+} from "./chain-discourse";
 import { resolveChainTurnDecision } from "./chain-turn-decision";
 import {
   deriveChainWorkflowStatus,
@@ -31,6 +39,7 @@ import {
 import {
   detectCoachCounterQuestion,
   detectChainFrustration,
+  stage2UserMessages,
   userBlobForWorkshopBody,
 } from "./stage2-context";
 import type {
@@ -174,7 +183,14 @@ export function postProcessStage2(
   const prevStep = (state.coachContext?.chainBuildStep ?? "claim") as ChainBuildStep;
   const prevAskCount = state.coachContext?.chainStepAskCount ?? 0;
   const lastQ = state.coachContext?.lastQuestion ?? "";
-  const expectedStep = getNextChainBuildStep(baselineSlots, body, buildCtx).step;
+  const preMsgs = stage2UserMessages(nextState, body);
+  const preMemory = buildDiscourseMemory(
+    preMsgs,
+    body,
+    buildCtx.bodyPoint || baselineSlots.claim,
+  );
+  const preCoverage = aggregateCoverage(preMemory, body);
+  const expectedStep = needToBuildStep(getNextNeed(preCoverage));
 
   const decision = resolveChainTurnDecision({
     baselineSlots,
@@ -195,12 +211,26 @@ export function postProcessStage2(
     body,
   );
   const buildStep = decision.advanceTo;
+  const coverageScores = decision.coverage.scores;
   const stepPrompt =
     buildStep === "ready"
       ? ""
-      : getNextChainBuildStep(workingSlots, body, buildCtx).coachPrompt;
+      : decision.currentNeed === "ready"
+        ? ""
+        : coachPromptForCoverageNeed(
+            decision.currentNeed,
+            workingSlots,
+            body,
+            buildCtx,
+          ) ||
+          getNextChainBuildStep(workingSlots, body, buildCtx, coverageScores)
+            .coachPrompt;
 
-  const proposalFromLlm = chainProposalFromResult(sanitized, body);
+  const proposalFromLlm = chainProposalFromResult(
+    sanitized,
+    body,
+    coverageScores,
+  );
   const slotsForSubstance = mergeSlots(workingSlots, proposalFromLlm?.slots, body);
   const substance = assessParagraphSubstance(
     nextState,
@@ -217,23 +247,27 @@ export function postProcessStage2(
   if (
     substance.sufficient &&
     finalProposal &&
-    !isChainProposalComplete(finalProposal, body)
+    !isChainProposalComplete(finalProposal, body, coverageScores)
   ) {
     finalProposal = buildChainProposalFromSlots(workingSlots, body, proposalDraft);
   }
 
   const llmOk = sanitized.paragraphSubstanceSufficient === true;
   const rulesOk = substance.sufficient;
+  const discourseReady = isDiscourseArgumentReady(coverageScores);
   const ringsReady =
     buildStep === "ready" &&
-    (areChainSlotsSemanticallyValid(workingSlots, body) ||
-      isParagraphCoverageComplete(decision.coverage));
+    (discourseReady || isParagraphCoverageComplete(decision.coverage));
   const canPropose =
     ringsReady &&
     rulesOk &&
     !!finalProposal &&
-    isChainProposalComplete(finalProposal, body) &&
-    areChainSlotsSemanticallyValid(finalProposal.slots, body);
+    isChainProposalComplete(finalProposal, body, coverageScores) &&
+    areChainSlotsSemanticallyValid(
+      finalProposal.slots,
+      body,
+      coverageScores,
+    );
 
   const coverageSnap: ChainCoverageSnapshot = {
     scores: { ...decision.coverage.scores },
@@ -603,7 +637,7 @@ export function postProcessStage2(
           meaningOk: true,
           meaningReason: "段内 meaning 已闭环",
           paragraphFit: true,
-          paragraphReason: "claim/reason/example/link 已到可写状态",
+          paragraphReason: "论证功能已闭环（机制+支撑+收束到位）",
           feedback: `${msg}\n\n${finalizeProgress}`,
           suggestedRevision: "若无异议，确认并入链条。",
           nextStep: "点击并入链条；若要改，指出具体一环。",
@@ -635,7 +669,7 @@ export function postProcessStage2(
       /请补|具体.*例子|职业|行业|举例/.test(mirror)
     ) {
       mirror =
-        "原因、举例和段末收束都齐了，请看左侧链条与下方进度；要改哪一环直接说。";
+        "本段论证功能已闭环，请看左侧链条与下方进度；要改哪一层直接说。";
     }
   }
   const userVisible = [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n");
@@ -681,16 +715,16 @@ export function postProcessStage2(
 }
 
 const SLOT_HINT: Record<Exclude<ChainBuildStep, "ready">, string> = {
-  claim: "论点",
-  reason: "原因",
-  example: "例子",
+  claim: "核心立场",
+  reason: "因果机制",
+  example: "具体支撑",
   link: "段末收束",
 };
 
 const SLOT_LABEL: Record<Exclude<ChainBuildStep, "ready">, string> = {
-  claim: "论点（Claim）",
-  reason: "原因（Reason）",
-  example: "举例（Example）",
+  claim: "核心立场（Claim）",
+  reason: "因果机制（Causal）",
+  example: "具体支撑（Grounding）",
   link: "段末收束（Link）",
 };
 

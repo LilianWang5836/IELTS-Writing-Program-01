@@ -1,4 +1,12 @@
 import {
+  getNextNeed,
+  hasFunctionalClosure,
+  isDiscourseArgumentReady,
+  needToBuildStep,
+  type CoverageNeed,
+  type CoverageState,
+} from "./chain-discourse";
+import {
   detectChainMetaQuestion,
   stage2UserMessages,
   userBlobForWorkshopBody,
@@ -365,16 +373,23 @@ export function reasonCoachPrompt(
   body: WorkshopBodyKey,
   ctx?: ChainBuildContext,
 ): string {
+  const point = ctx?.bodyPoint?.trim() || "";
   const angle = ctx?.bodyAngle?.trim() || "";
-  const scope = angle || (body === "body1" ? "就业/职场技能" : "学术深造");
+  const scope = angle || point.slice(0, 28) || (body === "body1" ? "本分论点" : "本分论点");
+  if (point && /经济|收入|就业|旅游|游客|产业|当地/.test(point)) {
+    return (
+      `请用一句话补因果链：在「${scope}」下，游客/消费怎样经过哪一步（行业、岗位、收入等）` +
+      `带来你所写的好处？（可用「因为/所以」，勿只写「合理」）。`
+    );
+  }
   if (body === "body1") {
     return (
-      `请写原因（Reason）：一句说明为什么 ${scope} 下，大学要提供实习/项目/实操（` +
-      `可写课本 vs 实践、技能差异等；可用「因为」或「原因：」开头，勿只写「合理」）。`
+      `请补因果机制：在「${scope}」下，为什么该分论点成立（谁→发生什么→带来什么结果）？` +
+      `勿只写「合理」。`
     );
   }
   return (
-    `请写原因（Reason）：一句说明为什么 ${scope} 下，系统学习与领域积累是深造基础（勿只写「需要时间」）。`
+    `请补因果机制：在「${scope}」下，为什么该分论点成立（勿只写「需要时间」）。`
   );
 }
 
@@ -535,29 +550,94 @@ export function isChainStepFilled(
   return step === "ready";
 }
 
-export function areChainSlotsSemanticallyValid(
-  slots: ParagraphSlots | undefined,
+export function hasFlexibleCausal(
+  slots: ParagraphSlots,
   body: WorkshopBodyKey,
 ): boolean {
-  if (!slots?.claim?.trim()) return false;
-  if (!slots.reason?.trim() || !isReasonSentence(slots.reason, body)) {
-    return false;
-  }
-  if (!slots.example?.trim() || !isExampleSentence(slots.example, body)) {
-    return false;
-  }
+  const t = slots.reason?.trim() || slots.elaboration?.trim() || "";
+  if (!t || t.length < 12) return false;
+  return isReasonSentence(t, body) || (t.length >= 20 && !isWeakExampleSentence(t, body));
+}
+
+export function hasFlexibleGrounding(
+  slots: ParagraphSlots,
+  body: WorkshopBodyKey,
+): boolean {
+  const ex = slots.example?.trim() || slots.support?.trim() || "";
+  if (!ex || ex.length < 12) return false;
+  return (
+    (isExampleSentence(ex, body) && !isWeakExampleSentence(ex, body)) ||
+    ex.length >= 18
+  );
+}
+
+function hasValidClosureSlot(
+  slots: ParagraphSlots,
+  body: WorkshopBodyKey,
+): boolean {
   const link = slots.link?.trim() ?? "";
   const reason = slots.reason?.trim() ?? "";
   const claim = slots.claim?.trim() ?? "";
-  const linkOk =
-    !!link &&
-    link !== reason &&
-    !isTooSimilarToClaim(link, claim, body) &&
-    (isLinkSentence(link, body, claim) || isDiscourseClosureLink(link, body, claim));
-  if (!linkOk) {
-    return false;
-  }
+  if (!link || link === reason) return false;
+  if (isTooSimilarToClaim(link, claim, body)) return false;
+  return (
+    isLinkSentence(link, body, claim) ||
+    isDiscourseClosureLink(link, body, claim) ||
+    hasFunctionalClosure(link, body, claim)
+  );
+}
+
+/** 槽位 + 可选 discourse 分数：以论证闭环为准，不强制 reason→example→link 四环齐全 */
+export function areChainSlotsSemanticallyValid(
+  slots: ParagraphSlots | undefined,
+  body: WorkshopBodyKey,
+  coverage?: CoverageState,
+): boolean {
+  if (!slots?.claim?.trim()) return false;
+  if (coverage && isDiscourseArgumentReady(coverage)) return true;
+  if (!hasFlexibleCausal(slots, body)) return false;
+  if (!hasFlexibleGrounding(slots, body)) return false;
+  if (hasValidClosureSlot(slots, body)) return true;
+  const reason = slots.reason?.trim() ?? "";
+  const claim = slots.claim?.trim() ?? "";
+  if (reason && hasFunctionalClosure(reason, body, claim)) return true;
   return true;
+}
+
+export function coachPromptForCoverageNeed(
+  need: CoverageNeed,
+  slots: ParagraphSlots,
+  body: WorkshopBodyKey,
+  ctx?: ChainBuildContext,
+): string {
+  const point = ctx?.bodyPoint?.trim() || slots.claim?.trim() || "";
+  const angle = ctx?.bodyAngle?.trim() || "";
+
+  if (need === "causal") return reasonCoachPrompt(body, ctx);
+  if (need === "grounding") {
+    const ex = slots.example?.trim() || slots.support?.trim();
+    if (ex && isWeakExampleSentence(ex, body)) {
+      return exampleFollowUpCoachPrompt(ex, body);
+    }
+    const hint =
+      point && /经济|收入|就业|旅游|游客|产业/.test(point)
+        ? "如景区周边餐饮住宿、旺季用工等"
+        : body === "body1" && /实习|项目/.test(point)
+          ? "可写定稿里提到的实习或项目实操"
+          : body === "body1"
+            ? "如具体行业、岗位或消费场景"
+            : "如课程、研究课题、导师指导";
+    return `请补一句具体支撑（${hint}），建议用「例如/比如」开头。`;
+  }
+  if (need === "closure") {
+    return linkCoachPrompt(body, ctx, slots.example?.trim() || slots.support?.trim());
+  }
+  if (need === "claim") {
+    return angle
+      ? `论点来自审题（${angle}）；请从「${angle}」写因果或例证。`
+      : "论点来自审题定稿；请补因果机制或具体支撑。";
+  }
+  return "";
 }
 
 /** 双层：功能收束句也可作 link 槽（与 chain-discourse 对齐，避免循环依赖） */
@@ -628,51 +708,77 @@ export function getNextChainBuildStep(
   slots: ParagraphSlots,
   body: WorkshopBodyKey = "body1",
   ctx?: ChainBuildContext,
+  coverage?: CoverageState,
 ): {
   step: ChainBuildStep;
   coachPrompt: string;
 } {
-  const claim = slots.claim?.trim() || slots.elaboration?.trim();
+  const claim = slots.claim?.trim() || slots.elaboration?.trim() || ctx?.bodyPoint?.trim();
+
+  if (coverage) {
+    const need = getNextNeed(coverage);
+    const step = needToBuildStep(need);
+    if (step === "ready") return { step: "ready", coachPrompt: "" };
+    if (step === "claim" && claim) {
+      const fallback = getNextNeed({
+        ...coverage,
+        claim: 1,
+      });
+      const step2 = needToBuildStep(fallback);
+      if (step2 === "ready") return { step: "ready", coachPrompt: "" };
+      return {
+        step: step2,
+        coachPrompt: coachPromptForCoverageNeed(fallback, slots, body, ctx),
+      };
+    }
+    return {
+      step,
+      coachPrompt: coachPromptForCoverageNeed(need, slots, body, ctx),
+    };
+  }
+
   const point = ctx?.bodyPoint || claim || "本分论点";
-  const angle = ctx?.bodyAngle || "";
 
   if (!claim) {
     return {
       step: "claim",
       coachPrompt:
         body === "body1"
-          ? "论点已由左侧审题给出；若需改论点请先说。否则请写「原因」：为什么这样能支持就业侧分论点？"
-          : "论点来自审题；请写「原因」：为什么体系化知识是深造基础？",
+          ? "论点已由左侧审题给出；若需改论点请先说。否则请补一句：为什么该分论点成立（因果机制）。"
+          : "论点来自审题；请补一句：为什么该分论点成立。",
     };
   }
 
-  if (!slots.reason?.trim() || !isReasonSentence(slots.reason, body)) {
+  if (!hasFlexibleCausal(slots, body)) {
     return {
       step: "reason",
       coachPrompt: reasonCoachPrompt(body, ctx),
     };
   }
 
-  const ex = slots.example?.trim();
-  if (
-    !ex ||
-    !isExampleSentence(ex, body) ||
-    isWeakExampleSentence(ex, body)
-  ) {
+  if (!hasFlexibleGrounding(slots, body)) {
+    const ex = slots.example?.trim() || slots.support?.trim();
     const hint =
-      body === "body1" && /实习|项目/.test(point)
-        ? "可写定稿里提到的实习或项目实操"
-        : body === "body1"
-          ? "如校企实习、coding 项目、岗位实训"
-          : "如课程、研究课题、导师指导";
+      point && /经济|收入|旅游|游客|产业/.test(point)
+        ? "如景区周边消费、餐饮住宿或用工场景"
+        : body === "body1" && /实习|项目/.test(point)
+          ? "可写定稿里提到的实习或项目实操"
+          : body === "body1"
+            ? "如具体行业、岗位或消费场景"
+            : "如课程、研究课题、导师指导";
     const coachPrompt = ex
       ? exampleFollowUpCoachPrompt(ex, body)
-      : `请写举例（Example）：给一个具体场景（${hint}）。不要用「有理/合理」代替例子。`;
+      : `请补一句具体支撑（${hint}），建议用「例如/比如」开头。`;
     return { step: "example", coachPrompt };
   }
 
   const link = slots.link?.trim();
-  if (!link || !isLinkSentence(link, body)) {
+  if (!link || !hasValidClosureSlot(slots, body)) {
+    const reason = slots.reason?.trim() ?? "";
+    const claimText = slots.claim?.trim() ?? "";
+    if (reason && hasFunctionalClosure(reason, body, claimText)) {
+      return { step: "ready", coachPrompt: "" };
+    }
     return {
       step: "link",
       coachPrompt: linkCoachPrompt(body, ctx, slots.example?.trim()),

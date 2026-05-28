@@ -46,6 +46,10 @@ function hasSubstantiveSlots(slots?: ParagraphSlots): boolean {
   return causal.length >= 10 || grounding.length >= 10;
 }
 
+function hasMechanismVerbs(text: string): boolean {
+  return /带动|促进|导致|使得|增加|减少|扩张|扩大|拉动|创造|形成|转化/.test(text);
+}
+
 function scoreBlob(text: string): number {
   const t = text.trim();
   if (t.length < 20) return 0;
@@ -147,7 +151,13 @@ export function assessParagraphSubstance(
     gaps.push("论述偏薄：再补一句「怎么做/会怎样」");
   }
 
-  if (claimReasonRedundant(slots) && !hasFlexibleGrounding(slots, body)) {
+  if (
+    claimReasonRedundant(slots) &&
+    !hasFlexibleGrounding(slots, body) &&
+    !hasFlexibleCausal(slots, body) &&
+    !hasMechanismVerbs(slots?.reason?.trim() ?? "") &&
+    !discourseReady
+  ) {
     gaps.push("论点与机制句像在重复，请补不同功能的一层");
   }
   if (slots?.example?.trim() && STANCE_ONLY_RE.test(slots.example)) {

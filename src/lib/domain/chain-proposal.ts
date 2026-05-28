@@ -64,10 +64,24 @@ export function formatChainProposalCoachMessage(
   const intro =
     summary?.trim() ||
     `我把你刚才说的整理成${bodyLabel}论证链条，请看左侧是否准确。`;
+  const slots = proposal.slots ?? {};
+  const readback = buildChainReadback(slots);
   return [
     intro,
+    readback ? `段内逻辑朗读：\n${readback}` : "",
     "若认可，请点左侧「确认链条并填入」；想改可以说一句，我再帮你调整。",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildChainReadback(slots: ParagraphSlots): string {
+  const lines: string[] = [];
+  if (slots.claim?.trim()) lines.push(`1) 先立住本段主张：${slots.claim.trim()}`);
+  if (slots.reason?.trim()) lines.push(`2) 再说明机制：${slots.reason.trim()}`);
+  if (slots.example?.trim()) lines.push(`3) 用具体场景支撑：${slots.example.trim()}`);
+  if (slots.link?.trim()) lines.push(`4) 最后收束回分论点：${slots.link.trim()}`);
+  return lines.slice(0, 4).join("\n");
 }
 
 export function logicBreakdownFromProposal(

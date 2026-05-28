@@ -315,10 +315,11 @@ export function detectFunctionsFromSentence(
   const closure = scoreClosure(t, body, claim);
   if (closure >= 0.45) {
     out.push({ type: "closure", strength: closure });
-    return out;
   }
 
-  const causal = scoreCausal(t, body, claim);
+  // Allow a single sentence to contribute to multiple functions
+  // (e.g., mechanism + concrete scene), instead of closure-only short-circuit.
+  const causal = closure >= 0.75 ? 0 : scoreCausal(t, body, claim);
   if (causal > 0) out.push({ type: "causal", strength: causal });
 
   const grounding = scoreGrounding(t, body);

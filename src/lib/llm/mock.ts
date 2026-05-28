@@ -248,7 +248,7 @@ export function mockLlmResponse(
           advance: false,
           mirror: "我们按链条一环一环来。",
           coachQuestion:
-            "请写原因：为什么大学要提供实习/项目/实操（可用「原因：」开头）？",
+            "请补因果机制：在当前分论点下，谁发生了什么变化，进而带来什么结果？（可用「因为/所以」）",
           userVisibleText: "",
           paragraphSubstanceSufficient: false,
           chainTurnRole: "none",
@@ -260,9 +260,9 @@ export function mockLlmResponse(
         return {
           verdict: "coach",
           advance: false,
-          mirror: "课本与实践的差异我听到了，原因这一环够了。",
+          mirror: "你的因果机制我听到了，这一环基本够了。",
           coachQuestion:
-            "请写举例：给一个具体场景（如计算机岗位、技术栈、实习/项目）。",
+            "请补一个具体场景作支撑（例如某类人群/地点/行业出现了什么变化）。",
           userVisibleText: "",
           paragraphSubstanceSufficient: false,
           chainTurnRole: "reason",
@@ -278,16 +278,16 @@ export function mockLlmResponse(
 
       if (/比如|例如|举例/.test(raw)) {
         const concrete =
-          /技术栈|计算机|公司|实习|项目|岗位|编程|实训/.test(raw);
+          /游客|居民|景区|餐馆|酒店|商家|行业|公司|岗位|项目|课程|研究/.test(raw);
         return {
           verdict: "coach",
           advance: false,
           mirror: concrete
-            ? "计算机/技术栈这个例子够了。"
+            ? "这个例子已经比较具体了。"
             : "方向对，再具体一点。",
           coachQuestion: concrete
-            ? "请写段末收束：用「因此/所以」一句，说明上述如何帮助学生更快就业/求职（勿重复全文立场）。"
-            : "你举的方向听到了，请补：公司或项目里具体做了什么（一句）？",
+            ? "请写段末收束：用「因此/所以」一句，把上文接回本段分论点（勿重复全文立场）。"
+            : "你举的方向听到了，请再补一句：具体是谁、在什么场景下、发生了什么变化？",
           userVisibleText: "",
           paragraphSubstanceSufficient: false,
           chainTurnRole: "example",
@@ -301,14 +301,13 @@ export function mockLlmResponse(
         };
       }
 
-      if (/因此|所以/.test(raw) && /工作|就业|求职|面试|适应/.test(raw)) {
+      if (/因此|所以/.test(raw)) {
         const proposal = {
-          chainSummary: "技能/项目 → 实用技术 → 更易就业",
+          chainSummary: "分论点 → 因果机制 → 具体支撑 → 段末收束",
           slots: {
-            claim: "大学应为希望尽快就业的学生提供职场所需的知识和技能",
-            reason: "课本知识偏学术，与职场技能不匹配，需在实践项目中补充",
-            example:
-              "如计算机行业各公司技术栈不同，需通过实际项目学习实用技术",
+            claim: "本段围绕审题分论点展开",
+            reason: "机制：前因会触发中间环节，进而带来该分论点结果",
+            example: "支撑：一个具体场景证明上述机制并非空泛",
             link: raw.trim(),
           },
           draft: raw,

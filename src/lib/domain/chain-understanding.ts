@@ -306,7 +306,7 @@ export function resolveHybridCoachTurn(
 
   if (understanding.quality === "weak" && understanding.role === "reason") {
     return {
-      mirror: llmMirror || "机制方向对，再用「因为/所以」写清课本与实践的差异。",
+      mirror: llmMirror || "机制方向对，再用「因为/所以」写清中间因果链。",
       coachQ: stepPrompt,
     };
   }

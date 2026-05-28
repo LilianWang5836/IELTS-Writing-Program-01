@@ -77,15 +77,15 @@ const DISCOURSE_LABELS: Record<
 function gapLabel(gap: CoverageGap, body: WorkshopBodyKey): string {
   if (gap === "causal") {
     return body === "body1"
-      ? "因果机制（为何需要项目/实习）"
-      : "因果机制（为何需要系统积累）";
+      ? "因果机制（为什么这条分论点成立）"
+      : "因果机制（为什么这条分论点成立）";
   }
   if (gap === "grounding") {
-    return body === "body1" ? "具体支撑（实习/项目）" : "具体支撑（课程/训练场景）";
+    return body === "body1" ? "具体支撑（真实场景/对象/变化）" : "具体支撑（真实场景/对象/变化）";
   }
   return body === "body1"
-    ? "收束扣题（落到就业/求职）"
-    : "收束扣题（学术深造/长期积累）";
+    ? "收束扣题（落回本段分论点结果）"
+    : "收束扣题（落回本段分论点结果）";
 }
 
 function resolveScores(coverage: ParagraphCoverage | CoverageState): CoverageState {
@@ -216,7 +216,7 @@ export function deriveChainWorkflowStatus(
         detail: `${label}（已有部分，${Math.round(score * 100)}%，须加强）`,
         nextAction:
           primary === "grounding"
-            ? "请用「例如/比如」补一个具体实习、项目或岗位场景。"
+            ? "请用「例如/比如」补一个具体场景：地点/谁/发生什么。"
             : primary === "closure"
               ? "请用「因此/所以」写一句段末收束到结果。"
               : `请补：${label}（一句即可）。`,
@@ -254,7 +254,7 @@ export function deriveChainWorkflowStatus(
     kind: "building",
     title: "Building argument",
     detail: "继续用中文补充本段论证即可，不必按固定句型。",
-    nextAction: "按教练追问补下一层（机制 → 例子 → 收束）。",
+    nextAction: "按教练追问补下一层（机制 → 具体支撑 → 收束）。",
   };
 }
 

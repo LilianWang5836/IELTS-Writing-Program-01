@@ -144,22 +144,57 @@ function shouldUseLlmCoachQuestion(
   advanceTo: ChainBuildStep,
   workingSlots: ParagraphSlots,
   body: WorkshopBodyKey,
+  ctx?: ChainBuildContext,
 ): boolean {
-  if (!llmQ.trim() || isBannedCoachQuestion(llmQ)) return false;
+  const q = llmQ.trim();
+  if (!q || isBannedCoachQuestion(q)) return false;
   if (advanceTo === "ready") return false;
   if (areChainSlotsSemanticallyValid(workingSlots, body)) return false;
+  if (!isQuestionAlignedToCurrentTopic(q, body, ctx)) return false;
   if (
     /具体.*(?:职业|行业)|再.*(?:举例|例子)|举一个.*例子|哪个行业|什么职业|课程名|研究课题|训练场景/.test(
-      llmQ,
+      q,
     ) &&
     exampleRingSatisfied(advanceTo, workingSlots, body)
   ) {
     return false;
   }
   if (
-    /面试|上岗|对口|段末|收束|Link/i.test(llmQ) &&
+    /面试|上岗|对口|段末|收束|Link/i.test(q) &&
     isChainStepFilled(workingSlots, "link", body)
   ) {
+    return false;
+  }
+  return true;
+}
+
+function isQuestionAlignedToCurrentTopic(
+  llmQ: string,
+  body: WorkshopBodyKey,
+  ctx?: ChainBuildContext,
+): boolean {
+  const q = llmQ.trim();
+  if (!q) return false;
+  const anchor = `${ctx?.bodyPoint ?? ""} ${ctx?.bodyAngle ?? ""}`;
+  const tourismAnchor = /旅游|游客|景区|餐饮|住宿|购物|当地|经济|就业|居民|环境|污染|垃圾|拥堵/.test(
+    anchor,
+  );
+  const employAnchor = /就业技能|职场|实习|项目|课本|学术深造|研究生|课程|导师/.test(
+    anchor,
+  );
+  const qTourism = /旅游|游客|景区|餐饮|住宿|购物|当地|经济|居民|环境|污染|垃圾|拥堵/.test(
+    q,
+  );
+  const qEmploy = /大学|高校|实习|项目|课本|职场|面试|上岗|课程|研究课题|导师|学术深造/.test(
+    q,
+  );
+
+  if (tourismAnchor && qEmploy && !qTourism) return false;
+  if (employAnchor && qTourism && !qEmploy) return false;
+  if (body === "body1" && /学术深造|读研|科研/.test(q) && !/就业|经济|旅游|环境/.test(anchor)) {
+    return false;
+  }
+  if (body === "body2" && /面试|上岗|对口工作/.test(q) && !/环境|居民|生活|破坏|污染|拥堵|学术|研究/.test(anchor)) {
     return false;
   }
   return true;
@@ -422,12 +457,20 @@ function buildCoverageCoachMessage(input: {
       };
     }
     if (currentNeed === "closure") {
+      const topic = `${ctx.bodyPoint ?? ""} ${ctx.bodyAngle ?? ""}`;
+      const tourism =
+        /旅游|游客|景区|餐饮|住宿|购物|当地|经济|就业|环境|污染|垃圾|拥堵|居民/.test(
+          topic,
+        );
       return {
         mirror: llmMirror || "收束方向对，再明确落到结果一句。",
-        ask:
-          body === "body1"
-            ? "再补一句：面试/上岗/对口工作，三选一即可。"
-            : "再补一句：用「因此」接到分论点，点明对深造/研究基础的作用。",
+        ask: tourism
+          ? body === "body1"
+            ? "再补一句：用「因此/所以」把上文落到本地经济、就业或居民收益（三选一）。"
+            : "再补一句：用「因此/所以」把上文落到环境压力或居民生活影响。"
+          : body === "body1"
+            ? "再补一句：用「因此/所以」落到本段分论点结果。"
+            : "再补一句：用「因此/所以」接到分论点，点明其长期影响。",
       };
     }
   }
@@ -448,7 +491,7 @@ function buildCoverageCoachMessage(input: {
     llmQ &&
     !llmOffNeed &&
     !isSameCoachPrompt(llmQ, lastQuestion) &&
-    shouldUseLlmCoachQuestion(llmQ, advanceTo, workingSlots, body)
+    shouldUseLlmCoachQuestion(llmQ, advanceTo, workingSlots, body, ctx)
   ) {
     return {
       mirror: llmMirror || `请补${NEED_STEP_HINT[currentNeed] ?? "下一层"}。`,
@@ -586,9 +629,14 @@ function buildCoachMessage(input: {
   }
 
   if (understanding.quality === "weak" && understanding.role === "link") {
+    const point = ctx.bodyPoint?.trim() ?? "";
+    const hasTourism =
+      /旅游|游客|景区|环境|餐饮|住宿|就业|收入|经济|居民/.test(point);
     const ask =
       body === "body1"
-        ? "再补一句：面试/上岗/对口工作，三选一即可。"
+        ? hasTourism
+          ? "再补一句：用「因此」落到本段分论点（如当地经济/就业/居民影响三选一）。"
+          : "再补一句：用「因此」落到本段分论点的最终结果（一句即可）。"
         : "再补一句：用「因此」接到分论点，点明对深造/研究基础或长期积累的作用即可。";
     return {
       mirror: llmMirror || "收束方向对，再明确落到结果一句。",
@@ -597,9 +645,14 @@ function buildCoachMessage(input: {
   }
 
   if (understanding.quality === "weak" && understanding.role === "reason") {
+    const point = ctx.bodyPoint?.trim() ?? "";
+    const hasTourism =
+      /旅游|游客|景区|环境|餐饮|住宿|经济|就业|居民|收入|产业/.test(point);
     return {
-      mirror: llmMirror || "机制方向对，再写清课本与实践的差异。",
-      ask: "请补一句：为什么需要项目/实习来补职场技能？",
+      mirror: llmMirror || "机制方向对，再写清中间因果链。",
+      ask: hasTourism
+        ? "请补一句：游客增加后，具体通过哪一步（消费/行业扩张/岗位增加）带来你这条分论点结果？"
+        : "请补一句：在本段分论点下，谁发生了什么变化，从而带来什么结果？",
     };
   }
 
@@ -638,7 +691,7 @@ function buildCoachMessage(input: {
   if (
     llmQ &&
     !isSameCoachPrompt(llmQ, lastQuestion) &&
-    shouldUseLlmCoachQuestion(llmQ, advanceTo, workingSlots, body)
+    shouldUseLlmCoachQuestion(llmQ, advanceTo, workingSlots, body, ctx)
   ) {
     return {
       mirror: llmMirror || `请补${STEP_HINT[expectedRing ?? "reason"]}。`,

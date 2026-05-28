@@ -33,6 +33,12 @@ import {
   isProposalAffirmation,
   postProcessStage1,
 } from "@/lib/domain/stage1-coach";
+import { maybeLogRuntimeShadow } from "@/runtime/shadow/log-runtime-shadow";
+import {
+  resolveCoachTurnPlan,
+  summarizeCoachingSignalsForPrompt,
+} from "@/runtime/plan/resolve-coach-turn-plan";
+import { serializeArbitratedPlan } from "@/runtime/model/capability-profile";
 import {
   buildExplorationMemorySummary,
   extractExplorationThemes,
@@ -634,6 +640,12 @@ function buildVars(
     base.last_coach_question = state.coachContext.lastQuestion;
   }
   if (state.subStep === "S1_EVAL" && !state.handoffLocked) {
+    const plan = resolveCoachTurnPlan(state, userMessage ?? "");
+    base.arbitrated_plan_json = serializeArbitratedPlan(plan);
+    base.coaching_signals_summary = summarizeCoachingSignalsForPrompt(
+      state,
+      userMessage ?? "",
+    );
     const substance = assessEssaySubstance(state);
     const { contentReady } = assessExplorationContent(state, userMessage);
     const msgs = userMessages(state);
@@ -641,27 +653,34 @@ function buildVars(
     const themes = extractExplorationThemes(state, msgs);
     base.substance_assessment = JSON.stringify({
       contentReady,
-      substanceSufficient: substance.sufficient,
       explorationSides,
-      gaps: substance.gaps,
-      handoffPhase: state.coachContext?.handoffPhase ?? "exploring",
-      exploreRound: state.coachContext?.exploreRound ?? 0,
-      explorationThemes: themes,
+      explorationThemes: {
+        themesComplete: themes.themesComplete,
+        readyToFinalize: themes.readyToFinalize,
+        positionLean: themes.positionLean,
+      },
       explorationMemory: buildExplorationMemorySummary(state, themes),
+      rewriteContext: {
+        gaps: substance.gaps,
+        handoffPhase: state.coachContext?.handoffPhase ?? "exploring",
+      },
     });
   }
   if (state.subStep === "S2_2_BODY1" || state.subStep === "S2_3_BODY2") {
     const body: WorkshopBodyKey = state.subStep === "S2_2_BODY1" ? "body1" : "body2";
-    const substance = assessParagraphSubstance(state, body, userMessage);
+    const plan = resolveCoachTurnPlan(state, userMessage ?? "", { body });
+    base.arbitrated_plan_json = serializeArbitratedPlan(plan);
+    base.coaching_signals_summary = summarizeCoachingSignalsForPrompt(
+      state,
+      userMessage ?? "",
+      body,
+    );
     const seg = body === "body1" ? state.s2?.body1 : state.s2?.body2;
     base.paragraph_substance_assessment = JSON.stringify({
-      substanceSufficient: substance.sufficient,
-      gaps: substance.gaps,
       chainPhase: seg?.chainPhase ?? "coaching",
-      chainBuildStep: state.coachContext?.chainBuildStep ?? "claim",
       bodyPoint: body === "body1" ? state.s2?.body1Point : state.s2?.body2Point,
       bodyAngle: body === "body1" ? state.s2?.body1Angle : state.s2?.body2Angle,
-      coachMode: "hybrid_llm_role_rule_gate",
+      slotsSnapshot: seg?.slots ?? {},
     });
   }
 
@@ -760,6 +779,7 @@ async function processLlmTurn(
   });
 
   if (prevSubStep === "S1_EVAL") {
+    maybeLogRuntimeShadow(nextState, userMessage, result);
     const processed = postProcessStage1(nextState, result, userMessage);
     result = processed.result;
     nextState = mergeS1FromResult(processed.state, result);
@@ -770,6 +790,7 @@ async function processLlmTurn(
 
   if (prevSubStep === "S2_2_BODY1" || prevSubStep === "S2_3_BODY2") {
     const body: BodyKey = prevSubStep === "S2_2_BODY1" ? "body1" : "body2";
+    maybeLogRuntimeShadow(nextState, userMessage, result, { body });
     const processed = postProcessStage2(nextState, result, body, userMessage);
     result = processed.result;
     nextState = applyBodyCoachUpdate(processed.state, body, result, userMessage);

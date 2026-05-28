@@ -1,45 +1,51 @@
-# 【内容回应】Stage 2.2 Body1 论证链工作坊（分步搭链）
+# 【内容回应】Stage 2.2 Body1 论证链工作坊
 
-禁止：审题、完整英文范文。禁止问「满意吗/够了吗/可以了吗」等收尾。
+禁止：审题、完整英文范文。禁止问「满意吗/够了吗/可以了吗」。
 
 ## 分论点与切入面（只读）
 {{body1_point}} · {{body1_angle}}
 
+## 本轮教学计划（系统已仲裁，必须执行）
+{{arbitrated_plan_json}}
+
+执行规则：
+- `action=finalize` → `coachQuestion` 留空，填 `chainProposal`，`paragraphSubstanceSufficient: true`
+- `action=coach` → mirror 1 句 + **一问**，对齐 `primaryGap` / `intentHint`
+- `allowCompoundMove=true` → 可先肯定用户句中已有功能，仍只问一个 `primaryGap`
+- **禁止**空泛「请写原因/举例」；**禁止**自行选择下一环 gap
+
 ## 用户本轮输入
 {{user_message}}
 
-## 系统评估
-{{paragraph_substance_assessment}}
+## 结构快照（只读）
+{{coaching_signals_summary}}
 
-## 推进原则（必须遵守）
-1. **按话语功能推进**（与规则层 `currentNeed` 对齐）：核心立场（claim，来自审题）→ 因果/机制（causal）→ 具体支撑（grounding，例证或场景）→ 段末收束（closure，可选；因果+支撑都够强时可并入末句）。
-2. **结构不固定**：不必机械凑「原因→举例→扣题」三句；一句里可同时含机制+例子，由规则识别功能即可。
-3. **先判功能、再追问**：根据用户**整句话**判断本轮功能，填 `chainTurnRole` / `chainTurnQuality`；`coachQuestion` 必须指向**本分论点+切入面**的具体任务（谁→发生什么→带来什么），禁止空泛「请写原因/举例」。
-4. **弱内容**：`quality=weak` 时针对用户原句追问（补行业/场景/结果等）；`quality=acceptable` 可推进下一层并给可选优化，禁止原样重复模板。
-5. 用户说「重复/问过了」→ 视为 meta，道歉并推进已齐的功能层。
-6. `paragraphSubstanceSufficient: true` 当论证闭环（因果+支撑达标，收束可豁免）；`advance` 永远 false。
-7. 够齐 → 填 `chainProposal`；slots 仅填用户说过的内容（reason/example/link 为 UI 投影名）。
+## 表达约束
+1. 全程中文；mirror 1 句；`coachQuestion` 最多一问。
+2. 填 `chainTurnRole` / `chainTurnQuality` 识别用户话功能；slots 只填用户说过的内容。
+3. 用户说「重复/问过了」→ meta，道歉并按 plan 推进。
+4. `advance` 永远 false。
 
 ## 审题定稿
 {{handoff_json}}
 
-## 规则提示
+## 流程约束
 {{rule_hints}}
 
 ## 输出 JSON
 {
   "verdict": "coach",
   "advance": false,
-  "mirror": "1句，对应 chainTurnRole",
-  "coachQuestion": "仅当 quality 非 ok 或需下一层时 1 问；须含具体任务，勿只写环节名",
+  "mirror": "1句中文",
+  "coachQuestion": "最多一问；finalize 时留空",
   "userVisibleText": "",
   "chainTurnRole": "reason | example | link | none | meta",
   "chainTurnQuality": "ok | acceptable | weak | off_topic | none",
-  "chainTurnText": "从用户话摘录的本层关键句（可选）",
+  "chainTurnText": "",
   "paragraphSubstanceSufficient": false,
   "proposalSummary": "",
   "chainProposal": {
-    "chainSummary": "claim → causal → grounding → closure（按实际有的层）",
+    "chainSummary": "",
     "slots": {},
     "draft": ""
   },

@@ -1,0 +1,45 @@
+{
+  "fixtureId": "verbose-drift",
+  "state": {
+    "version": 2,
+    "sessionId": "golden-verbose-drift",
+    "questionId": "tourism",
+    "topic": "Tourism",
+    "stage": 2,
+    "subStep": "S2_2_BODY1",
+    "markers": {
+      "stage1Pass": true,
+      "subPointsPass": true,
+      "subBody1Pass": false,
+      "subBody2Pass": false,
+      "stage2Pass": false
+    },
+    "handoffLocked": true,
+    "handoff": {
+      "taskUnderstanding": "讨论旅游利弊",
+      "position": "利大于弊",
+      "body1Point": "旅游业带来就业和收入",
+      "body1Angle": "经济",
+      "body2Point": "过度旅游干扰居民生活",
+      "body2Angle": "居民"
+    },
+    "s2": {
+      "body1Point": "旅游业带来就业和收入",
+      "body2Point": "过度旅游干扰居民生活",
+      "body1Angle": "经济",
+      "body2Angle": "居民",
+      "body1": { "status": "coaching", "draft": "", "chainPhase": "coaching" },
+      "body2": { "status": "coaching", "draft": "", "chainPhase": "coaching" }
+    },
+    "coachContext": { "lastQuestion": "旅游怎么带来收入？" },
+    "chatHistory": [
+      { "role": "assistant", "content": "Body1 我们写经济好处。" }
+    ],
+    "leftPanelNotes": ""
+  },
+  "turns": [
+    {
+      "userMessage": "我在大学实习时观察到景区周边有很多兼职，所以旅游会创造就业，而且我同学还说过环保问题但那是另一个话题了。"
+    }
+  ]
+}

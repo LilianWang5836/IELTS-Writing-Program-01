@@ -16,6 +16,7 @@ import {
 } from "./stage1-exploration-themes";
 import { resolveHandoffTurnDecision } from "./handoff-turn-decision";
 import { readRewriteRiskGate } from "./stage1-rewrite-risk";
+import { overlayRuntimePlanOnCoach, isRuntimePlanEnforcementEnabled } from "./runtime-plan-overlay";
 import type { LlmTurnResult, SessionState, Stage1Handoff } from "./types";
 
 export {
@@ -180,12 +181,17 @@ export function postProcessStage1(
     );
 
   if (rewriteGate.blockProposal && llmTriedPropose) {
+    const planOverlay = isRuntimePlanEnforcementEnabled()
+      ? overlayRuntimePlanOnCoach(nextState, result, userMessage)
+      : null;
     const ask =
       rewriteGate.followUpAsk ||
+      planOverlay?.coachQuestion?.trim() ||
       decision.coach.ask ||
       "请把你刚说的观点收成一句更具体的总括（谁 + 发生什么 + 带来什么结果），我再整理左侧。";
     const mirror =
       rewriteGate.mirrorNote ||
+      planOverlay?.mirror?.trim() ||
       result.mirror?.trim() ||
       "我先不直接整理进左侧：六栏里有几处是你还没明确说到的判断。请按下面问题补一句你自己的说法。";
     const userVisible =
@@ -238,9 +244,17 @@ export function postProcessStage1(
     );
   }
 
-  let { mirror, ask } = decision.coach;
-  const themes = extractExplorationThemes(nextState, userMessages(nextState));
-  ask = reconcileMirrorAndAsk(mirror, ask, nextState, themes);
+  let mirror: string;
+  let ask: string;
+  if (isRuntimePlanEnforcementEnabled()) {
+    const planOverlay = overlayRuntimePlanOnCoach(nextState, result, userMessage);
+    mirror = planOverlay.mirror?.trim() || result.mirror?.trim() || decision.coach.mirror;
+    ask = planOverlay.coachQuestion?.trim() ?? "";
+  } else {
+    ({ mirror, ask } = decision.coach);
+    const themes = extractExplorationThemes(nextState, userMessages(nextState));
+    ask = reconcileMirrorAndAsk(mirror, ask, nextState, themes);
+  }
   const userVisible =
     [mirror, ask].filter(Boolean).join("\n\n") ||
     ask ||

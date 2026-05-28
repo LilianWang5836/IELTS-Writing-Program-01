@@ -1,5 +1,4 @@
 import { anglesTooSimilar } from "./handoff";
-import { isEffectiveProsConsExploration } from "./stage1-question-hint";
 import type { ParagraphSlots, SessionState, Stage1Handoff } from "./types";
 
 export interface RuleHints {
@@ -60,19 +59,11 @@ export function buildRuleHintsBlock(state: SessionState): string {
   if (state.subStep === "S1_EVAL" && !state.handoffLocked) {
     if (state.coachContext?.handoffPhase === "proposed") {
       lines.push(
-        "规则提示：已输出整理提案，引导学生点左侧「确认整理并填入」，勿再列 6 栏清单。",
-      );
-    } else if (state.coachContext?.angleTeachDone) {
-      lines.push(
-        "规则提示：已在聊天教过切入面；若学生已答范围词，可写入 proposedHandoff 的 body1Angle/body2Angle。",
-      );
-    } else if (isEffectiveProsConsExploration(state)) {
-      lines.push(
-        "规则提示：利弊题先列清好处/坏处再匹配立场；利大于弊则 Body1 偏好处（可含多点）。读 substance 里的 explorationMemory，勿重复问已记录内容。够格则整理 proposedHandoff。",
+        "流程约束：已输出整理提案，引导学生点左侧「确认整理并填入」；advance 永远 false。",
       );
     } else {
       lines.push(
-        "规则提示：按题型引导审题；读 substance 里的 explorationMemory，勿重复已记录内容。够格则整理 proposedHandoff。",
+        "流程约束：advance 永远 false；教学策略见 arbitrated_plan_json。",
       );
     }
   }
@@ -81,20 +72,12 @@ export function buildRuleHintsBlock(state: SessionState): string {
       state.subStep === "S2_2_BODY1" ? state.s2?.body1 : state.s2?.body2;
     if (seg?.chainPhase === "proposed") {
       lines.push(
-        "规则提示：已输出链条提案，引导学生点左侧「确认链条并填入」；禁止 verdict pass。",
+        "流程约束：已输出链条提案，引导学生点左侧「确认链条并填入」；禁止 verdict pass。",
       );
     } else {
       lines.push(
-        "规则提示：单源 TurnDecision——以当前缺环为锚，一轮只写主槽；词规则仅守门。禁止 mirror 肯定后重复同一环长模板。",
+        "流程约束：advance 永远 false；gap 与追问见 arbitrated_plan_json。",
       );
-      lines.push(
-        "规则提示：按 Claim→Reason→Example→Link 推进；Link 须回扣本段分论点；advance 永远 false。",
-      );
-      if (state.coachContext?.chainBuildStep) {
-        lines.push(
-          `规则提示：当前搭链环节：${state.coachContext.chainBuildStep}。`,
-        );
-      }
     }
     if (seg?.draft && bodyDraftTooShort(seg.draft)) {
       lines.push("规则提示：本段输入过短，尚不足以评估整体论证。");

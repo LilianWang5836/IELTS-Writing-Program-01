@@ -1,0 +1,24 @@
+{
+  "fixtureId": "low-silent",
+  "state": {
+    "version": 2,
+    "sessionId": "golden-low-silent",
+    "questionId": "tourism",
+    "topic": "Tourism",
+    "questionHintType": "adv_disadv",
+    "stage": 1,
+    "subStep": "S1_EVAL",
+    "markers": {
+      "stage1Pass": false,
+      "subPointsPass": false,
+      "subBody1Pass": false,
+      "subBody2Pass": false,
+      "stage2Pass": false
+    },
+    "handoffLocked": false,
+    "coachContext": { "handoffPhase": "exploring", "exploreRound": 1 },
+    "chatHistory": [{ "role": "assistant", "content": "这道题你怎么看？" }],
+    "leftPanelNotes": ""
+  },
+  "turns": [{ "userMessage": "好。" }, { "userMessage": "经济吧。" }]
+}

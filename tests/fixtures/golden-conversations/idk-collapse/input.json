@@ -1,0 +1,41 @@
+{
+  "fixtureId": "idk-collapse",
+  "state": {
+    "version": 2,
+    "sessionId": "golden-idk-collapse",
+    "questionId": "online-shopping",
+    "topic": "Online shopping",
+    "questionHintType": "adv_disadv",
+    "stage": 1,
+    "subStep": "S1_EVAL",
+    "markers": {
+      "stage1Pass": false,
+      "subPointsPass": false,
+      "subBody1Pass": false,
+      "subBody2Pass": false,
+      "stage2Pass": false
+    },
+    "handoffLocked": false,
+    "coachContext": {
+      "handoffPhase": "exploring",
+      "exploreRound": 2,
+      "lastQuestion": "网购有什么好处和坏处？"
+    },
+    "chatHistory": [
+      { "role": "assistant", "content": "我们先看看这道题要你讨论什么。" },
+      { "role": "user", "content": "好处是方便，坏处是可能买不需要的东西。" },
+      { "role": "assistant", "content": "你觉得总体是利大于弊吗？" }
+    ],
+    "leftPanelNotes": ""
+  },
+  "turns": [
+    { "userMessage": "I don't know." },
+    {
+      "userMessage": "Maybe because online shopping is convenient.",
+      "llmResult": {
+        "mirror": "你说网购方便。",
+        "coachQuestion": "那坏处那边，你觉得可以怎么控制？"
+      }
+    }
+  ]
+}

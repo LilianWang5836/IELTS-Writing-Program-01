@@ -1,0 +1,29 @@
+{
+  "fixtureId": "fast-growth",
+  "state": {
+    "version": 2,
+    "sessionId": "golden-fast-growth",
+    "questionId": "tourism",
+    "topic": "Tourism",
+    "questionHintType": "adv_disadv",
+    "stage": 1,
+    "subStep": "S1_EVAL",
+    "markers": {
+      "stage1Pass": false,
+      "subPointsPass": false,
+      "subBody1Pass": false,
+      "subBody2Pass": false,
+      "stage2Pass": false
+    },
+    "handoffLocked": false,
+    "coachContext": { "handoffPhase": "exploring", "exploreRound": 0 },
+    "chatHistory": [],
+    "leftPanelNotes": ""
+  },
+  "turns": [
+    { "userMessage": "不太懂。" },
+    { "userMessage": "好处是游客花钱，当地餐馆和酒店收入会增加。" },
+    { "userMessage": "坏处是节假日人太多，本地居民生活被打扰，但可以通过分流缓解。" },
+    { "userMessage": "我觉得利大于弊。" }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "fixtureId": "mechanical-compliance",
+  "state": {
+    "version": 2,
+    "sessionId": "golden-mechanical",
+    "questionId": "online-shopping",
+    "topic": "Online shopping",
+    "questionHintType": "adv_disadv",
+    "stage": 1,
+    "subStep": "S1_EVAL",
+    "markers": {
+      "stage1Pass": false,
+      "subPointsPass": false,
+      "subBody1Pass": false,
+      "subBody2Pass": false,
+      "stage2Pass": false
+    },
+    "handoffLocked": false,
+    "coachContext": { "handoffPhase": "exploring" },
+    "chatHistory": [],
+    "leftPanelNotes": ""
+  },
+  "turns": [
+    { "userMessage": "好处：方便。坏处：不好。" },
+    { "userMessage": "利大于弊。" }
+  ]
+}

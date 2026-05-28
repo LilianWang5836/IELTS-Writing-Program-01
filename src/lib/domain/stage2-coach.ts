@@ -32,6 +32,7 @@ import {
   needToBuildStep,
 } from "./chain-discourse";
 import { resolveChainTurnDecision } from "./chain-turn-decision";
+import { bindPlanCoachFields } from "./runtime-plan-overlay";
 import {
   deriveChainWorkflowStatus,
   formatChainWorkshopPanel,
@@ -177,6 +178,19 @@ export function postProcessStage2(
   }
 
   const sanitized = sanitizeMirror(result, userMessage);
+  const planCoach = (
+    mirror: string,
+    coachQ: string,
+    keepMirror = false,
+  ) =>
+    bindPlanCoachFields(
+      nextState,
+      sanitized,
+      userMessage,
+      body,
+      { mirror, coachQuestion: coachQ },
+      { keepMirror },
+    );
   const seg = body === "body1" ? nextState.s2?.body1 : nextState.s2?.body2;
   const baselineSlots = buildChainBaselineSlots(nextState, body, seg?.slots);
   const buildCtx = getChainBuildContext(nextState, body);
@@ -329,12 +343,17 @@ export function postProcessStage2(
       buildStep === "ready"
         ? "要我现在整理链条吗？"
         : `若继续，请补${SLOT_LABEL[buildStep]}（一句即可）。`;
+    const { mirror: boundMirror, coachQuestion: boundQ } = planCoach(
+      explain,
+      coachQ,
+      true,
+    );
     return {
       result: {
         verdict: "coach",
         advance: false,
-        mirror: explain,
-        coachQuestion: coachQ,
+        mirror: boundMirror,
+        coachQuestion: boundQ,
         userVisibleText: buildStage2OutputContract({
           state: nextState,
           body,
@@ -351,7 +370,7 @@ export function postProcessStage2(
             buildStep === "ready"
               ? "核对左侧链条，若顺就并入。"
               : `补一句${SLOT_LABEL[buildStep]}（一句即可）。`,
-          nextStep: coachQ || "继续按当前环节补一句。",
+          nextStep: boundQ || "继续按当前环节补一句。",
         }),
         logicBreakdown: undefined,
       },
@@ -361,8 +380,8 @@ export function postProcessStage2(
           ...nextState.coachContext,
           chainBuildStep: buildStep,
           chainLastAskedStep: buildStep,
-          chainStepAskCount: nextChainAskCount(state, buildStep, coachQ),
-          lastQuestion: coachQ,
+          chainStepAskCount: nextChainAskCount(state, buildStep, boundQ),
+          lastQuestion: boundQ,
           openIssue: undefined,
         },
       },
@@ -383,12 +402,17 @@ export function postProcessStage2(
       buildStep === "claim"
         ? "我们按链条一环一环来，不用一次写整段。"
         : `当前环节是 ${stepLabel}，写完再说下一句。`;
+    const { mirror: boundMirror, coachQuestion: boundQ } = planCoach(
+      mirror,
+      coachQ,
+      true,
+    );
     return {
       result: {
         verdict: "coach",
         advance: false,
-        mirror,
-        coachQuestion: coachQ,
+        mirror: boundMirror,
+        coachQuestion: boundQ,
         userVisibleText: buildStage2OutputContract({
           state: nextState,
           body,
@@ -400,12 +424,12 @@ export function postProcessStage2(
             buildStep === "ready"
               ? "链条完整，可并入"
               : `当前在补 ${SLOT_LABEL[buildStep]}`,
-          feedback: [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n"),
+          feedback: [boundMirror, boundQ, progressBlock].filter(Boolean).join("\n\n"),
           suggestedRevision:
             buildStep === "ready"
               ? "确认是否并入链条。"
               : `按提示补一句${SLOT_LABEL[buildStep]}。`,
-          nextStep: coachQ || "继续当前环节。",
+          nextStep: boundQ || "继续当前环节。",
         }),
         logicBreakdown: undefined,
       },
@@ -415,8 +439,8 @@ export function postProcessStage2(
           ...nextState.coachContext,
           chainBuildStep: buildStep,
           chainLastAskedStep: buildStep,
-          chainStepAskCount: nextChainAskCount(state, buildStep, coachQ),
-          lastQuestion: coachQ,
+          chainStepAskCount: nextChainAskCount(state, buildStep, boundQ),
+          lastQuestion: boundQ,
           openIssue: undefined,
         },
       },
@@ -443,6 +467,11 @@ export function postProcessStage2(
       );
       const mirror = "抱歉，刚才重复问了举例；你的例子我记下了。";
       const coachQ = afterF.coachPrompt;
+      const { mirror: boundMirror, coachQuestion: boundQ } = planCoach(
+        mirror,
+        coachQ,
+        true,
+      );
       const progress = formatChainWorkshopPanel({
         body,
         coverage: decision.coverage,
@@ -463,8 +492,8 @@ export function postProcessStage2(
         result: {
           verdict: "coach",
           advance: false,
-          mirror,
-          coachQuestion: coachQ,
+          mirror: boundMirror,
+          coachQuestion: boundQ,
           userVisibleText: buildStage2OutputContract({
             state: nextState,
             body,
@@ -476,12 +505,12 @@ export function postProcessStage2(
               afterF.step === "ready"
                 ? "链条够写，可并入"
                 : `下一步补 ${SLOT_LABEL[afterF.step]}`,
-            feedback: [mirror, coachQ, progress].filter(Boolean).join("\n\n"),
+            feedback: [boundMirror, boundQ, progress].filter(Boolean).join("\n\n"),
             suggestedRevision:
               afterF.step === "ready"
                 ? "检查左侧链条并确认。"
                 : `补一句${SLOT_LABEL[afterF.step]}，保持一句话。`,
-            nextStep: coachQ || "继续下一环。",
+            nextStep: boundQ || "继续下一环。",
           }),
           logicBreakdown: undefined,
         },
@@ -491,8 +520,8 @@ export function postProcessStage2(
             ...nextState.coachContext,
             chainBuildStep: afterF.step,
             chainLastAskedStep: afterF.step,
-            chainStepAskCount: nextChainAskCount(state, afterF.step, coachQ),
-            lastQuestion: coachQ,
+            chainStepAskCount: nextChainAskCount(state, afterF.step, boundQ),
+            lastQuestion: boundQ,
             openIssue: undefined,
           },
         },
@@ -502,12 +531,17 @@ export function postProcessStage2(
     if (ex && isWeakExampleSentence(ex, body)) {
       const coachQ = exampleFollowUpCoachPrompt(ex, body);
       const mirror = "抱歉，刚才问法重复了；你的方向对，再具体一点即可。";
+      const { mirror: boundMirror, coachQuestion: boundQ } = planCoach(
+        mirror,
+        coachQ,
+        true,
+      );
       return {
         result: {
           verdict: "coach",
           advance: false,
-          mirror,
-          coachQuestion: coachQ,
+          mirror: boundMirror,
+          coachQuestion: boundQ,
           userVisibleText: buildStage2OutputContract({
             state: nextState,
             body,
@@ -516,9 +550,9 @@ export function postProcessStage2(
             meaningReason: "例子方向正确，需要更具体",
             paragraphFit: false,
             paragraphReason: "example 仍偏泛，需要可写细节",
-            feedback: [mirror, coachQ, progressBlock].filter(Boolean).join("\n\n"),
+            feedback: [boundMirror, boundQ, progressBlock].filter(Boolean).join("\n\n"),
             suggestedRevision: "补一个具体场景/对象/结果。",
-            nextStep: coachQ || "再具体一点后提交。",
+            nextStep: boundQ || "再具体一点后提交。",
           }),
           logicBreakdown: undefined,
         },
@@ -528,9 +562,9 @@ export function postProcessStage2(
             ...nextState.coachContext,
             chainBuildStep: "example",
             chainLastAskedStep: "example",
-            chainStepAskCount: nextChainAskCount(state, "example", coachQ),
-            lastQuestion: coachQ,
-            openIssue: coachQ,
+            chainStepAskCount: nextChainAskCount(state, "example", boundQ),
+            lastQuestion: boundQ,
+            openIssue: boundQ,
           },
         },
       };
@@ -543,12 +577,17 @@ export function postProcessStage2(
       buildStep === "ready"
         ? "若这条骨架顺，我会整理到左侧；要改请说哪一环。"
         : stepPrompt;
+    const { mirror: boundMirror, coachQuestion: boundQ } = planCoach(
+      skeleton,
+      coachQ,
+      true,
+    );
     return {
       result: {
         verdict: "coach",
         advance: false,
-        mirror: skeleton,
-        coachQuestion: coachQ,
+        mirror: boundMirror,
+        coachQuestion: boundQ,
         userVisibleText: buildStage2OutputContract({
           state: nextState,
           body,
@@ -560,12 +599,12 @@ export function postProcessStage2(
             buildStep === "ready"
               ? "骨架已完整"
               : `当前应先完成 ${SLOT_LABEL[buildStep]}`,
-          feedback: `${skeleton}\n\n${progressBlock}`,
+          feedback: [boundMirror, progressBlock].filter(Boolean).join("\n\n"),
           suggestedRevision:
             buildStep === "ready"
               ? "指出要改的具体一环。"
               : `按骨架补一句${SLOT_LABEL[buildStep]}。`,
-          nextStep: coachQ || "继续当前环节。",
+          nextStep: boundQ || "继续当前环节。",
         }),
         logicBreakdown: undefined,
       },
@@ -575,8 +614,8 @@ export function postProcessStage2(
           ...nextState.coachContext,
           chainBuildStep: buildStep,
           chainLastAskedStep: buildStep,
-          chainStepAskCount: nextChainAskCount(state, buildStep, coachQ),
-          lastQuestion: coachQ,
+          chainStepAskCount: nextChainAskCount(state, buildStep, boundQ),
+          lastQuestion: boundQ,
           openIssue: undefined,
         },
       },
@@ -659,6 +698,7 @@ export function postProcessStage2(
   }
 
   let { mirror, ask: coachQ } = decision.coach;
+  ({ mirror, coachQuestion: coachQ } = planCoach(mirror, coachQ));
   if (
     buildStep === "ready" &&
     areChainSlotsSemanticallyValid(workingSlots, body)

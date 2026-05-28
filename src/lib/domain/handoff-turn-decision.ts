@@ -44,6 +44,12 @@ import {
 import type { ExplorationThemes } from "./stage1-exploration-themes";
 import { detectHandoffHelpQuestion } from "./stage2-context";
 import { ANGLE_TEACH_CHAT } from "./constants";
+import {
+  isRuntimePlanEnforcementEnabled,
+  planCoachAsk,
+  planCoachMirror,
+  resolveCoachTurnPlanForSession,
+} from "./runtime-plan-overlay";
 import type {
   ExplorationSide,
   ExplorationSides,
@@ -352,7 +358,7 @@ export function resolveHandoffTurnDecision(
 
   if (contentReady && themes.readyToFinalize && rounds >= 3) {
     const auto = repairProposalFromChat(state);
-    if (auto && isHandoffProposalComplete(auto, state)) {
+    if (auto) {
       return {
         gap: "ready",
         sides,
@@ -436,12 +442,17 @@ export function resolveHandoffTurnDecision(
           (msgs.length <= 1
             ? brainstormSummaryFallback(state)
             : "我先记下你这边的想法。"),
-        ask: selectStage1CoachAsk(
+        ask: planCoachAsk(
           state,
-          themes,
-          contentReady,
-          substance.coachPrompt ?? "",
-          { llmAsk: result.coachQuestion },
+          result,
+          userMessage,
+          selectStage1CoachAsk(
+            state,
+            themes,
+            contentReady,
+            substance.coachPrompt ?? "",
+            { llmAsk: result.coachQuestion },
+          ),
         ),
       },
       handoffPhase: "exploring",
@@ -463,7 +474,10 @@ export function resolveHandoffTurnDecision(
       sides,
       shouldPropose: false,
       proposal: null,
-      coach: { mirror, ask: gapQ },
+      coach: {
+        mirror,
+        ask: planCoachAsk(state, result, userMessage, gapQ),
+      },
       handoffPhase: "exploring",
     };
   }
@@ -496,12 +510,16 @@ export function resolveHandoffTurnDecision(
 
   if (userMessage && detectFrustration(userMessage)) {
     const preview = buildRecordedSidesPreview(state, msgs);
-    const coachQ =
+    const coachQ = planCoachAsk(
+      state,
+      result,
+      userMessage,
       selectStage1CoachAsk(state, themes, contentReady, substance.coachPrompt ?? "", {
         gapQ,
         preferGapFirst: true,
       }) ||
-      `请分别用一句话说清 ${explorationSideLabel(state, "sideA")} 和 ${explorationSideLabel(state, "sideB")}。`;
+        `请分别用一句话说清 ${explorationSideLabel(state, "sideA")} 和 ${explorationSideLabel(state, "sideB")}。`,
+    );
     return {
       gap,
       sides,
@@ -515,14 +533,17 @@ export function resolveHandoffTurnDecision(
     };
   }
 
-  let nextQ = selectStage1CoachAsk(
-    state,
-    themes,
-    contentReady,
-    substance.coachPrompt ?? "",
-    { llmAsk: result.coachQuestion, gapQ },
-  );
+  let nextQ = isRuntimePlanEnforcementEnabled()
+    ? planCoachAsk(state, result, userMessage, result.coachQuestion ?? "")
+    : selectStage1CoachAsk(
+        state,
+        themes,
+        contentReady,
+        substance.coachPrompt ?? "",
+        { llmAsk: result.coachQuestion, gapQ },
+      );
   if (
+    !isRuntimePlanEnforcementEnabled() &&
     !nextQ &&
     themes.themesComplete &&
     !themes.readyToFinalize
@@ -621,28 +642,64 @@ export function resolveHandoffTurnDecision(
           llmMirror ||
           buildRecordedSidesPreview(state, msgs) ||
           "前面说的我都记下了。",
-        ask: replacement,
+        ask: planCoachAsk(state, result, userMessage, replacement),
       },
       handoffPhase: "exploring",
     };
   }
 
-  const preview = buildRecordedSidesPreview(state, msgs);
-  const mirror =
-    llmMirror ||
-    preview ||
-    (gap === "sideA" || gap === "sideB"
-      ? gapMirrorForMissingSide(gap, state)
-      : "我们继续把两个 Body 方向写实。");
+  if (
+    themes.readyToFinalize &&
+    sides.sideA &&
+    sides.sideB &&
+    resolveCoachTurnPlanForSession(state, userMessage)?.action === "finalize"
+  ) {
+    const auto = repairProposalFromChat(state);
+    if (auto) {
+      return {
+        gap: "ready",
+        sides,
+        shouldPropose: true,
+        proposal: auto,
+        coach: {
+          mirror: "",
+          ask: formatProposalCoachMessage(
+            auto,
+            "两个 Body 方向都够写两段了，六栏整理在左侧，请核对。",
+          ),
+        },
+        handoffPhase: "proposed",
+        essaySubstanceSufficient: true,
+      };
+    }
+  }
 
-  let ask =
+  const preview = buildRecordedSidesPreview(state, msgs);
+  const mirror = planCoachMirror(
+    state,
+    result,
+    userMessage,
+    llmMirror ||
+      preview ||
+      (gap === "sideA" || gap === "sideB"
+        ? gapMirrorForMissingSide(gap, state)
+        : "我们继续把两个 Body 方向写实。"),
+  );
+
+  let ask = planCoachAsk(
+    state,
+    result,
+    userMessage,
     selectStage1CoachAsk(state, themes, contentReady, substance.coachPrompt ?? "", {
       llmAsk: nextQ || result.coachQuestion,
       gapQ,
       preferGapFirst: !result.coachQuestion?.trim(),
-    }) || "";
+    }) || "",
+  );
 
-  ask = reconcileMirrorAndAsk(mirror, ask, state, themes);
+  if (!isRuntimePlanEnforcementEnabled()) {
+    ask = reconcileMirrorAndAsk(mirror, ask, state, themes);
+  }
 
   return {
     gap,

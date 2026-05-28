@@ -840,8 +840,8 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
     const themes = extractExplorationThemes(state, msgs);
     if (themes.readyToFinalize && themes.themesComplete) {
       const patch = themesToHandoffPatch(themes, state, msgs);
-      body1 = body1 || patch.body1Point || "";
-      body2 = body2 || patch.body2Point || "";
+      body1 = patch.body1Point || body1 || "";
+      body2 = patch.body2Point || body2 || "";
       body1Angle = body1Angle || patch.body1Angle || "";
       body2Angle = body2Angle || patch.body2Angle || "";
       position = position || patch.position || position;
@@ -975,7 +975,42 @@ export function sanitizeHandoffProposal(
     }
   }
 
-  return isHandoffProposalComplete(out, state) ? out : null;
+  if (isHandoffProposalComplete(out, state)) return out;
+
+  if (themes?.readyToFinalize && sides.sideA && sides.sideB) {
+    const patch = themesToHandoffPatch(themes, state, msgs);
+    const merged: Stage1Handoff = {
+      ...out,
+      body1Point: isValidBodyPoint(out.body1Point, "sideA", state)
+        ? out.body1Point
+        : patch.body1Point || ruleBuilt.body1Point || out.body1Point || "",
+      body2Point: isValidBodyPoint(out.body2Point, "sideB", state)
+        ? out.body2Point
+        : patch.body2Point || ruleBuilt.body2Point || out.body2Point || "",
+      body1Angle:
+        out.body1Angle?.trim() || patch.body1Angle || ruleBuilt.body1Angle || "",
+      body2Angle:
+        out.body2Angle?.trim() || patch.body2Angle || ruleBuilt.body2Angle || "",
+      taskUnderstanding:
+        out.taskUnderstanding?.trim() || ruleBuilt.taskUnderstanding || "",
+      position: out.position?.trim() || patch.position || ruleBuilt.position || "",
+      questionType: out.questionType || ruleBuilt.questionType || "unknown",
+    };
+    if (isHandoffProposalComplete(merged, state)) return merged;
+
+    const fromPatch: Stage1Handoff = {
+      questionType: ruleBuilt.questionType || out.questionType || "unknown",
+      taskUnderstanding: ruleBuilt.taskUnderstanding || out.taskUnderstanding || "",
+      position: patch.position || ruleBuilt.position || out.position || "",
+      body1Point: patch.body1Point || ruleBuilt.body1Point || "",
+      body1Angle: patch.body1Angle || ruleBuilt.body1Angle || "",
+      body2Point: patch.body2Point || ruleBuilt.body2Point || "",
+      body2Angle: patch.body2Angle || ruleBuilt.body2Angle || "",
+    };
+    return fromPatch;
+  }
+
+  return null;
 }
 
 export function resolveConfirmableHandoffProposal(

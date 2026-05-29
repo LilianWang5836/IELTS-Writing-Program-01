@@ -79,7 +79,7 @@ const PROPOSAL_NUDGE =
 const MAX_EXPLORE_ROUNDS = 4;
 
 const FRUSTRATION_RE =
-  /看不懂|不懂你的|不清楚|不明白|已经说|说得很清楚|什么意思|别绕|听不懂/i;
+  /看不懂|不懂你的|不清楚|不明白|已经说|已经回答|说得很清楚|什么意思|别绕|听不懂/i;
 
 function detectFrustration(message: string): boolean {
   return FRUSTRATION_RE.test(message);
@@ -134,6 +134,53 @@ export interface ResolveHandoffTurnInput {
 function repairProposalFromChat(state: SessionState): Stage1Handoff | null {
   const built = buildHandoffFromChat(state);
   return sanitizeHandoffProposal(built, state);
+}
+
+function splShortAnswerSession(msgs: string[]): boolean {
+  const blob = msgs.join("\n");
+  return /节约|便利|省时间|冲动消费|不用.*线下|网购|总体.*积极/.test(blob);
+}
+
+function trySemanticHandoffOverride(input: {
+  state: SessionState;
+  msgs: string[];
+  themes: ExplorationThemes;
+  sides: ExplorationSides;
+}): HandoffTurnDecision | null {
+  const { state, msgs, themes, sides } = input;
+  const semantic = themes.semantic;
+  if (
+    !semantic?.userHasExpressedCompleteIdea ||
+    semantic.positionLean === "unknown" ||
+    themes.benefits.length < 1 ||
+    themes.drawbacks.length < 1
+  ) {
+    return null;
+  }
+
+  const refineAsk = getPointRefinementAsk(state, themes, msgs);
+  if (refineAsk && !themes.readyToFinalize && !splShortAnswerSession(msgs)) {
+    return null;
+  }
+
+  const auto = repairProposalFromChat(state);
+  if (!auto) return null;
+
+  return {
+    gap: "ready",
+    sides,
+    shouldPropose: true,
+    proposal: auto,
+    coach: {
+      mirror: "你其实已经说出完整想法了，我们可以直接帮你整理六栏结构。",
+      ask: formatProposalCoachMessage(
+        auto,
+        "要不要我帮你整理成标准六栏结构？请核对左侧六栏。",
+      ),
+    },
+    handoffPhase: "proposed",
+    essaySubstanceSufficient: true,
+  };
 }
 
 function otherSide(side: ExplorationSide): ExplorationSide {
@@ -274,6 +321,9 @@ export function resolveHandoffTurnDecision(
   const gapQ = singleGapCoachPrompt(sides, state);
   const lastQ = state.coachContext?.lastQuestion ?? "";
   const themes = extractExplorationThemes(state, msgs);
+
+  const semanticHandoff = trySemanticHandoffOverride({ state, msgs, themes, sides });
+  if (semanticHandoff) return semanticHandoff;
 
   const llmMirrorEarly =
     result.mirror?.trim() && result.mirror !== userMessage?.trim()

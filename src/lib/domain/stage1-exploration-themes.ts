@@ -6,6 +6,10 @@ import {
   explorationSideLabel,
 } from "./stage1-exploration";
 import { resolveQuestionHintType } from "./stage1-question-hint";
+import {
+  buildSemanticState,
+  type SemanticState,
+} from "@/runtime/semantic/semantic-projection";
 import type { QuestionType, SessionState, Stage1Handoff } from "./types";
 
 export type PositionLean = "pro" | "con" | "balanced" | "unknown";
@@ -18,6 +22,8 @@ export interface ExplorationThemes {
   themesComplete: boolean;
   /** 分论点够具体，可整理六栏 */
   readyToFinalize: boolean;
+  /** SPL 语义投影（Stage1 门控补充） */
+  semantic?: SemanticState;
 }
 
 type SideKind = "benefit" | "drawback";
@@ -205,16 +211,49 @@ export function extractExplorationThemes(
     for (const x of d) pushUnique(drawbacks, x);
   }
 
-  const positionLean =
+  const semantic = buildSemanticState(msgs);
+
+  for (const token of semantic.benefits) {
+    if (!benefits.includes(token)) benefits.push(token);
+  }
+  for (const token of semantic.drawbacks) {
+    if (!drawbacks.includes(token)) drawbacks.push(token);
+  }
+
+  if (benefits.length === 0 && semantic.userHasExpressedCompleteIdea) {
+    benefits.push("implicit_benefit");
+  }
+  if (drawbacks.length === 0 && semantic.userHasExpressedCompleteIdea && semantic.drawbacks.length > 0) {
+    drawbacks.push("implicit_drawback");
+  } else if (
+    drawbacks.length === 0 &&
+    semantic.userHasExpressedCompleteIdea &&
+    /冲动消费|浪费|破坏|环境|拥堵|垃圾|污染/.test(blob)
+  ) {
+    drawbacks.push("implicit_drawback");
+  }
+
+  let positionLean =
     inferPositionLean(
       [blob, state.handoff?.position ?? "", state.s1?.position ?? ""].join("\n"),
     );
+  if (positionLean === "unknown" && semantic.positionLean !== "unknown") {
+    positionLean = semantic.positionLean;
+  }
 
-  const themesComplete =
+  const regexThemesComplete =
     benefits.length >= 1 &&
     drawbacks.length >= 1 &&
     positionLean !== "unknown" &&
     (benefits.length + drawbacks.length >= 2 || blob.length >= 50);
+
+  const splThemesComplete =
+    semantic.userHasExpressedCompleteIdea &&
+    semantic.positionLean !== "unknown" &&
+    benefits.length >= 1 &&
+    drawbacks.length >= 1;
+
+  const themesComplete = splThemesComplete || regexThemesComplete;
 
   let readyToFinalize = false;
   if (themesComplete) {
@@ -224,13 +263,21 @@ export function extractExplorationThemes(
       positionLean,
       themesComplete,
       readyToFinalize: false,
+      semantic,
     };
     readyToFinalize =
       isBodyRefinementSatisfied("body1", themesSnapshot, state, msgs) &&
       isBodyRefinementSatisfied("body2", themesSnapshot, state, msgs);
   }
 
-  return { benefits, drawbacks, positionLean, themesComplete, readyToFinalize };
+  return {
+    benefits,
+    drawbacks,
+    positionLean,
+    themesComplete,
+    readyToFinalize,
+    semantic,
+  };
 }
 
 const VAGUE_POINT_RE =
@@ -248,7 +295,7 @@ export function isPointSpecificEnough(text: string | undefined): boolean {
   if (/^(经济|文化)(发展|交流)/.test(compact) && t.length < 20) return false;
 
   const concrete =
-    /游客|居民|当地|本地人|环境|景区|餐馆|交通|垃圾|收入|就业|服务业|道路|生活/.test(
+    /游客|居民|当地|本地人|环境|景区|餐馆|交通|垃圾|收入|就业|服务业|道路|生活|时间|线下|消费|网购|便利/.test(
       t,
     );
   const relational =
@@ -426,6 +473,20 @@ export function isExplorationQuestionRedundant(
 ): boolean {
   const q = question.trim();
   if (!q) return false;
+
+  const semantic = themes.semantic;
+  if (semantic?.userHasExpressedCompleteIdea) {
+    if (/好处|优势|benefit|核心.*好|具体.*优势|更受欢迎/i.test(q)) {
+      return true;
+    }
+    if (
+      themes.drawbacks.length >= 1 &&
+      /坏处|弊端|劣势|不利|负面|什么.*坏/i.test(q) &&
+      !/结构|Body|段落|整理|六栏/.test(q)
+    ) {
+      return true;
+    }
+  }
 
   if (
     themes.benefits.length >= 1 &&

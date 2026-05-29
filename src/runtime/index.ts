@@ -11,4 +11,5 @@ export {
   applyArbitratedPlanToCoachResult,
   isRuntimePlanEnforcementEnabled,
 } from "./generation/apply-plan-to-result";
+export { buildSemanticState, type SemanticState } from "./semantic/semantic-projection";
 export { serializeArbitratedPlan } from "./model/capability-profile";

@@ -241,15 +241,23 @@ export function postProcessStage1(
 
   let mirror: string;
   let ask: string;
+  const themes = extractExplorationThemes(nextState, userMessages(nextState));
   if (isRuntimePlanEnforcementEnabled()) {
     const planOverlay = overlayRuntimePlanOnCoach(nextState, result, userMessage);
-    mirror = planOverlay.mirror?.trim() || result.mirror?.trim() || decision.coach.mirror;
-    ask = planOverlay.coachQuestion?.trim() ?? "";
+    mirror =
+      decision.coach.mirror?.trim() ||
+      planOverlay.mirror?.trim() ||
+      result.mirror?.trim() ||
+      "";
+    // Rule layer (handoff decision) is authoritative; overlay only fills gaps.
+    ask =
+      decision.coach.ask?.trim() ||
+      planOverlay.coachQuestion?.trim() ||
+      "";
   } else {
     ({ mirror, ask } = decision.coach);
-    const themes = extractExplorationThemes(nextState, userMessages(nextState));
-    ask = reconcileMirrorAndAsk(mirror, ask, nextState, themes);
   }
+  ask = reconcileMirrorAndAsk(mirror, ask, nextState, themes);
   const userVisible =
     [mirror, ask].filter(Boolean).join("\n\n") ||
     ask ||

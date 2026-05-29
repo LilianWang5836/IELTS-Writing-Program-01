@@ -382,6 +382,57 @@ ok(
   "网购题：补完两侧后不再重复追问最核心好处",
 );
 
+// ── 真实 UI 路径：postProcessStage1 + runtime enforce，不应透传 LLM 重复问 ──
+const naturalTurn2Lines = [
+  "讨论正负面影响，我觉得整体是积极的",
+  "网购能节省时间，但是会增加冲动消费",
+  "工作日很忙的时候也能快速解决购物需求；周末可以有更多时间休息或者做别的爱好，不用特意去线下商店",
+  "增加冲动消费",
+];
+const naturalState = stateAfterUserLinesQ7(naturalTurn2Lines);
+const naturalThemes = extractExplorationThemes(
+  stateAfterUserLinesQ7(naturalTurn2Lines.slice(0, 2)),
+  naturalTurn2Lines.slice(0, 2),
+);
+ok(
+  naturalThemes.benefits.some((b) => /节省|时间|网购/.test(b)) &&
+    naturalThemes.drawbacks.some((d) => /冲动|消费/.test(d)),
+  "网购题：「A，但是 B」自然转折利弊可被提取",
+);
+
+const llmRepeatAsk =
+  "既然你整体上认为网购普及是利大于弊的，那你觉得它最核心的好处是什么呢？";
+const naturalPost = postProcessStage1(
+  {
+    ...naturalState,
+    coachContext: { ...naturalState.coachContext, exploreRound: 4 },
+  },
+  {
+    verdict: "coach",
+    advance: false,
+    mirror:
+      "确实，网购的算法推荐和促销活动很容易让人产生冲动消费，这是一个很典型的坏处。",
+    coachQuestion: llmRepeatAsk,
+    userVisibleText: "",
+    essaySubstanceSufficient: true,
+  },
+  naturalTurn2Lines[3],
+);
+const naturalOut = [
+  naturalPost.result.coachQuestion,
+  naturalPost.result.userVisibleText,
+  naturalPost.result.mirror,
+].join(" ");
+ok(
+  naturalPost.state.coachContext?.handoffPhase === "proposed" ||
+    /六栏|核对|确认整理/.test(naturalOut),
+  "postProcess：补完两侧后应进入整理或提示核对六栏",
+);
+ok(
+  !/最核心的好处|最突出的好处|核心好处/.test(naturalOut),
+  "postProcess：runtime enforce 下不透传 LLM 重复好处问",
+);
+
 if (fail) {
   console.error(`\n${fail} failed`);
   process.exit(1);

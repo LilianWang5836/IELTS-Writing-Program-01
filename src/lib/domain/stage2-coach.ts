@@ -201,7 +201,7 @@ export function postProcessStage2(
   const preMemory = buildDiscourseMemory(
     preMsgs,
     body,
-    buildCtx.bodyPoint || baselineSlots.claim,
+    buildCtx.bodyPoint || baselineSlots.claim || undefined,
   );
   const preCoverage = aggregateCoverage(preMemory, body);
   const expectedStep = needToBuildStep(getNextNeed(preCoverage));

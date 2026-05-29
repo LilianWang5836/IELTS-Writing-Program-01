@@ -779,7 +779,7 @@ async function processLlmTurn(
   });
 
   if (prevSubStep === "S1_EVAL") {
-    maybeLogRuntimeShadow(nextState, userMessage, result);
+    maybeLogRuntimeShadow(nextState, userMessage ?? "", result);
     const processed = postProcessStage1(nextState, result, userMessage);
     result = processed.result;
     nextState = mergeS1FromResult(processed.state, result);
@@ -790,7 +790,7 @@ async function processLlmTurn(
 
   if (prevSubStep === "S2_2_BODY1" || prevSubStep === "S2_3_BODY2") {
     const body: BodyKey = prevSubStep === "S2_2_BODY1" ? "body1" : "body2";
-    maybeLogRuntimeShadow(nextState, userMessage, result, { body });
+    maybeLogRuntimeShadow(nextState, userMessage ?? "", result, { body });
     const processed = postProcessStage2(nextState, result, body, userMessage);
     result = processed.result;
     nextState = applyBodyCoachUpdate(processed.state, body, result, userMessage);

@@ -107,6 +107,22 @@ function splitProsConsInMessage(message: string): {
     };
   }
 
+  // 自然转折：「A，但是/然而/不过 B」（如「网购能节省时间，但是会增加冲动消费」）
+  const afterBut = m.match(/^(.*?)[，,]?\s*(?:但是|然而|不过|但)\s*([\s\S]+)$/);
+  if (afterBut?.[1] && afterBut[2]) {
+    const benefitPart = afterBut[1].trim();
+    const drawbackPart = afterBut[2].trim();
+    const benefitish =
+      looksLikeBenefitLine(benefitPart) ||
+      /节省|省时|方便|便利|效率|更快/.test(benefitPart);
+    const drawbackish =
+      looksLikeDrawbackLine(drawbackPart) ||
+      /冲动|浪费|过度|不理性|盲目|增加.*消费/.test(drawbackPart);
+    if (benefitish && drawbackish) {
+      return { benefitPart, drawbackPart };
+    }
+  }
+
   return { benefitPart: "", drawbackPart: "" };
 }
 
@@ -134,9 +150,14 @@ function isolatePointForSide(text: string, kind: SideKind): string {
     if (/(?:坏处|劣势|弊端)/.test(t)) {
       return t.split(/(?:坏处|劣势|弊端)[：:，,]?\s*/i)[0]?.trim() ?? "";
     }
+    if (/(?:但是|然而|不过|但)/.test(t)) {
+      return t.split(/(?:但是|然而|不过|但)/)[0]?.replace(/[，,]\s*$/, "").trim() ?? "";
+    }
     return t;
   }
   if (drawbackPart) return drawbackPart;
+  const afterBut = t.match(/(?:但是|然而|不过|但)\s*([^。；;]+)/)?.[1];
+  if (afterBut?.trim()) return afterBut.trim();
   const after = t.match(/(?:坏处|劣势|弊端)[：:，,]?\s*([^。；;]+)/)?.[1];
   if (after?.trim()) return after.trim();
   if (looksLikeDrawbackLine(t) && !/(?:好处|优势|利大于)/.test(t)) {

@@ -152,10 +152,11 @@ export function assessParagraphSubstance(
   }
 
   if (
+    slots &&
     claimReasonRedundant(slots) &&
     !hasFlexibleGrounding(slots, body) &&
     !hasFlexibleCausal(slots, body) &&
-    !hasMechanismVerbs(slots?.reason?.trim() ?? "") &&
+    !hasMechanismVerbs(slots.reason?.trim() ?? "") &&
     !discourseReady
   ) {
     gaps.push("论点与机制句像在重复，请补不同功能的一层");

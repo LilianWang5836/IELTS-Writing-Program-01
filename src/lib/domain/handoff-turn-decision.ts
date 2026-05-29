@@ -12,6 +12,7 @@ import {
   gapSideFromCoachQuestion,
   isDivergentCoachQuestion,
   isHandoffProposalComplete,
+  isHandoffProposalCompleteConversational,
   isIncompleteBodyPoint,
   isProposalAffirmation,
   isRepeatedQuestion,
@@ -23,6 +24,10 @@ import {
   userAnsweredExplorationGap,
   userMessages,
 } from "./essay-substance";
+import { detectFrustration } from "@/runtime/shared/frustration";
+import {
+  buildConversationalReadiness,
+} from "@/runtime/stage1/conversational-ready";
 import {
   brainstormSummaryFallback,
   explorationSideLabel,
@@ -78,13 +83,6 @@ const PROPOSAL_NUDGE =
 
 const MAX_EXPLORE_ROUNDS = 4;
 
-const FRUSTRATION_RE =
-  /看不懂|不懂你的|不清楚|不明白|已经说|已经回答|说得很清楚|什么意思|别绕|听不懂/i;
-
-function detectFrustration(message: string): boolean {
-  return FRUSTRATION_RE.test(message);
-}
-
 function expectedGap(
   sides: ExplorationSides,
   sufficient: boolean,
@@ -131,14 +129,17 @@ export interface ResolveHandoffTurnInput {
   userMessage?: string;
 }
 
-function repairProposalFromChat(state: SessionState): Stage1Handoff | null {
+function repairProposalFromChat(
+  state: SessionState,
+  opts?: { conversational?: boolean },
+): Stage1Handoff | null {
   const built = buildHandoffFromChat(state);
-  return sanitizeHandoffProposal(built, state);
-}
-
-function splShortAnswerSession(msgs: string[]): boolean {
-  const blob = msgs.join("\n");
-  return /节约|便利|省时间|冲动消费|不用.*线下|网购|总体.*积极/.test(blob);
+  const sanitized = sanitizeHandoffProposal(built, state);
+  if (sanitized) return sanitized;
+  if (opts?.conversational) {
+    return isHandoffProposalCompleteConversational(built) ? built : null;
+  }
+  return null;
 }
 
 function trySemanticHandoffOverride(input: {
@@ -146,25 +147,41 @@ function trySemanticHandoffOverride(input: {
   msgs: string[];
   themes: ExplorationThemes;
   sides: ExplorationSides;
+  userMessage?: string;
 }): HandoffTurnDecision | null {
-  const { state, msgs, themes, sides } = input;
+  const { state, msgs, themes, sides, userMessage } = input;
   const semantic = themes.semantic;
-  if (
-    !semantic?.userHasExpressedCompleteIdea ||
-    semantic.positionLean === "unknown" ||
-    themes.benefits.length < 1 ||
-    themes.drawbacks.length < 1
-  ) {
-    return null;
-  }
 
-  const refineAsk = getPointRefinementAsk(state, themes, msgs);
-  if (refineAsk && !themes.readyToFinalize && !splShortAnswerSession(msgs)) {
-    return null;
-  }
+  const semanticOk =
+    semantic?.userHasExpressedCompleteIdea &&
+    themes.benefits.length >= 1 &&
+    themes.drawbacks.length >= 1;
+  if (!semanticOk) return null;
 
-  const auto = repairProposalFromChat(state);
+  const userMsgsArr = msgs;
+  const latestUserMsg = userMsgsArr.at(-1);
+  const prevUserMsg = userMsgsArr.at(-2);
+  const readiness = buildConversationalReadiness({
+    semanticComplete: true,
+    latestUserMessage: userMessage ?? latestUserMsg,
+    prevUserMessage: prevUserMsg,
+  });
+
+  const canProceed =
+    themes.readyToFinalize ||
+    readiness.conversationalReady ||
+    (semantic?.positionLean !== "unknown" && themes.themesComplete);
+
+  if (!canProceed) return null;
+
+  const auto = repairProposalFromChat(state, { conversational: readiness.conversationalReady });
   if (!auto) return null;
+
+  const mirror = readiness.userConfirmed
+    ? "好，我来帮你整理六栏结构。"
+    : readiness.frustrationDetected
+      ? "抱歉重复了，你已经把核心想法说清楚了，我们直接整理六栏。"
+      : "你其实已经说出完整想法了，我们可以直接帮你整理六栏结构。";
 
   return {
     gap: "ready",
@@ -172,10 +189,10 @@ function trySemanticHandoffOverride(input: {
     shouldPropose: true,
     proposal: auto,
     coach: {
-      mirror: "你其实已经说出完整想法了，我们可以直接帮你整理六栏结构。",
+      mirror,
       ask: formatProposalCoachMessage(
         auto,
-        "要不要我帮你整理成标准六栏结构？请核对左侧六栏。",
+        "请核对左侧六栏；若无异议点「确认整理并填入」。",
       ),
     },
     handoffPhase: "proposed",
@@ -322,7 +339,7 @@ export function resolveHandoffTurnDecision(
   const lastQ = state.coachContext?.lastQuestion ?? "";
   const themes = extractExplorationThemes(state, msgs);
 
-  const semanticHandoff = trySemanticHandoffOverride({ state, msgs, themes, sides });
+  const semanticHandoff = trySemanticHandoffOverride({ state, msgs, themes, sides, userMessage });
   if (semanticHandoff) return semanticHandoff;
 
   const llmMirrorEarly =

@@ -3,6 +3,10 @@ import { EMPTY_HANDOFF } from "./handoff";
 import { isDemoEmployAcademicTopic } from "./stage1-topic-profile";
 import { resolveQuestionHintType } from "./stage1-question-hint";
 import {
+  buildConversationalReadiness,
+} from "@/runtime/stage1/conversational-ready";
+import { buildSemanticState } from "@/runtime/semantic/semantic-projection";
+import {
   bodyPointsTooSimilar,
   extractExplorationThemes,
   getPointRefinementAsk,
@@ -579,11 +583,15 @@ export function isValidBodyPoint(
   text: string | undefined,
   side: ExplorationSide,
   state?: SessionState,
+  opts?: { conversational?: boolean },
 ): boolean {
   const t = text?.trim() ?? "";
-  if (t.length < 8 || t.length > MAX_BODY_POINT_CHARS + 8) return false;
+  const minLen = opts?.conversational ? 4 : 8;
+  if (t.length < minLen || t.length > MAX_BODY_POINT_CHARS + 8) return false;
   if (isIncompleteBodyPoint(t, side)) return false;
   if (isTaskOrPositionBlob(t)) return false;
+
+  if (opts?.conversational) return true;
 
   const demo = state ? isDemoEmployAcademicTopic(state) : false;
   if (demo && side === "sideA") {
@@ -599,6 +607,19 @@ export function isValidBodyPoint(
   }
 
   return isPointSpecificEnough(t);
+}
+
+export function isHandoffProposalCompleteConversational(
+  h: Partial<Stage1Handoff>,
+): boolean {
+  return !!(
+    h.taskUnderstanding?.trim() &&
+    h.position?.trim() &&
+    isValidBodyPoint(h.body1Point, "sideA", undefined, { conversational: true }) &&
+    h.body1Angle?.trim() &&
+    isValidBodyPoint(h.body2Point, "sideB", undefined, { conversational: true }) &&
+    h.body2Angle?.trim()
+  );
 }
 
 function lastRichAcademicMessage(msgs: string[]): string {
@@ -838,13 +859,21 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
 
   if (!demo && isProsConsQuestionType(hintType)) {
     const themes = extractExplorationThemes(state, msgs);
-    if (themes.readyToFinalize && themes.themesComplete) {
+    if (themes.themesComplete) {
       const patch = themesToHandoffPatch(themes, state, msgs);
-      body1 = patch.body1Point || body1 || "";
-      body2 = patch.body2Point || body2 || "";
+      if (themes.readyToFinalize) {
+        body1 = patch.body1Point || body1 || "";
+        body2 = patch.body2Point || body2 || "";
+      }
       body1Angle = body1Angle || patch.body1Angle || "";
       body2Angle = body2Angle || patch.body2Angle || "";
-      position = position || patch.position || position;
+      position = position || patch.position || "";
+      if (!body1 && themes.benefits.length >= 1) {
+        body1 = themes.benefits[0] ?? "";
+      }
+      if (!body2 && themes.drawbacks.length >= 1) {
+        body2 = themes.drawbacks[0] ?? "";
+      }
     }
   }
 
@@ -1028,6 +1057,7 @@ export function assessExplorationContent(
   state: SessionState,
   userMessage?: string,
 ): { contentReady: boolean } {
+  const userMsgs = userMessages(state);
   const blob = [
     state.s1?.taskUnderstanding ?? "",
     state.s1?.position ?? "",
@@ -1039,11 +1069,22 @@ export function assessExplorationContent(
     .join(" ")
     .toLowerCase();
 
-  const msgs = userMessages(state);
+  const semantic = buildSemanticState(userMsgs);
+  const latestUserMsg = state.chatHistory.filter((m) => m.role === "user").at(-1)?.content;
+  const prevUserMsg = state.chatHistory.filter((m) => m.role === "user").at(-2)?.content;
+  const readiness = buildConversationalReadiness({
+    semanticComplete: semantic.userHasExpressedCompleteIdea,
+    latestUserMessage: latestUserMsg,
+    prevUserMessage: prevUserMsg,
+  });
+
   const hintType = resolveQuestionHintType(state);
   if (isProsConsQuestionType(hintType)) {
-    const themes = extractExplorationThemes(state, msgs);
+    const themes = extractExplorationThemes(state, userMsgs);
     if (themes.themesComplete) {
+      return { contentReady: true };
+    }
+    if (readiness.conversationalReady) {
       return { contentReady: true };
     }
     const hasLean =
@@ -1062,7 +1103,7 @@ export function assessExplorationContent(
     (state.s1?.taskUnderstanding?.trim().length ?? 0) > 8 ||
     (state.topic?.trim().length ?? 0) > 20;
   const hasPosition =
-    /取决于|看情况|部分同意|利大于弊|弊大于利|好处更多|坏处更多|好处多|坏处多|优势更大|劣势更大|outweigh/i.test(
+    /取决于|看情况|部分同意|利大于弊|弊大于利|好处更多|坏处更多|好处多|坏处多|优势更大|劣势更大|outweigh|积极|消极|positive|negative/i.test(
       blob,
     ) ||
     (state.handoff?.position?.trim().length ?? 0) > 6 ||
@@ -1072,7 +1113,14 @@ export function assessExplorationContent(
       /就业|工作|职场|技能|实操|实习|job|career|employ|尽快工作/i.test(blob);
     const hasSideB =
       /学术|研究|理论|知识|深造|phd|academic|纯粹|系统/i.test(blob);
+    if (readiness.conversationalReady && hasSideA && hasSideB) {
+      return { contentReady: true };
+    }
     return { contentReady: hasTask && hasPosition && hasSideA && hasSideB };
+  }
+
+  if (readiness.conversationalReady && hasTask) {
+    return { contentReady: true };
   }
 
   return { contentReady: hasTask && hasPosition };

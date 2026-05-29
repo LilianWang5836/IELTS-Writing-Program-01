@@ -259,6 +259,79 @@ ok(
   "rewriteRisk=medium 仍可按原流程 proposed",
 );
 
+// ── 网购短答 + 确认 → 应进入六栏整理 ─────────────────────────────────────
+const ONLINE_SHOPPING_PROMPT =
+  "Online shopping is becoming more popular than in-store shopping. Is this a positive or negative development?";
+
+const q7 = {
+  id: "q7",
+  title: "Online shopping",
+  prompt: ONLINE_SHOPPING_PROMPT,
+  hintType: "pos_neg",
+};
+
+function stateAfterUserLinesQ7(lines) {
+  let state = createInitialState(q7);
+  state = {
+    ...state,
+    subStep: "S1_EVAL",
+    coachContext: { handoffPhase: "exploring", exploreRound: 0 },
+  };
+  for (const content of lines) {
+    state = {
+      ...state,
+      chatHistory: [
+        ...state.chatHistory,
+        { role: "user", content, ts: Date.now() },
+      ],
+    };
+  }
+  return state;
+}
+
+const onlineConfirmState = stateAfterUserLinesQ7([
+  "整体是积极的",
+  "好处：节省时间，坏处：容易冲动消费",
+  "好的",
+]);
+const onlineConfirmDecision = resolveHandoffTurnDecision({
+  state: { ...onlineConfirmState, coachContext: { ...onlineConfirmState.coachContext, exploreRound: 3 } },
+  result: { verdict: "coach", advance: false },
+  userMessage: "好的",
+});
+ok(
+  onlineConfirmDecision.shouldPropose ||
+    /六栏|核对|确认整理/.test(
+      [onlineConfirmDecision.coach.ask, onlineConfirmDecision.coach.mirror].join(" "),
+    ),
+  "网购题：用户确认后应进入整理或提示核对六栏",
+);
+
+const onlineFrustrationState = stateAfterUserLinesQ7([
+  "整体是积极的",
+  "好处：节省时间，坏处：容易冲动消费",
+  "这我不是已经回答了吗",
+]);
+const onlineFrustrationDecision = resolveHandoffTurnDecision({
+  state: { ...onlineFrustrationState, coachContext: { ...onlineFrustrationState.coachContext, exploreRound: 3 } },
+  result: { verdict: "coach", advance: false },
+  userMessage: "这我不是已经回答了吗",
+});
+ok(
+  onlineFrustrationDecision.shouldPropose ||
+    /六栏|核对|确认整理/.test(
+      [onlineFrustrationDecision.coach.ask, onlineFrustrationDecision.coach.mirror].join(" "),
+    ),
+  "网购题：用户挫折时应进入整理或提示核对六栏",
+);
+
+const onlineContentReadyState = stateAfterUserLinesQ7([
+  "整体是积极的",
+  "好处：节省时间，坏处：容易冲动消费",
+]);
+const { contentReady: onlineContentReady } = assessExplorationContent(onlineContentReadyState);
+ok(onlineContentReady, "网购题：利弊+立场后 contentReady 为 true");
+
 if (fail) {
   console.error(`\n${fail} failed`);
   process.exit(1);

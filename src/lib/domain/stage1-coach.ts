@@ -63,12 +63,7 @@ function proposalCoachResponse(
 
 export { detectAngleConfusion, needsAngleTeaching } from "./essay-substance";
 
-const FRUSTRATION_RE =
-  /看不懂|不懂你的|不清楚|不明白|已经说|说得很清楚|什么意思|别绕|听不懂/i;
-
-export function detectFrustration(message: string): boolean {
-  return FRUSTRATION_RE.test(message);
-}
+export { detectFrustration } from "@/runtime/shared/frustration";
 
 export function buildExplorationSummary(
   state: SessionState,

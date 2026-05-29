@@ -53,12 +53,24 @@ export function planCoachAsk(
   if (!isRuntimePlanEnforcementEnabled()) return legacyAsk;
   const overlay = overlayRuntimePlanOnCoach(state, result, userMessage, body);
   const q = overlay.coachQuestion?.trim();
-  if (q) return q;
-  if (resolveCoachTurnPlanForSession(state, userMessage, body)?.action === "finalize") {
+  const plan = resolveCoachTurnPlanForSession(state, userMessage, body);
+
+  if (plan?.action === "finalize") {
     const legacy = legacyAsk.trim();
     if (legacy && /六栏|核对|确认整理/.test(legacy)) return legacy;
+    if (q && /六栏|核对|确认整理/.test(q)) return q;
     return finalizeHandoffReviewAsk();
   }
+
+  if (q) return q;
+
+  if (legacyAsk && /好处|优势|benefit/i.test(legacyAsk) && state.subStep === "S1_EVAL") {
+    const world = (plan as { intentHint?: string } | null)?.intentHint;
+    if (world?.includes("handoff_review")) {
+      return finalizeHandoffReviewAsk();
+    }
+  }
+
   return legacyAsk;
 }
 

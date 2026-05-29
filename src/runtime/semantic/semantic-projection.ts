@@ -6,6 +6,23 @@ export type SemanticState = {
   userHasExpressedCompleteIdea: boolean;
 };
 
+/**
+ * SPL 语义占位 token：仅用于 readiness/gate 计数，
+ * 绝不可作为真实 body point 文本写入六栏。
+ */
+export const SEMANTIC_TOKENS = [
+  "convenience_or_efficiency",
+  "risk_or_overconsumption",
+  "implicit_benefit",
+  "implicit_drawback",
+] as const;
+
+export function isSemanticToken(text: string | undefined): boolean {
+  const t = text?.trim() ?? "";
+  if (!t) return false;
+  return (SEMANTIC_TOKENS as readonly string[]).includes(t) || /^[a-z][a-z_]*$/.test(t);
+}
+
 /** Rule-based semantic projection (SPL) — bridges short / untagged user answers to Stage1 gates. */
 export function buildSemanticState(messages: string[]): SemanticState {
   const text = messages.join("\n");

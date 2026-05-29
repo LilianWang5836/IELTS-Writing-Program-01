@@ -5,7 +5,10 @@ import { resolveQuestionHintType } from "./stage1-question-hint";
 import {
   buildConversationalReadiness,
 } from "@/runtime/stage1/conversational-ready";
-import { buildSemanticState } from "@/runtime/semantic/semantic-projection";
+import {
+  buildSemanticState,
+  isSemanticToken,
+} from "@/runtime/semantic/semantic-projection";
 import {
   bodyPointsTooSimilar,
   extractExplorationThemes,
@@ -586,6 +589,7 @@ export function isValidBodyPoint(
   opts?: { conversational?: boolean },
 ): boolean {
   const t = text?.trim() ?? "";
+  if (isSemanticToken(t)) return false;
   const minLen = opts?.conversational ? 4 : 8;
   if (t.length < minLen || t.length > MAX_BODY_POINT_CHARS + 8) return false;
   if (isIncompleteBodyPoint(t, side)) return false;
@@ -868,11 +872,13 @@ export function buildHandoffFromChat(state: SessionState): Stage1Handoff {
       body1Angle = body1Angle || patch.body1Angle || "";
       body2Angle = body2Angle || patch.body2Angle || "";
       position = position || patch.position || "";
-      if (!body1 && themes.benefits.length >= 1) {
-        body1 = themes.benefits[0] ?? "";
+      const realBenefits = themes.benefits.filter((b) => !isSemanticToken(b));
+      const realDrawbacks = themes.drawbacks.filter((d) => !isSemanticToken(d));
+      if (!body1 && realBenefits.length >= 1) {
+        body1 = patch.body1Point || realBenefits[0] || "";
       }
-      if (!body2 && themes.drawbacks.length >= 1) {
-        body2 = themes.drawbacks[0] ?? "";
+      if (!body2 && realDrawbacks.length >= 1) {
+        body2 = patch.body2Point || realDrawbacks[0] || "";
       }
     }
   }

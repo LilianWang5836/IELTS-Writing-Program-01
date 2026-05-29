@@ -13,6 +13,7 @@ import { postProcessStage1 } from "../src/lib/domain/stage1-coach.ts";
 import { resolveHandoffTurnDecision } from "../src/lib/domain/handoff-turn-decision.ts";
 import {
   extractExplorationThemes,
+  getPointRefinementAsk,
   isOpeningExplorationPrompt,
   themesToHandoffPatch,
 } from "../src/lib/domain/stage1-exploration-themes.ts";
@@ -331,6 +332,55 @@ const onlineContentReadyState = stateAfterUserLinesQ7([
 ]);
 const { contentReady: onlineContentReady } = assessExplorationContent(onlineContentReadyState);
 ok(onlineContentReady, "网购题：利弊+立场后 contentReady 为 true");
+
+// ── 完整网购对话：补好处细节 + 坏处细节后不应重复追问“最核心好处” ──────────
+const onlineFullLines = [
+  "积极影响和消极影响哪个更多，我觉得整体上是积极的",
+  "好处：节省时间，坏处：可能导致冲动消费",
+  "工作日忙碌的时候可以不用抽时间去线下购物，可以在通勤路上解决；周末的时间可以用来休息或者做自己爱好的事情",
+  "因为购物变得太容易，冲动消费会变多，买一些实际可能不需要的东西",
+];
+const onlineFullState = stateAfterUserLinesQ7(onlineFullLines);
+
+// 标签短答（Turn2）不应被当成纯立场而丢弃利弊
+const labeledThemes = extractExplorationThemes(
+  stateAfterUserLinesQ7(onlineFullLines.slice(0, 2)),
+  onlineFullLines.slice(0, 2),
+);
+ok(
+  labeledThemes.benefits.length >= 1 && labeledThemes.drawbacks.length >= 1,
+  "网购题：好处：X，坏处：Y 短答利弊不被吞掉",
+);
+
+const onlineFullMsgs = onlineFullState.chatHistory
+  .filter((m) => m.role === "user")
+  .map((m) => m.content);
+const onlineFullThemes = extractExplorationThemes(onlineFullState, onlineFullMsgs);
+ok(
+  getPointRefinementAsk(onlineFullState, onlineFullThemes, onlineFullMsgs) === null,
+  "网购题：好处与坏处都已写实后不再追问分论点细化",
+);
+
+const onlineFullDecision = resolveHandoffTurnDecision({
+  state: {
+    ...onlineFullState,
+    coachContext: { ...onlineFullState.coachContext, exploreRound: 4 },
+  },
+  result: { verdict: "coach", advance: false },
+  userMessage: onlineFullLines[3],
+});
+const onlineFullCoachText = [
+  onlineFullDecision.coach.ask,
+  onlineFullDecision.coach.mirror,
+].join(" ");
+ok(
+  onlineFullDecision.shouldPropose || /六栏|核对|确认整理/.test(onlineFullCoachText),
+  "网购题：补完两侧后应进入整理或提示核对六栏",
+);
+ok(
+  !/最核心的好处|最突出的好处|核心好处/.test(onlineFullCoachText),
+  "网购题：补完两侧后不再重复追问最核心好处",
+);
 
 if (fail) {
   console.error(`\n${fail} failed`);

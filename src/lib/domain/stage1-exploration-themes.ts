@@ -8,6 +8,7 @@ import {
 import { resolveQuestionHintType } from "./stage1-question-hint";
 import {
   buildSemanticState,
+  isSemanticToken,
   type SemanticState,
 } from "@/runtime/semantic/semantic-projection";
 import type { QuestionType, SessionState, Stage1Handoff } from "./types";
@@ -41,9 +42,19 @@ function pushUnique(arr: string[], piece: string): void {
   arr.push(t);
 }
 
+/** 显式标签回答：「好处：X」/「坏处：Y」带实际内容，应进入利弊提取而非视作纯立场 */
+function hasLabeledProsConsContent(message: string): boolean {
+  return (
+    /(?:好处|优势|利)[：:]\s*\S/.test(message) ||
+    /(?:坏处|劣势|弊端?)[：:]\s*\S/.test(message)
+  );
+}
+
 function isExplorationPositionOnlyLine(message: string): boolean {
   const t = message.trim();
   if (t.length > 88) return false;
+  // 带显式标签内容的回答（好处：…，坏处：…）不是纯立场表态
+  if (hasLabeledProsConsContent(t)) return false;
   if (
     /取决于|看情况|部分同意|利大于弊|弊大于利|好处更多|坏处更多|好处多|坏处多|outweigh/i.test(
       t,
@@ -52,6 +63,7 @@ function isExplorationPositionOnlyLine(message: string): boolean {
   ) {
     return true;
   }
+  // 「好处和坏处哪个多」这类比较型提问仍算纯立场；但有标签内容的上面已排除
   if (/好处.*坏处|坏处.*好处/.test(t) && t.length < 36 && !/[。；;]/.test(t)) {
     return true;
   }
@@ -68,15 +80,30 @@ function splitProsConsInMessage(message: string): {
     return { benefitPart: "", drawbackPart: "" };
   }
 
+  const cleanDrawback = (s: string): string =>
+    s.replace(/^(?:坏处|劣势|弊端?)[：:]\s*/gi, "").trim();
+  const cleanBenefit = (s: string): string =>
+    s.replace(/(?:好处|优势|利)[：:]\s*/gi, "").trim();
+
+  // 句号/分号分隔：保留原行为
   const afterPeriod = m.match(
-    /^(.*?)[。；;]\s*(?:坏处|劣势|弊端)[：:，,]?\s*([\s\S]+)$/,
+    /^(.*?)[。；;]\s*(?:坏处|劣势|弊端?)[：:，,]?\s*([\s\S]+)$/,
   );
   if (afterPeriod?.[1] && afterPeriod[2]) {
     return {
-      benefitPart: afterPeriod[1]
-        .replace(/(?:好处|优势|利)[：:]\s*/gi, "")
-        .trim(),
-      drawbackPart: afterPeriod[2].trim(),
+      benefitPart: cleanBenefit(afterPeriod[1]),
+      drawbackPart: cleanDrawback(afterPeriod[2]),
+    };
+  }
+
+  // 中文逗号分隔：仅当好处侧带显式标签时才拆，避免误切普通句子
+  const afterComma = m.match(
+    /^(.*?(?:好处|优势|利)[：:][^，,]*)[，,]\s*(?:坏处|劣势|弊端?)[：:，,]?\s*([\s\S]+)$/,
+  );
+  if (afterComma?.[1] && afterComma[2]) {
+    return {
+      benefitPart: cleanBenefit(afterComma[1]),
+      drawbackPart: cleanDrawback(afterComma[2]),
     };
   }
 
@@ -295,11 +322,11 @@ export function isPointSpecificEnough(text: string | undefined): boolean {
   if (/^(经济|文化)(发展|交流)/.test(compact) && t.length < 20) return false;
 
   const concrete =
-    /游客|居民|当地|本地人|环境|景区|餐馆|交通|垃圾|收入|就业|服务业|道路|生活|时间|线下|消费|网购|便利/.test(
+    /游客|居民|当地|本地人|环境|景区|餐馆|交通|垃圾|收入|就业|服务业|道路|生活|时间|线下|消费|网购|便利|通勤|周末|休息|工作日|购物|爱好|消费者|现代人/.test(
       t,
     );
   const relational =
-    /导致|造成|带来|增加|减少|让|使得|因为|通过|带动|破坏|影响|提升|挤出|造成/.test(
+    /导致|造成|带来|增加|减少|让|使得|因为|通过|带动|破坏|影响|提升|挤出|造成|不用|可以|用来|解决|变多|节省|节约/.test(
       t,
     );
 
@@ -324,13 +351,13 @@ export function userMessageRefinesBody(
   const m = message.trim();
   if (!m) return false;
 
-  const objectRe = /游客|居民|当地|本地人|餐馆|酒店|景区|环境|道路|生活|行业|从业/;
+  const objectRe = /游客|居民|当地|本地人|餐馆|酒店|景区|环境|道路|生活|行业|从业|消费者|现代人|工作日|通勤|周末|时间|购物|人们|大家/;
   const relationalRe =
-    /导致|造成|带来|带动|增加|减少|让|使得|因为|通过|破坏|影响|提升|挤出|促进|促使|扩大|需要/;
+    /导致|造成|带来|带动|增加|减少|让|使得|因为|通过|破坏|影响|提升|挤出|促进|促使|扩大|需要|不用|可以|用来|解决|变多|节省|节约|花费/;
   const benefitKw =
-    /收入|就业|服务业|经济|消费|食宿|餐馆|酒店|带动|促进|文化|交流|收益|购物|餐饮|住宿/;
+    /收入|就业|服务业|经济|消费|食宿|餐馆|酒店|带动|促进|文化|交流|收益|购物|餐饮|住宿|节省时间|省时|节约|通勤|周末|休息|爱好|效率|便利|生活质量/;
   const drawbackKw =
-    /拥堵|堵车|拥挤|垃圾|污染|环境|破坏|不便|影响|耗时|节假日|不良/;
+    /拥堵|堵车|拥挤|垃圾|污染|环境|破坏|不便|影响|耗时|节假日|不良|冲动消费|浪费|不需要|过度|不理性|盲目/;
 
   if (!objectRe.test(m) || !relationalRe.test(m)) return false;
 
@@ -576,8 +603,12 @@ export function themesToHandoffPatch(
   const pro = themes.positionLean === "pro";
   const con = themes.positionLean === "con";
 
-  const benefitText = themes.benefits.join("；");
-  const drawbackText = themes.drawbacks.join("；");
+  // SPL token 仅用于判齐计数，不能作为真实 body 文本
+  const realBenefits = themes.benefits.filter((b) => !isSemanticToken(b));
+  const realDrawbacks = themes.drawbacks.filter((d) => !isSemanticToken(d));
+
+  const benefitText = realBenefits.join("；");
+  const drawbackText = realDrawbacks.join("；");
 
   const body1Kind: SideKind =
     pro || themes.positionLean === "balanced" ? "benefit" : "drawback";
@@ -589,17 +620,17 @@ export function themesToHandoffPatch(
 
   let fallbackBody1 =
     body1Kind === "benefit"
-      ? benefitText || themes.benefits[themes.benefits.length - 1] || ""
-      : drawbackText || themes.drawbacks[themes.drawbacks.length - 1] || "";
+      ? benefitText || realBenefits[realBenefits.length - 1] || ""
+      : drawbackText || realDrawbacks[realDrawbacks.length - 1] || "";
   let fallbackBody2 =
     body2Kind === "benefit"
-      ? benefitText || themes.benefits[themes.benefits.length - 1] || ""
-      : drawbackText || themes.drawbacks[themes.drawbacks.length - 1] || "";
+      ? benefitText || realBenefits[realBenefits.length - 1] || ""
+      : drawbackText || realDrawbacks[realDrawbacks.length - 1] || "";
 
-  if (body2Kind === "drawback" && themes.drawbacks.length === 0) {
+  if (body2Kind === "drawback" && realDrawbacks.length === 0) {
     fallbackBody2 = "";
   }
-  if (body1Kind === "benefit" && themes.benefits.length === 0) {
+  if (body1Kind === "benefit" && realBenefits.length === 0) {
     fallbackBody1 = "";
   }
 
@@ -613,10 +644,10 @@ export function themesToHandoffPatch(
   );
 
   if (body1Point && body2Point && bodyPointsTooSimilar(body1Point, body2Point)) {
-    if (body2Kind === "drawback" && themes.drawbacks.length > 0) {
+    if (body2Kind === "drawback" && realDrawbacks.length > 0) {
       body2Point = trimSnippet(
         isolatePointForSide(
-          themes.drawbacks[themes.drawbacks.length - 1] ?? "",
+          realDrawbacks[realDrawbacks.length - 1] ?? "",
           "drawback",
         ),
         72,
@@ -675,13 +706,13 @@ export function bodyPointsTooSimilar(a: string, b: string): boolean {
 }
 
 export function looksLikeBenefitLine(text: string): boolean {
-  return /收入|就业|经济|带动|服务业|受益|增长|交流|便利|机会|发展|促进/.test(
+  return /收入|就业|经济|带动|服务业|受益|增长|交流|便利|机会|发展|促进|节省时间|省时|节约|线下购物|通勤|周末|休息|爱好|生活质量|碎片时间|效率|更快|更方便/.test(
     text,
   );
 }
 
 export function looksLikeDrawbackLine(text: string): boolean {
-  if (!/拥堵|堵车|拥挤|垃圾|污染|破坏|不便|噪音|成本|压力|影响居民|环境破坏|环境压力/.test(
+  if (!/拥堵|堵车|拥挤|垃圾|污染|破坏|不便|噪音|成本|压力|影响居民|环境破坏|环境压力|冲动消费|浪费|不需要|过度购买|不理性|盲目/.test(
     text,
   )) {
     return false;
@@ -689,7 +720,7 @@ export function looksLikeDrawbackLine(text: string): boolean {
   if (/环境/.test(text) && /破坏|污染|垃圾|压力|破坏/.test(text)) {
     return true;
   }
-  return /拥堵|堵车|拥挤|垃圾|污染|破坏|不便|噪音|成本|压力|影响居民/.test(
+  return /拥堵|堵车|拥挤|垃圾|污染|破坏|不便|噪音|成本|压力|影响居民|冲动消费|浪费|不需要|过度购买|不理性|盲目/.test(
     text,
   );
 }

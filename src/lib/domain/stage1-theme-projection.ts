@@ -133,7 +133,9 @@ export function rulesFactsFromUserMessage(message: string): LlmSemanticProjectio
   let stance: Stage1Stance = "unknown";
   if (inferred === "pro") stance = "positive";
   else if (inferred === "con") stance = "negative";
-  else if (inferred === "balanced") stance = "mixed";
+  else if (/利弊相当|各有优劣|利.*弊.*相当|mixed|balanced/i.test(text)) {
+    stance = "mixed";
+  }
 
   const projected = projectConceptsFromText(text);
   const facts: SemanticFactRaw[] = [];
@@ -245,7 +247,7 @@ export function mergeMonotonicSemanticState(
     benefit,
     drawback,
     stance,
-    concepts: [...conceptSet],
+    concepts: Array.from(conceptSet),
     source: meta.source,
     turnIndex: meta.turnIndex,
     readyToFinalize: base.readyToFinalize ?? false,

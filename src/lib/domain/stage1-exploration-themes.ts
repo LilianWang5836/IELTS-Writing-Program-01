@@ -23,6 +23,8 @@ import {
   looksLikeBenefitLine,
   looksLikeDrawbackLine,
 } from "@/runtime/semantic/theme-normalization";
+import { normalizeFactToCanonical } from "@/runtime/semantic/stage1-fact-normalization";
+import type { Stage1ConceptId } from "@/runtime/semantic/theme-normalization";
 import {
   splitProsConsInMessage,
 } from "./stage1-snippet-harvest";
@@ -50,12 +52,24 @@ function trimSnippet(s: string, max = 48): string {
   return `${t.slice(0, max - 1)}…`;
 }
 
+function projectionConceptIds(
+  ids: string[],
+  side: "benefit" | "drawback",
+): Stage1ConceptId[] {
+  const out: Stage1ConceptId[] = [];
+  for (const id of ids) {
+    const canonical = normalizeFactToCanonical(id, side);
+    if (canonical && !out.includes(canonical)) out.push(canonical);
+  }
+  return out;
+}
+
 function semanticFromProjection(
   projection: Stage1ThemeProjection,
 ): SemanticState {
   return {
-    benefits: [...projection.benefit],
-    drawbacks: [...projection.drawback],
+    benefits: projectionConceptIds(projection.benefit, "benefit"),
+    drawbacks: projectionConceptIds(projection.drawback, "drawback"),
     positionLean: (() => {
       const lean = stanceToPositionLean(projection.stance);
       return lean === "balanced" ? "unknown" : lean;

@@ -1,6 +1,12 @@
+import {
+  inferPositionFromText,
+  projectConceptsFromMessages,
+  type Stage1ConceptId,
+} from "./theme-normalization";
+
 export type SemanticState = {
-  benefits: string[];
-  drawbacks: string[];
+  benefits: Stage1ConceptId[];
+  drawbacks: Stage1ConceptId[];
   positionLean: "pro" | "con" | "unknown";
   /** 用户已表达可写作的完整语义（非仅 regex 标签） */
   userHasExpressedCompleteIdea: boolean;
@@ -11,10 +17,18 @@ export type SemanticState = {
  * 绝不可作为真实 body point 文本写入六栏。
  */
 export const SEMANTIC_TOKENS = [
-  "convenience_or_efficiency",
-  "risk_or_overconsumption",
+  "convenience",
+  "time_saving",
+  "economic_growth",
+  "cultural_exchange",
+  "impulse_buying",
+  "environment_damage",
+  "traffic_congestion",
   "implicit_benefit",
   "implicit_drawback",
+  // legacy aliases still recognized by isSemanticToken
+  "convenience_or_efficiency",
+  "risk_or_overconsumption",
 ] as const;
 
 export function isSemanticToken(text: string | undefined): boolean {
@@ -23,45 +37,31 @@ export function isSemanticToken(text: string | undefined): boolean {
   return (SEMANTIC_TOKENS as readonly string[]).includes(t) || /^[a-z][a-z_]*$/.test(t);
 }
 
-/** Rule-based semantic projection (SPL) — bridges short / untagged user answers to Stage1 gates. */
+/**
+ * Rule-based semantic projection (SPL) — Theme Normalization Layer.
+ * Bridges short / untagged user answers to Stage1 runtime state concepts.
+ */
 export function buildSemanticState(messages: string[]): SemanticState {
   const text = messages.join("\n");
+  const projected = projectConceptsFromMessages(messages);
 
-  const hasPositiveMeaning =
-    /节约|方便|便利|省时间|不用.*线下|效率|更快|更容易|省时|购物.*方便|网购/.test(
-      text,
-    );
+  const benefits = [...projected.benefits];
+  const drawbacks = [...projected.drawbacks];
 
-  const hasNegativeMeaning =
-    /冲动消费|浪费|麻烦|增加.*成本|不理性|过度|破坏|环境|拥堵|垃圾|污染/.test(
-      text,
-    );
+  const positionLean = inferPositionFromText(
+    [text, ...messages].join("\n"),
+  );
 
   const hasPosition =
-    /总体.*积极|总体.*消极|我认为.*好|我认为.*坏|整体.*好处|好处更多|利大于弊|积极/.test(
-      text,
-    );
+    positionLean !== "unknown" ||
+    /我认为|整体|总体|积极|消极/.test(text);
 
-  const benefits: string[] = [];
-  const drawbacks: string[] = [];
-
-  if (hasPositiveMeaning) {
-    benefits.push("convenience_or_efficiency");
+  if (benefits.length === 0 && hasPosition && positionLean === "pro") {
+    benefits.push("implicit_benefit");
   }
-
-  if (hasNegativeMeaning) {
-    drawbacks.push("risk_or_overconsumption");
-  }
-
-  const positionLean: SemanticState["positionLean"] =
-    /积极|好处多|利大于弊|好处更多|整体.*好处/i.test(text)
-      ? "pro"
-      : /消极|弊大于利|坏处更多/i.test(text)
-        ? "con"
-        : "unknown";
 
   const userHasExpressedCompleteIdea =
-    hasPositiveMeaning || hasNegativeMeaning || hasPosition;
+    benefits.length > 0 || drawbacks.length > 0 || hasPosition;
 
   return {
     benefits,

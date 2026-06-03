@@ -72,6 +72,9 @@ import type { BodyKey, WorkshopBodyKey } from "@/lib/domain/types";
 import { formatCoachDisplay } from "@/lib/llm/guard";
 import { callLlm, callLlmJson } from "@/lib/llm/client";
 import { buildFullPrompt } from "@/lib/prompts/loader";
+import {
+  ensureStage1ThemeProjection,
+} from "@/runtime/semantic/stage1-llm-projection";
 import { markerWhenAdvance, shouldAdvance } from "./advance";
 import {
   afterBodyCheck,
@@ -658,7 +661,10 @@ function buildVars(
         themesComplete: themes.themesComplete,
         readyToFinalize: themes.readyToFinalize,
         positionLean: themes.positionLean,
+        benefits: themes.benefits,
+        drawbacks: themes.drawbacks,
       },
+      stage1ThemeProjection: state.coachContext?.stage1ThemeProjection ?? null,
       explorationMemory: buildExplorationMemorySummary(state, themes),
       rewriteContext: {
         gaps: substance.gaps,
@@ -1242,6 +1248,8 @@ export async function handleTurn(
         canSubmit: true,
       };
     }
+
+    s = await ensureStage1ThemeProjection(s);
   }
 
   if (

@@ -154,6 +154,29 @@ export interface Blueprint {
 
 export type HandoffPhase = "exploring" | "proposed" | "editing" | "locked";
 
+/** Stage1 LLM/rule semantic projection — canonical benefit/drawback concepts */
+export interface Stage1ThemeProjection {
+  benefit: string[];
+  drawback: string[];
+  stance: "positive" | "negative" | "mixed" | "unknown";
+  benefitSnippets?: string[];
+  drawbackSnippets?: string[];
+  /** Pre-merged display list (concepts + snippets); sole source for downstream reads */
+  benefits: string[];
+  drawbacks: string[];
+  positionLean: "pro" | "con" | "balanced" | "unknown";
+  themesComplete: boolean;
+  readyToFinalize: boolean;
+  /** LLM-extracted discourse tags (optional metadata) */
+  topics?: string[];
+  confidence?: {
+    benefits?: number;
+    drawbacks?: number;
+  };
+  source: "llm" | "rules";
+  turnIndex?: number;
+}
+
 export interface CoachContext {
   sentenceIssue?: {
     kind: string;
@@ -207,6 +230,8 @@ export interface CoachContext {
   chainStepAskCount?: number;
   /** Stage2 上一次追问的环节 */
   chainLastAskedStep?: "claim" | "reason" | "example" | "link" | "ready";
+  /** Stage1 hybrid runtime: LLM semantic theme projection (canonical concepts) */
+  stage1ThemeProjection?: Stage1ThemeProjection;
 }
 
 export interface SessionState {

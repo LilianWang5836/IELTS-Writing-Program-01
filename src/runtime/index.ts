@@ -12,4 +12,23 @@ export {
   isRuntimePlanEnforcementEnabled,
 } from "./generation/apply-plan-to-result";
 export { buildSemanticState, type SemanticState } from "./semantic/semantic-projection";
+export {
+  ensureStage1ThemeProjection,
+  refreshStage1ThemeProjection,
+  projectStage1ThemesWithLlm,
+  buildStage1ProjectionPrompt,
+} from "./semantic/stage1-llm-projection";
+export {
+  isStage1LlmProjectionEnabled,
+  sanitizeLlmThemeProjection,
+  projectStage1ThemesFromRules,
+  resolveStage1ThemeProjection,
+  resolveStage1ThemeConcepts,
+  syncStage1ThemeProjection,
+  stanceToPositionLean,
+  projectionThemesComplete,
+  type Stage1Stance,
+  type Stage1ThemeProjection,
+} from "./semantic/stage1-theme-resolution";
+export { STAGE1_CONCEPT_CATALOG } from "./semantic/stage1-concept-catalog";
 export { serializeArbitratedPlan } from "./model/capability-profile";

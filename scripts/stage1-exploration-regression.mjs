@@ -14,9 +14,15 @@ import { resolveHandoffTurnDecision } from "../src/lib/domain/handoff-turn-decis
 import {
   extractExplorationThemes,
   getPointRefinementAsk,
+  isExplorationQuestionRedundant,
   isOpeningExplorationPrompt,
   themesToHandoffPatch,
 } from "../src/lib/domain/stage1-exploration-themes.ts";
+import {
+  commitStage1ThemeProjection,
+  sanitizeLlmThemeProjection,
+} from "../src/lib/domain/stage1-theme-projection.ts";
+import { enrichStage1ThemeProjection } from "../src/lib/domain/stage1-exploration-themes.ts";
 import {
   resolveQuestionHintType,
   topicImpliesProsConsWeighing,
@@ -431,6 +437,99 @@ ok(
 ok(
   !/最核心的好处|最突出的好处|核心好处/.test(naturalOut),
   "postProcess：runtime enforce 下不透传 LLM 重复好处问",
+);
+
+// ── 真实 Session：「冲动购物」应归一化为 impulse_buying，Turn4 不再重复问坏处 ──
+const impulseShoppingLines = [
+  "讨论一个现象是积极的还是消极的，我觉得整体上是积极的",
+  "有一些不好的方面，但是不严重",
+  "可能会让冲动购物变多",
+  "整体让购物变方便了，不用专门抽时间去线下，节约了时间，想买的时候随时就可以下单",
+];
+const impulseState = stateAfterUserLinesQ7(impulseShoppingLines);
+const impulseMsgs = impulseState.chatHistory
+  .filter((m) => m.role === "user")
+  .map((m) => m.content);
+const impulseThemes = extractExplorationThemes(impulseState, impulseMsgs);
+ok(
+  impulseThemes.drawbacks.some(
+    (d) => d === "impulse_buying" || /冲动购物/.test(d),
+  ),
+  "网购题：「冲动购物」归一化进 drawbacks",
+);
+ok(impulseThemes.themesComplete, "网购题：冲动购物 Session 四轮后 themesComplete");
+ok(
+  isExplorationQuestionRedundant(
+    "既然你认为整体是积极的，那为了论证更全面，你觉得网购的兴起有没有什么潜在的坏处或负面影响呢？",
+    impulseThemes,
+  ),
+  "网购题：利弊齐后重复坏处问应判 redundant",
+);
+
+const impulseDecision = resolveHandoffTurnDecision({
+  state: {
+    ...impulseState,
+    coachContext: { ...impulseState.coachContext, exploreRound: 4 },
+  },
+  result: { verdict: "coach", advance: false },
+  userMessage: impulseShoppingLines[3],
+});
+const impulseCoachText = [
+  impulseDecision.coach.ask,
+  impulseDecision.coach.mirror,
+].join(" ");
+ok(
+  impulseDecision.shouldPropose ||
+    /六栏|核对|确认整理/.test(impulseCoachText),
+  "网购题：冲动购物 Session 补完美处后应进入整理",
+);
+ok(
+  !/潜在的坏处|不利影响|什么.*坏处/.test(impulseDecision.coach.ask ?? ""),
+  "网购题：冲动购物 Session 不应再追问坏处",
+);
+
+// ── LLM projection path（模拟 stored projection = SOURCE OF TRUTH）──
+const llmCommitted = commitStage1ThemeProjection(impulseState, impulseMsgs, {
+  llmRaw: {
+    benefits: ["convenience", "time_saving"],
+    drawbacks: ["impulse_buying"],
+    stance: "positive",
+    topics: ["online_shopping"],
+    confidence: { benefits: 0.9, drawbacks: 0.85 },
+  },
+  source: "llm",
+});
+const llmProj = enrichStage1ThemeProjection(llmCommitted, impulseState, impulseMsgs);
+const impulseLlmState = {
+  ...impulseState,
+  coachContext: {
+    ...impulseState.coachContext,
+    exploreRound: 4,
+    stage1ThemeProjection: llmProj,
+  },
+};
+const impulseLlmThemes = extractExplorationThemes(impulseLlmState, impulseMsgs);
+ok(
+  impulseLlmThemes.drawbacks.includes("impulse_buying"),
+  "LLM projection：drawback 概念写入 runtime state",
+);
+ok(impulseLlmThemes.themesComplete, "LLM projection：themesComplete 由 concept 驱动");
+ok(
+  sanitizeLlmThemeProjection({
+    benefits: ["convenience", "not_a_real_concept"],
+    drawbacks: ["impulse_buying", "fake_drawback"],
+    stance: "positive",
+  }).benefit.length === 1,
+  "LLM projection：sanitize 过滤未知 concept",
+);
+ok(
+  sanitizeLlmThemeProjection({ drawbacks: ["冲动购物"], benefits: [], stance: "unclear" })
+    .drawback.includes("impulse_buying"),
+  "LLM projection：中文 surface form 归一化为 canonical id",
+);
+ok(
+  sanitizeLlmThemeProjection({ stance: "unclear" }).stance === "unknown",
+  "LLM projection：unclear stance 映射为 unknown",
 );
 
 if (fail) {

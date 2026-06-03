@@ -1,5 +1,5 @@
 /**
- * Stage1 探索：从聊天提取利弊/立场主题，供判齐、防重复问、按立场分配 Body。
+ * Stage1 探索：compatibility layer over stage1ThemeProjection (single source of truth).
  */
 import {
   brainstormFallback,
@@ -7,13 +7,23 @@ import {
 } from "./stage1-exploration";
 import { resolveQuestionHintType } from "./stage1-question-hint";
 import {
-  buildSemanticState,
+  getStage1ThemeProjection,
+  stanceToPositionLean,
+} from "@/lib/domain/stage1-theme-projection";
+import {
   isSemanticToken,
   type SemanticState,
 } from "@/runtime/semantic/semantic-projection";
-import type { QuestionType, SessionState, Stage1Handoff } from "./types";
+import {
+  looksLikeBenefitLine,
+  looksLikeDrawbackLine,
+} from "@/runtime/semantic/theme-normalization";
+import {
+  splitProsConsInMessage,
+} from "./stage1-snippet-harvest";
+import type { QuestionType, SessionState, Stage1Handoff, Stage1ThemeProjection } from "./types";
 
-export type PositionLean = "pro" | "con" | "balanced" | "unknown";
+export type PositionLean = Stage1ThemeProjection["positionLean"];
 
 export interface ExplorationThemes {
   benefits: string[];
@@ -35,95 +45,65 @@ function trimSnippet(s: string, max = 48): string {
   return `${t.slice(0, max - 1)}…`;
 }
 
-function pushUnique(arr: string[], piece: string): void {
-  const t = trimSnippet(piece);
-  if (t.length < 4) return;
-  if (arr.some((x) => x === t || x.includes(t) || t.includes(x))) return;
-  arr.push(t);
+function semanticFromProjection(
+  projection: Stage1ThemeProjection,
+): SemanticState {
+  return {
+    benefits: [...projection.benefit],
+    drawbacks: [...projection.drawback],
+    positionLean: (() => {
+      const lean = stanceToPositionLean(projection.stance);
+      return lean === "balanced" ? "unknown" : lean;
+    })(),
+    userHasExpressedCompleteIdea:
+      projection.benefit.length > 0 ||
+      projection.drawback.length > 0 ||
+      projection.stance !== "unknown",
+  };
 }
 
-/** 显式标签回答：「好处：X」/「坏处：Y」带实际内容，应进入利弊提取而非视作纯立场 */
-function hasLabeledProsConsContent(message: string): boolean {
-  return (
-    /(?:好处|优势|利)[：:]\s*\S/.test(message) ||
-    /(?:坏处|劣势|弊端?)[：:]\s*\S/.test(message)
-  );
+function explorationThemesFromProjection(
+  projection: Stage1ThemeProjection,
+): ExplorationThemes {
+  return {
+    benefits: projection.benefits,
+    drawbacks: projection.drawbacks,
+    positionLean: projection.positionLean,
+    themesComplete: projection.themesComplete,
+    readyToFinalize: projection.readyToFinalize,
+    semantic: semanticFromProjection(projection),
+  };
 }
 
-function isExplorationPositionOnlyLine(message: string): boolean {
-  const t = message.trim();
-  if (t.length > 88) return false;
-  // 带显式标签内容的回答（好处：…，坏处：…）不是纯立场表态
-  if (hasLabeledProsConsContent(t)) return false;
-  if (
-    /取决于|看情况|部分同意|利大于弊|弊大于利|好处更多|坏处更多|好处多|坏处多|outweigh/i.test(
-      t,
-    ) &&
-    !/例如|比如|因为|所以|促进|破坏|导致|收入|就业|环境|游客|景区|居民/i.test(t)
-  ) {
-    return true;
+/** Set readyToFinalize once at write time (refinement gate — not concept mapping). */
+export function enrichStage1ThemeProjection(
+  projection: Stage1ThemeProjection,
+  state: SessionState,
+  msgs: string[],
+): Stage1ThemeProjection {
+  if (!projection.themesComplete) {
+    return { ...projection, readyToFinalize: false };
   }
-  // 「好处和坏处哪个多」这类比较型提问仍算纯立场；但有标签内容的上面已排除
-  if (/好处.*坏处|坏处.*好处/.test(t) && t.length < 36 && !/[。；;]/.test(t)) {
-    return true;
-  }
-  return false;
+
+  const themesSnapshot = explorationThemesFromProjection(projection);
+  const readyToFinalize =
+    isBodyRefinementSatisfied("body1", themesSnapshot, state, msgs) &&
+    isBodyRefinementSatisfied("body2", themesSnapshot, state, msgs);
+
+  return { ...projection, readyToFinalize };
 }
 
-/** 同条消息里「好处…。坏处，…」拆开，避免整句写入 Body1 */
-function splitProsConsInMessage(message: string): {
-  benefitPart: string;
-  drawbackPart: string;
-} {
-  const m = message.trim();
-  if (!m || isExplorationPositionOnlyLine(m)) {
-    return { benefitPart: "", drawbackPart: "" };
-  }
-
-  const cleanDrawback = (s: string): string =>
-    s.replace(/^(?:坏处|劣势|弊端?)[：:]\s*/gi, "").trim();
-  const cleanBenefit = (s: string): string =>
-    s.replace(/(?:好处|优势|利)[：:]\s*/gi, "").trim();
-
-  // 句号/分号分隔：保留原行为
-  const afterPeriod = m.match(
-    /^(.*?)[。；;]\s*(?:坏处|劣势|弊端?)[：:，,]?\s*([\s\S]+)$/,
-  );
-  if (afterPeriod?.[1] && afterPeriod[2]) {
-    return {
-      benefitPart: cleanBenefit(afterPeriod[1]),
-      drawbackPart: cleanDrawback(afterPeriod[2]),
-    };
-  }
-
-  // 中文逗号分隔：仅当好处侧带显式标签时才拆，避免误切普通句子
-  const afterComma = m.match(
-    /^(.*?(?:好处|优势|利)[：:][^，,]*)[，,]\s*(?:坏处|劣势|弊端?)[：:，,]?\s*([\s\S]+)$/,
-  );
-  if (afterComma?.[1] && afterComma[2]) {
-    return {
-      benefitPart: cleanBenefit(afterComma[1]),
-      drawbackPart: cleanDrawback(afterComma[2]),
-    };
-  }
-
-  // 自然转折：「A，但是/然而/不过 B」（如「网购能节省时间，但是会增加冲动消费」）
-  const afterBut = m.match(/^(.*?)[，,]?\s*(?:但是|然而|不过|但)\s*([\s\S]+)$/);
-  if (afterBut?.[1] && afterBut[2]) {
-    const benefitPart = afterBut[1].trim();
-    const drawbackPart = afterBut[2].trim();
-    const benefitish =
-      looksLikeBenefitLine(benefitPart) ||
-      /节省|省时|方便|便利|效率|更快/.test(benefitPart);
-    const drawbackish =
-      looksLikeDrawbackLine(drawbackPart) ||
-      /冲动|浪费|过度|不理性|盲目|增加.*消费/.test(drawbackPart);
-    if (benefitish && drawbackish) {
-      return { benefitPart, drawbackPart };
-    }
-  }
-
-  return { benefitPart: "", drawbackPart: "" };
+/** Reads stage1ThemeProjection STATE only — no concept re-merge. */
+export function extractExplorationThemes(
+  state: SessionState,
+  msgs: string[],
+): ExplorationThemes {
+  const projection = getStage1ThemeProjection(state, msgs);
+  const enriched =
+    projection.themesComplete && !projection.readyToFinalize
+      ? enrichStage1ThemeProjection(projection, state, msgs)
+      : projection;
+  return explorationThemesFromProjection(enriched);
 }
 
 /** 利大于弊题：从混合句或 LLM 草案中只保留该 Body 对应一侧 */
@@ -166,70 +146,6 @@ function isolatePointForSide(text: string, kind: SideKind): string {
   return "";
 }
 
-function extractLabeledParts(message: string): {
-  benefits: string[];
-  drawbacks: string[];
-} {
-  const benefits: string[] = [];
-  const drawbacks: string[] = [];
-  const m = message.trim();
-  if (isExplorationPositionOnlyLine(m)) {
-    return { benefits: [], drawbacks: [] };
-  }
-
-  const split = splitProsConsInMessage(m);
-  if (split.benefitPart) pushUnique(benefits, split.benefitPart);
-  if (split.drawbackPart) pushUnique(drawbacks, split.drawbackPart);
-  const rest = split.benefitPart || split.drawbackPart ? "" : m;
-
-  const benefitAfter = rest.match(/(?:好处|优势|利)[：:]\s*([^；;\n]+)/);
-  if (benefitAfter?.[1]) {
-    const cleaned = benefitAfter[1].split(/[，,]\s*(?:坏处|劣势|弊)/)[0].trim();
-    pushUnique(benefits, cleaned);
-  }
-
-  const drawbackAfter = m.match(/(?:坏处|劣势|弊|弊端)[：:，,]?\s*([^；;\n]+)/);
-  if (drawbackAfter?.[1]) {
-    const cleaned = drawbackAfter[1].split(/[，,]\s*(?:好处|优势)/)[0].trim();
-    pushUnique(drawbacks, cleaned);
-  }
-
-  const beforeDrawback = rest.split(/(?:坏处|劣势|弊|弊端)[：:]/)[0];
-  if (/好处|优势/.test(beforeDrawback) && !benefitAfter) {
-    const chunk = beforeDrawback.replace(/.*(?:好处|优势)[：:]?\s*/, "");
-    if (chunk.length > 4) pushUnique(benefits, chunk);
-  }
-
-  const src = rest || m;
-  if (/拥堵|堵车|拥挤/.test(src) && !/好处|优势/.test(src.slice(0, 8))) {
-    pushUnique(drawbacks, src.match(/拥堵[^，,。；;]*/)?.[0] ?? "交通拥堵、出行不便");
-  }
-  if (/垃圾|污染|环境破坏|环境压力/.test(src)) {
-    pushUnique(
-      drawbacks,
-      src.match(/[^，,。；;]*(?:垃圾|污染|环境破坏|环境压力)[^，,。；;]*/)?.[0] ??
-        "旅游带来的环境压力",
-    );
-  } else if (/环境/.test(src) && /破坏|污染|垃圾|压力/.test(src)) {
-    pushUnique(
-      drawbacks,
-      src.match(/[^，,。；;]*环境[^，,。；;]*/)?.[0] ?? "旅游带来的环境压力",
-    );
-  }
-  if (
-    /收入|服务业|带动|就业|经济|发展/.test(src) &&
-    !/(?:坏处|劣势|弊|弊端)/.test(src)
-  ) {
-    pushUnique(
-      benefits,
-      src.match(/[^，,。；;]*(?:收入|服务业|带动|发展)[^，,。；;]*/)?.[0] ??
-        src.slice(0, 40),
-    );
-  }
-
-  return { benefits, drawbacks };
-}
-
 export function inferPositionLean(blob: string): PositionLean {
   if (/弊大于利|坏处更多|劣势更大|disadvantages?\s+outweigh/i.test(blob)) {
     return "con";
@@ -243,89 +159,6 @@ export function inferPositionLean(blob: string): PositionLean {
   }
   if (/各有|都有|平衡|相当/i.test(blob)) return "balanced";
   return "unknown";
-}
-
-export function extractExplorationThemes(
-  state: SessionState,
-  msgs: string[],
-): ExplorationThemes {
-  const benefits: string[] = [];
-  const drawbacks: string[] = [];
-  const blob = msgs.join("\n");
-
-  for (const m of msgs) {
-    const { benefits: b, drawbacks: d } = extractLabeledParts(m);
-    for (const x of b) pushUnique(benefits, x);
-    for (const x of d) pushUnique(drawbacks, x);
-  }
-
-  const semantic = buildSemanticState(msgs);
-
-  for (const token of semantic.benefits) {
-    if (!benefits.includes(token)) benefits.push(token);
-  }
-  for (const token of semantic.drawbacks) {
-    if (!drawbacks.includes(token)) drawbacks.push(token);
-  }
-
-  if (benefits.length === 0 && semantic.userHasExpressedCompleteIdea) {
-    benefits.push("implicit_benefit");
-  }
-  if (drawbacks.length === 0 && semantic.userHasExpressedCompleteIdea && semantic.drawbacks.length > 0) {
-    drawbacks.push("implicit_drawback");
-  } else if (
-    drawbacks.length === 0 &&
-    semantic.userHasExpressedCompleteIdea &&
-    /冲动消费|浪费|破坏|环境|拥堵|垃圾|污染/.test(blob)
-  ) {
-    drawbacks.push("implicit_drawback");
-  }
-
-  let positionLean =
-    inferPositionLean(
-      [blob, state.handoff?.position ?? "", state.s1?.position ?? ""].join("\n"),
-    );
-  if (positionLean === "unknown" && semantic.positionLean !== "unknown") {
-    positionLean = semantic.positionLean;
-  }
-
-  const regexThemesComplete =
-    benefits.length >= 1 &&
-    drawbacks.length >= 1 &&
-    positionLean !== "unknown" &&
-    (benefits.length + drawbacks.length >= 2 || blob.length >= 50);
-
-  const splThemesComplete =
-    semantic.userHasExpressedCompleteIdea &&
-    semantic.positionLean !== "unknown" &&
-    benefits.length >= 1 &&
-    drawbacks.length >= 1;
-
-  const themesComplete = splThemesComplete || regexThemesComplete;
-
-  let readyToFinalize = false;
-  if (themesComplete) {
-    const themesSnapshot = {
-      benefits,
-      drawbacks,
-      positionLean,
-      themesComplete,
-      readyToFinalize: false,
-      semantic,
-    };
-    readyToFinalize =
-      isBodyRefinementSatisfied("body1", themesSnapshot, state, msgs) &&
-      isBodyRefinementSatisfied("body2", themesSnapshot, state, msgs);
-  }
-
-  return {
-    benefits,
-    drawbacks,
-    positionLean,
-    themesComplete,
-    readyToFinalize,
-    semantic,
-  };
 }
 
 const VAGUE_POINT_RE =
@@ -378,7 +211,7 @@ export function userMessageRefinesBody(
   const benefitKw =
     /收入|就业|服务业|经济|消费|食宿|餐馆|酒店|带动|促进|文化|交流|收益|购物|餐饮|住宿|节省时间|省时|节约|通勤|周末|休息|爱好|效率|便利|生活质量/;
   const drawbackKw =
-    /拥堵|堵车|拥挤|垃圾|污染|环境|破坏|不便|影响|耗时|节假日|不良|冲动消费|浪费|不需要|过度|不理性|盲目/;
+    /拥堵|堵车|拥挤|垃圾|污染|环境|破坏|不便|影响|耗时|节假日|不良|冲动购物|冲动消费|浪费|不需要|过度|不理性|盲目|乱花钱/;
 
   if (!objectRe.test(m) || !relationalRe.test(m)) return false;
 
@@ -726,25 +559,7 @@ export function bodyPointsTooSimilar(a: string, b: string): boolean {
   return false;
 }
 
-export function looksLikeBenefitLine(text: string): boolean {
-  return /收入|就业|经济|带动|服务业|受益|增长|交流|便利|机会|发展|促进|节省时间|省时|节约|线下购物|通勤|周末|休息|爱好|生活质量|碎片时间|效率|更快|更方便/.test(
-    text,
-  );
-}
-
-export function looksLikeDrawbackLine(text: string): boolean {
-  if (!/拥堵|堵车|拥挤|垃圾|污染|破坏|不便|噪音|成本|压力|影响居民|环境破坏|环境压力|冲动消费|浪费|不需要|过度购买|不理性|盲目/.test(
-    text,
-  )) {
-    return false;
-  }
-  if (/环境/.test(text) && /破坏|污染|垃圾|压力|破坏/.test(text)) {
-    return true;
-  }
-  return /拥堵|堵车|拥挤|垃圾|污染|破坏|不便|噪音|成本|压力|影响居民|冲动消费|浪费|不需要|过度购买|不理性|盲目/.test(
-    text,
-  );
-}
+export { looksLikeBenefitLine, looksLikeDrawbackLine } from "@/runtime/semantic/theme-normalization";
 
 function pickLatestSpecificPoint(msgs: string[], kind: SideKind): string {
   for (let i = msgs.length - 1; i >= 0; i--) {

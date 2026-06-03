@@ -167,7 +167,9 @@ function linkQualityScore(s: string, body: WorkshopBodyKey): number {
 }
 
 export function hasExampleLead(s: string): boolean {
-  return /例如|比如|举例\s*[:：]|比方说/.test(s.trim());
+  return /例如|比如|举例\s*[:：]|比方说|for example|e\.g\.|such as/i.test(
+    s.trim(),
+  );
 }
 
 /** 因果/机制句（无例如标记）不应算作 Example，即使出现「项目」等词 */

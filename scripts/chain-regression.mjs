@@ -9,8 +9,11 @@ import {
 } from "../src/lib/domain/chain-turn-decision.ts";
 import {
   aggregateCoverage,
+  appendDiscourseTurn,
+  argmaxSignalGap,
   assessParagraphCoverage,
   buildDiscourseMemory,
+  computeSignalGaps,
   detectFunctionsFromSentence,
   getNextNeed,
   hasFunctionalClosure,
@@ -320,20 +323,23 @@ ok(
   "reason 不被收束句覆盖",
 );
 
-const reasonFns = detectFunctionsFromSentence(reason, "body1");
+const reasonSignals = detectFunctionsFromSentence(reason, "body1");
 ok(
-  reasonFns.some((f) => f.type === "causal" && f.strength >= 0.7),
+  reasonSignals.causal >= 0.7,
   "课本句含 causal ≥0.7",
 );
 ok(
-  reasonFns.some((f) => f.type === "grounding" && f.strength < 0.6),
+  reasonSignals.grounding < 0.6,
   "课本句 grounding 未达标（仅提到项目）",
 );
 const reasonCov = aggregateCoverage(
   buildDiscourseMemory([reason], "body1", "大学应教授实用技能"),
   "body1",
 );
-ok(getNextNeed(reasonCov) === "grounding", "reason 句后 next need 为 grounding");
+ok(
+  getNextNeed(reasonCov) === "closure",
+  "RFC-3 reason 句后 argmax gap 为 closure（closure score=0）",
+);
 ok(needToBuildStep("grounding") === "example", "grounding need → example 步");
 
 const reasonOnlyDecision = resolveChainTurnDecision({
@@ -358,12 +364,12 @@ const reasonOnlyDecision = resolveChainTurnDecision({
   lastQuestion: "",
 });
 ok(
-  reasonOnlyDecision.advanceTo === "example",
-  "仅 reason 句时 advanceTo 为 example（要补 grounding）",
+  reasonOnlyDecision.advanceTo === "link",
+  "RFC-3 reason 句后 closure gap 最大 → advanceTo link",
 );
 ok(
-  !/段末收束|Link/i.test(reasonOnlyDecision.coach.ask || ""),
-  "grounding 不足时不追问 Link",
+  reasonOnlyDecision.currentNeed === "closure",
+  "RFC-3 reason 句 primaryNeed 为 closure",
 );
 
 ok(detectChainUserIntent("所以呢") === "clarify", "所以呢 走 clarify intent");
@@ -479,6 +485,67 @@ const tourismSub = assessParagraphSubstance(tourismState, "body1", undefined, {
 ok(
   tourismSub.sufficient || tourismSub.gaps.every((g) => g.startsWith("可选收束")),
   "旅游题 substance 不因缺独立 link 槽而卡死",
+);
+
+const tourismTurn1 =
+  "原因：游客变多之后，餐饮住宿购物的需求也变大。因此，餐厅酒店等能赚更多钱，另外一方面，他们会雇佣更多的人手。因此，旅游业发展能促进当地经济发展，同时提高居民的收入";
+const tourismClaimB =
+  "国际旅游能促进当地经济发展，增加居民的实际收入。";
+let tourismAppendMem = buildDiscourseMemory([], "body1", tourismClaimB);
+tourismAppendMem = appendDiscourseTurn(
+  tourismAppendMem,
+  tourismTurn1,
+  "body1",
+);
+const tourismAppendCov = aggregateCoverage(tourismAppendMem, "body1");
+ok(
+  tourismAppendCov.causal >= 0.7,
+  "旅游 Body1 首句 append 路径 causal ≥0.7",
+);
+ok(
+  getNextNeed(tourismAppendCov) !== "causal",
+  "旅游 Body1 首句后 nextNeed 不再卡在 causal",
+);
+
+const enClaim = "International tourism improves local economy.";
+const enCase1 = detectFunctionsFromSentence(
+  "Because tourism increases, local economy improves.",
+  "body1",
+  enClaim,
+);
+ok(enCase1.causal > 0.8, "RFC-2 EN case1: because → causal > 0.8");
+const enCase2 = detectFunctionsFromSentence(
+  "In conclusion, tourism benefits society.",
+  "body1",
+  enClaim,
+);
+ok(enCase2.closure > 0.8, "RFC-2 EN case2: in conclusion → closure > 0.8");
+const enCase3 = detectFunctionsFromSentence(
+  "Because tourists increase, restaurants grow, therefore economy improves.",
+  "body1",
+  enClaim,
+);
+ok(enCase3.causal >= 0.7, "RFC-2 EN case3: compound causal high");
+ok(
+  enCase3.closure >= 0.45 && enCase3.closure <= 0.75,
+  "RFC-2 EN case3: therefore closure medium",
+);
+
+const softCov = { claim: 1, causal: 0.75, grounding: 0.55, closure: 0.1 };
+const softGaps = computeSignalGaps(softCov);
+ok(softGaps.closure > softGaps.grounding, "RFC-3 gap: closure weakest when score lowest");
+ok(
+  argmaxSignalGap(softGaps) === "closure",
+  "RFC-3 argmax picks largest signal gap",
+);
+ok(
+  getNextNeed(softCov) === "closure",
+  "RFC-3 getNextNeed uses argmax not waterfall",
+);
+ok(
+  getNextNeed({ claim: 1, causal: 0.95, grounding: 0.62, closure: 0.63 }) ===
+    "ready",
+  "RFC-3 ready gate still applies when isDiscourseArgumentReady",
 );
 
 if (fail) {

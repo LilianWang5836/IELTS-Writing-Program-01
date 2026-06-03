@@ -2,6 +2,7 @@ import type { SessionState } from "@/lib/domain/types";
 import {
   aggregateCoverage,
   buildDiscourseMemory,
+  countActiveDiscourseSignals,
   detectFunctionsFromSentence,
 } from "@/lib/domain/chain-discourse";
 import type { CoachWorldState } from "../types";
@@ -54,8 +55,8 @@ export function buildCoachWorldState(
 
   let userTurnFunctionCount = 0;
   if (userMessage.trim() && ctx?.body) {
-    const fns = detectFunctionsFromSentence(userMessage, ctx.body);
-    userTurnFunctionCount = fns.length;
+    const signals = detectFunctionsFromSentence(userMessage, ctx.body);
+    userTurnFunctionCount = countActiveDiscourseSignals(signals);
   }
 
   let discourseOpts: Parameters<typeof interpretDiscourseSignals>[1] = {

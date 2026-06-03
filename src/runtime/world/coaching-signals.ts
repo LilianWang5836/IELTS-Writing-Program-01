@@ -5,8 +5,8 @@ import {
   isPointSpecificEnough,
 } from "@/lib/domain/stage1-exploration-themes";
 import {
-  hasConcreteBenefitConcepts,
-  hasConcreteDrawbackConcepts,
+  hasCommittedBenefitConcepts,
+  hasCommittedDrawbackConcepts,
 } from "@/lib/domain/stage1-coach-gap";
 import { getNextNeed, type CoverageState } from "@/lib/domain/chain-discourse";
 import type { SessionState } from "@/lib/domain/types";
@@ -46,11 +46,11 @@ export function deriveCoachingSignalsStage1(
   const explorationComplete = isStage1Complete(state, userMessages);
 
   const benefitDepth = depthLabel(
-    hasConcreteBenefitConcepts(themes.benefits),
+    hasCommittedBenefitConcepts(themes.benefits),
     false,
   );
   const drawbackDepth = depthLabel(
-    hasConcreteDrawbackConcepts(themes.drawbacks),
+    hasCommittedDrawbackConcepts(themes.drawbacks),
     themes.drawbacks.length === 1 && themes.drawbacks[0].length < 12,
   );
 

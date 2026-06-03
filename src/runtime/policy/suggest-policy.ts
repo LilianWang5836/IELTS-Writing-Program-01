@@ -1,188 +1,78 @@
-import type { CoachWorldState, PolicyPreference } from "../types";
-import {
-  formatStage1IntentHint,
-  resolveStage1CollectionGap,
-  type Stage1CoachGap,
-} from "@/lib/domain/stage1-coach-gap";
 import type { SessionState } from "@/lib/domain/types";
-import { isStage1Complete } from "@/lib/domain/stage1-complete";
-import { extractExplorationThemes } from "@/lib/domain/stage1-exploration-themes";
+import {
+  decideStage1Plan,
+  formatStage1PlanIntentHint,
+} from "@/lib/domain/stage1-plan";
+import type { CoachWorldState, PolicyPreference } from "../types";
 
-function policyFromGap(
-  gap: Stage1CoachGap,
-  state: SessionState,
-  themes: ReturnType<typeof extractExplorationThemes>,
-): PolicyPreference {
-  const intentHint = formatStage1IntentHint(gap, state, themes);
+function policyFromStage1Plan(state: SessionState): PolicyPreference {
+  const action = decideStage1Plan(state);
+  const intentHint = formatStage1PlanIntentHint(action, state);
 
-  switch (gap.gapType) {
-    case "confirm_structure":
-      return {
-        objective: "confirm_structure",
-        discourseShape: "none",
-        intervention: "finalize_prompt",
-        allowCompoundMove: false,
-        intentHint,
-        confidence: 0.85,
-      };
-    case "collect_benefit":
-      return {
-        objective: "collect_benefit_clarification",
-        discourseShape: "none",
-        intervention: "guided_probe",
-        allowCompoundMove: false,
-        intentHint,
-        confidence: 0.85,
-      };
-    case "collect_drawback":
-      return {
-        objective: "collect_missing_side",
-        discourseShape: "none",
-        intervention: "guided_probe",
-        allowCompoundMove: false,
-        intentHint,
-        confidence: 0.8,
-      };
-    case "collect_stance":
-      return {
-        objective: "collect_stance",
-        discourseShape: "none",
-        intervention: "guided_probe",
-        allowCompoundMove: false,
-        intentHint,
-        confidence: 0.75,
-      };
-    case "deepen_body1":
-    case "deepen_body2":
-      return {
-        objective: "deepen_mechanism",
-        discourseShape: "causal_chain",
-        intervention: "guided_refinement",
-        allowCompoundMove: false,
-        intentHint,
-        confidence: 0.8,
-      };
-    default:
-      return {
-        objective: "deepen_mechanism",
-        discourseShape: "causal_chain",
-        intervention: "guided_probe",
-        allowCompoundMove: false,
-        intentHint,
-        confidence: 0.7,
-      };
-  }
-}
-
-export function suggestStage1PolicyPreference(
-  world: CoachWorldState,
-  state?: SessionState,
-  userMessages?: string[],
-): PolicyPreference {
-  const c = world.coaching;
-
-  if (state && userMessages) {
-    const themes = extractExplorationThemes(state, userMessages);
-    if (isStage1Complete(state, userMessages)) {
-      return {
-        objective: "confirm_structure",
-        discourseShape: "none",
-        intervention: "finalize_prompt",
-        allowCompoundMove: false,
-        intentHint: JSON.stringify({ gapType: "confirm_structure", stage1Complete: true }),
-        confidence: 0.9,
-      };
-    }
-
-    const collectionGap = resolveStage1CollectionGap(themes);
-
-    if (collectionGap.gapType !== "none") {
-      const base = policyFromGap(collectionGap, state, themes);
-      if (collectionGap.gapType === "confirm_structure") {
-        return {
-          ...base,
-          refinementVeto: c.refinementCandidate,
-          vetoReason: c.refinementCandidate ? "分论点仍可更具体" : "",
-        };
-      }
-      return base;
-    }
-
-    if (c.themesComplete && !c.readyToFinalize) {
-      const refineGap: Stage1CoachGap =
-        c.bodyPointDepth.body1 !== "adequate"
-          ? {
-              gapType: "deepen_body1",
-              action: "ask_refinement",
-              targetBody: "body1",
-              side:
-                themes.positionLean === "pro" ||
-                themes.positionLean === "balanced"
-                  ? "benefit"
-                  : "drawback",
-            }
-          : {
-              gapType: "deepen_body2",
-              action: "ask_refinement",
-              targetBody: "body2",
-              side:
-                themes.positionLean === "pro" ||
-                themes.positionLean === "balanced"
-                  ? "drawback"
-                  : "benefit",
-            };
-      return policyFromGap(refineGap, state, themes);
-    }
-  }
-
-  if (c.readyToFinalize) {
+  if (action === "finalize") {
     return {
       objective: "confirm_structure",
       discourseShape: "none",
       intervention: "finalize_prompt",
-      refinementVeto: c.refinementCandidate,
-      vetoReason: c.refinementCandidate ? "分论点仍可更具体" : "",
       allowCompoundMove: false,
-      intentHint: formatStage1IntentHint(
-        { gapType: "confirm_structure", action: "finalize" },
-        state ?? ({ topic: world.coaching.topicAnchor } as SessionState),
-        extractExplorationThemes(
-          state ?? ({ coachContext: {} } as SessionState),
-          userMessages ?? [],
-        ),
-      ),
-      confidence: 0.8,
+      intentHint,
+      confidence: 0.9,
     };
   }
-  if (c.concessionCoverage === "weak" && c.themesComplete) {
-    return {
-      objective: "improve_argument_balance",
-      discourseShape: "concession",
-      intervention: "guided_probe",
-      allowCompoundMove: false,
-      intentHint: JSON.stringify({ gapType: "concession_weak" }),
-      confidence: 0.85,
-    };
-  }
-  if (c.benefitDepth === "missing" || c.drawbackDepth === "missing") {
+  if (action === "collect_drawback") {
     return {
       objective: "collect_missing_side",
       discourseShape: "none",
       intervention: "guided_probe",
       allowCompoundMove: false,
-      intentHint: JSON.stringify({
-        gapType: c.benefitDepth === "missing" ? "collect_benefit" : "collect_drawback",
-      }),
-      confidence: 0.75,
+      intentHint,
+      confidence: 0.85,
     };
   }
   return {
-    objective: "deepen_mechanism",
-    discourseShape: "causal_chain",
+    objective: "collect_benefit_clarification",
+    discourseShape: "none",
     intervention: "guided_probe",
     allowCompoundMove: false,
-    intentHint: JSON.stringify({ gapType: "none" }),
-    confidence: 0.7,
+    intentHint,
+    confidence: 0.85,
+  };
+}
+
+export function suggestStage1PolicyPreference(
+  world: CoachWorldState,
+  state?: SessionState,
+  _userMessages?: string[],
+): PolicyPreference {
+  if (state) {
+    return policyFromStage1Plan(state);
+  }
+
+  if (world.coaching.readyToFinalize) {
+    return {
+      objective: "confirm_structure",
+      discourseShape: "none",
+      intervention: "finalize_prompt",
+      allowCompoundMove: false,
+      intentHint: JSON.stringify({
+        stage1PlanAction: "finalize",
+        gapType: "confirm_structure",
+      }),
+      confidence: 0.8,
+    };
+  }
+
+  const missingBenefit = world.coaching.benefitDepth === "missing";
+  return {
+    objective: missingBenefit ? "collect_benefit_clarification" : "collect_missing_side",
+    discourseShape: "none",
+    intervention: "guided_probe",
+    allowCompoundMove: false,
+    intentHint: JSON.stringify({
+      stage1PlanAction: missingBenefit ? "collect_benefit" : "collect_drawback",
+      gapType: missingBenefit ? "collect_benefit" : "collect_drawback",
+    }),
+    confidence: 0.75,
   };
 }
 

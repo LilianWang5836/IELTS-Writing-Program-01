@@ -10,9 +10,11 @@ import {
   isSemanticToken,
 } from "@/runtime/semantic/semantic-projection";
 import {
-  formatStage1IntentHint,
-  resolveStage1CollectionGap,
-} from "./stage1-coach-gap";
+  decideStage1Plan,
+  formatStage1PlanIntentHint,
+  stage1PlanQuestion,
+} from "./stage1-plan";
+import { resolveStage1CollectionGap } from "./stage1-coach-gap";
 import {
   bodyPointsTooSimilar,
   extractExplorationThemes,
@@ -1144,12 +1146,12 @@ export function assessEssaySubstance(state: SessionState): EssaySubstanceAssessm
     const hint = resolveQuestionHintType(state);
     if (isProsConsQuestionType(hint)) {
       const themes = extractExplorationThemes(state, msgs);
-      const gap = resolveStage1CollectionGap(themes);
+      const gap = resolveStage1CollectionGap(themes, state);
       if (gap.gapType !== "none") {
         return {
           sufficient: false,
           gaps: [gap.gapType],
-          coachPrompt: formatStage1IntentHint(gap, state, themes),
+          coachPrompt: formatStage1PlanIntentHint(decideStage1Plan(state), state),
         };
       }
     }
@@ -1194,15 +1196,9 @@ export function assessEssaySubstance(state: SessionState): EssaySubstanceAssessm
       sides.sideB &&
       (roundsHint >= 2 || blob.length >= 80));
 
-  let coachPrompt = singleGapCoachPrompt(sides, state) || gaps[0] || "";
-  if (themes?.themesComplete && !themes.readyToFinalize) {
-    const refineGap = resolveStage1CoachGap(state, themes, msgs);
-    coachPrompt = formatStage1IntentHint(refineGap, state, themes);
-  } else if (themes && !themes.themesComplete) {
-    const collectionGap = resolveStage1CollectionGap(themes);
-    if (collectionGap.gapType !== "none") {
-      coachPrompt = formatStage1IntentHint(collectionGap, state, themes);
-    }
+  let coachPrompt = stage1PlanQuestion(decideStage1Plan(state));
+  if (!coachPrompt) {
+    coachPrompt = singleGapCoachPrompt(sides, state) || gaps[0] || "";
   }
 
   return {

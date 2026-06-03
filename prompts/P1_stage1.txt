@@ -9,11 +9,11 @@
 {{arbitrated_plan_json}}
 
 执行规则：
-- `action=finalize` → `coachQuestion` 留空，填 `proposedHandoff` / `essaySubstanceSufficient: true`
-- **Stage1 已齐**（`intentHint` 含 `stage1Complete:true` 或 `action=finalize`）→ **禁止**再追问；只 mirror 总结或进入六栏整理，**不得**深挖因果链 / 身心健康 / 更深远影响
-- `action=coach` 或 `one_refinement_turn` → mirror 1–2 句 + **一问**，对齐 `objective` / `discourseShape` / `intervention` / `intentHint`
-- `allowCompoundMove=true` → 可自然融合回应，仍只问 `primaryGap` 一个问题
-- **禁止**偏离 `intentHint` 所指的论证形态；**禁止**自行决定 finalize 或重开 exploration 流程
+- `action=finalize` → `coachQuestion` **必须留空**；系统整理六栏
+- **Stage1 已齐** → 禁止再追问；只 mirror 总结
+- `action=coach` → **只写 mirror**（1–2 句）；`coachQuestion` **必须留空** — 系统已决定下一问（见 `intentHint.stage1PlanAction`）
+- **禁止**自行决定下一步、禁止生成 follow-up、禁止深挖因果链
+- **禁止**偏离 `intentHint`；**禁止**自行 finalize
 
 ## 上一轮教练问（勿重复）
 {{last_coach_question}}
@@ -23,7 +23,7 @@
 
 ## 表达约束（非教学策略）
 1. **全程中文**：mirror、coachQuestion、proposal 字段一律中文；禁止在聊天里贴英文长段。
-2. **口语对话**：mirror 1–2 句；禁止 ①②③ 编号清单；`coachQuestion` **最多一问**。
+2. **口语对话**：mirror 1–2 句；禁止 ①②③ 编号清单；**coachQuestion 留空**（系统注入已定问句）。
 3. **改写幅度**（填 `proposedHandoff` 时）：比较学生原话与六栏 — `rewriteRisk` 为 high 时禁止整理六栏，用 `rewriteFollowUpAsk` 让学生补依据。
 4. `body1Point` / `body2Point` 各一句总括（≤50 字）；`body1Angle` / `body2Angle` 写该段范围。
 5. 学生说看不懂 / 问过了 → 道歉 + 按 `arbitrated_plan` 换更具体的一问。
@@ -40,7 +40,7 @@
   "verdict": "coach",
   "advance": false,
   "mirror": "1–2句中文",
-  "coachQuestion": "最多一问；finalize 时留空",
+  "coachQuestion": "必须留空字符串；系统决定下一问",
   "userVisibleText": "与 mirror 同义或更短",
   "essaySubstanceSufficient": false,
   "rewriteRisk": "low",

@@ -1,16 +1,28 @@
 import type { ArbitratedTurnPlan } from "../types";
 import type { LlmTurnResult } from "@/lib/domain/types";
 import {
+  parseStage1PlanAction,
+  stage1PlanQuestion,
+} from "@/lib/domain/stage1-plan";
+import {
   buildDeterministicCoachQuestion,
   buildDeterministicMirror,
   finalizeHandoffReviewAsk,
 } from "../mode/deterministic-templates";
+
+function stage1QuestionFromPlan(plan: ArbitratedTurnPlan): string | null {
+  const action = parseStage1PlanAction(plan.intentHint ?? "");
+  if (action) return stage1PlanQuestion(action);
+  return null;
+}
 
 export function generateCoachTurn(
   plan: ArbitratedTurnPlan,
   llmResult?: Partial<LlmTurnResult>,
   options?: { forceDeterministic?: boolean },
 ): { mirror: string; coachQuestion: string; enforcedBy: "llm" | "generateCoachTurn" } {
+  const stage1Question = stage1QuestionFromPlan(plan);
+
   if (plan.action === "finalize") {
     return {
       mirror: llmResult?.mirror?.trim() || "结构已经比较清楚了，我来帮你整理一版。",
@@ -19,18 +31,19 @@ export function generateCoachTurn(
     };
   }
 
-  if (plan.intentHint?.includes('"stage1Complete":true')) {
+  if (plan.action === "blocked") {
     return {
-      mirror: llmResult?.mirror?.trim() || "利弊方向都够了，我来帮你整理一版。",
+      mirror: "这一步暂时无法继续，请先看左侧进度。",
       coachQuestion: "",
       enforcedBy: "generateCoachTurn",
     };
   }
 
-  if (plan.action === "blocked") {
+  // Stage1: system owns the question; LLM only supplies mirror tone.
+  if (stage1Question) {
     return {
-      mirror: "这一步暂时无法继续，请先看左侧进度。",
-      coachQuestion: "",
+      mirror: llmResult?.mirror?.trim() || buildDeterministicMirror(),
+      coachQuestion: plan.questionTemplate?.trim() || stage1Question,
       enforcedBy: "generateCoachTurn",
     };
   }
@@ -45,15 +58,11 @@ export function generateCoachTurn(
     };
   }
 
-  const mirror = llmResult?.mirror?.trim() || buildDeterministicMirror();
-  const coachQuestion =
-    llmResult?.coachQuestion?.trim() ||
-    plan.questionTemplate ||
-    buildDeterministicCoachQuestion(plan.primaryGap ?? null);
-
   return {
-    mirror,
-    coachQuestion,
-    enforcedBy: llmResult?.coachQuestion ? "llm" : "generateCoachTurn",
+    mirror: llmResult?.mirror?.trim() || buildDeterministicMirror(),
+    coachQuestion:
+      plan.questionTemplate ||
+      buildDeterministicCoachQuestion(plan.primaryGap ?? null),
+    enforcedBy: "generateCoachTurn",
   };
 }

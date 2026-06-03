@@ -44,6 +44,7 @@ import {
 } from "./stage1-exploration-themes";
 import type { ExplorationThemes } from "./stage1-exploration-themes";
 import { detectHandoffHelpQuestion } from "./stage2-context";
+import { decideStage1Plan, stage1PlanQuestion } from "./stage1-plan";
 import { ANGLE_TEACH_CHAT } from "./constants";
 import {
   isRuntimePlanEnforcementEnabled,
@@ -578,7 +579,7 @@ export function resolveHandoffTurnDecision(
         };
       }
     }
-    nextQ = gapQ || "";
+    nextQ = stage1PlanQuestion(decideStage1Plan(state)) || gapQ || "";
   }
 
   if (

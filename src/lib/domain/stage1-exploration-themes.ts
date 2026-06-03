@@ -7,11 +7,12 @@ import {
 } from "./stage1-exploration";
 import {
   formatStage1GapMemorySummary,
-  hasConcreteBenefitConcepts,
+  hasCommittedBenefitConcepts,
+  hasCommittedDrawbackConcepts,
   resolveStage1CollectionGap,
   type Stage1CoachGap,
 } from "./stage1-coach-gap";
-import { isStage1ProjectionComplete } from "./stage1-complete";
+import { committedConceptIds, decideStage1Plan } from "./stage1-plan";
 import {
   readStage1ThemeProjection,
   stanceToPositionLean,
@@ -95,26 +96,28 @@ function explorationThemesFromProjection(
   };
 }
 
-/** Set readyToFinalize once at write time (refinement gate — not concept mapping). */
+/** Attach themesComplete / readyToFinalize from deterministic PLAN gate. */
 export function enrichStage1ThemeProjection(
   projection: Stage1ThemeProjection,
   state: SessionState,
-  msgs: string[],
+  _msgs: string[],
 ): Stage1ThemeProjection {
-  if (isStage1ProjectionComplete(projection)) {
+  const withProjection: SessionState = {
+    ...state,
+    coachContext: {
+      ...state.coachContext,
+      stage1ThemeProjection: projection,
+    },
+  };
+  if (decideStage1Plan(withProjection) === "finalize") {
     return { ...projection, themesComplete: true, readyToFinalize: true };
   }
-
-  if (!projection.themesComplete) {
-    return { ...projection, readyToFinalize: false };
-  }
-
-  const themesSnapshot = explorationThemesFromProjection(projection);
-  const readyToFinalize =
-    isBodyRefinementSatisfied("body1", themesSnapshot, state, msgs) &&
-    isBodyRefinementSatisfied("body2", themesSnapshot, state, msgs);
-
-  return { ...projection, readyToFinalize };
+  const { benefits, drawbacks } = committedConceptIds(projection);
+  return {
+    ...projection,
+    themesComplete: benefits.length >= 1 && drawbacks.length >= 1,
+    readyToFinalize: false,
+  };
 }
 
 /** Reads committed stage1ThemeProjection STATE only — no re-extraction. */
@@ -280,37 +283,13 @@ function benefitBodyForLean(pro: boolean, body: "body1" | "body2"): SideKind {
   return body === "body1" ? "drawback" : "benefit";
 }
 
-/** PLAN layer: collection + refinement gaps — no NL output. */
+/** PLAN layer: deterministic collection only — no deepen. */
 export function resolveStage1CoachGap(
   state: SessionState,
   themes: ExplorationThemes,
-  msgs: string[],
+  _msgs: string[] = [],
 ): Stage1CoachGap {
-  const collection = resolveStage1CollectionGap(themes);
-  if (collection.gapType !== "none") return collection;
-
-  if (!themes.themesComplete) {
-    return { gapType: "none", action: "coach" };
-  }
-
-  const pro = themes.positionLean === "pro";
-  if (!isBodyRefinementSatisfied("body1", themes, state, msgs)) {
-    return {
-      gapType: "deepen_body1",
-      action: "ask_refinement",
-      targetBody: "body1",
-      side: benefitBodyForLean(pro, "body1"),
-    };
-  }
-  if (!isBodyRefinementSatisfied("body2", themes, state, msgs)) {
-    return {
-      gapType: "deepen_body2",
-      action: "ask_refinement",
-      targetBody: "body2",
-      side: benefitBodyForLean(pro, "body2"),
-    };
-  }
-  return { gapType: "none", action: "coach" };
+  return resolveStage1CollectionGap(themes, state);
 }
 
 /** @deprecated Rule layer must not generate NL; use resolveStage1CoachGap + LLM. */
@@ -380,6 +359,16 @@ export function isExplorationQuestionRedundant(
   }
 
   if (
+    hasCommittedBenefitConcepts(themes.benefits) &&
+    themes.drawbacks.length === 0 &&
+    /为什么.*积极|积极.*发展|更深|深远|积极影响|身心健康|生活方式|对个人|对社会|轻松化|算.*积极/i.test(
+      q,
+    ) &&
+    !/结构|Body|段落|整理|六栏|坏处|弊端|负面/.test(q)
+  ) {
+    return true;
+  }
+  if (
     themes.benefits.length >= 1 &&
     /好处|优势|利|收入|带动|服务业|压过|outweigh|具体.*好处|什么.*好处/i.test(q)
   ) {
@@ -400,7 +389,7 @@ export function isExplorationQuestionRedundant(
   if (
     themes.drawbacks.length >= 1 &&
     themes.positionLean !== "unknown" &&
-    !hasConcreteBenefitConcepts(themes.benefits) &&
+    !hasCommittedBenefitConcepts(themes.benefits) &&
     /怎么.*平衡|如何.*平衡|平衡这两个|在文章中平衡|两方面.*平衡/i.test(q) &&
     !/结构|Body|段落|整理|六栏/.test(q)
   ) {

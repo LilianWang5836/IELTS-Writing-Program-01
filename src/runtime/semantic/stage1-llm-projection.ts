@@ -19,6 +19,7 @@ import {
   type LlmSemanticProjectionRaw,
 } from "@/lib/domain/stage1-theme-projection";
 import { catalogPromptBlock } from "./stage1-concept-catalog";
+import { normalizeConcepts } from "./stage1-fact-normalization";
 import { isStage1LlmProjectionEnabled } from "./stage1-theme-resolution";
 
 export {
@@ -102,6 +103,45 @@ function applySemanticPipeline(
     turnIndex: messages.length,
   });
   return enrichStage1ThemeProjection(committed, state, messages);
+}
+
+/** Async LLM semantic projection — extraction only (no teaching strategy). */
+export async function projectStage1SemanticsWithLLM(input: {
+  topic: string;
+  questionHintType?: QuestionType;
+  userMessage: string;
+  state?: SessionState;
+}): Promise<{
+  benefits: string[];
+  drawbacks: string[];
+  stance?: "positive" | "negative" | "neutral";
+  confidence: number;
+}> {
+  const projection = await projectStage1ThemesWithLlm({
+    topic: input.topic,
+    questionHintType: input.questionHintType,
+    messages: [input.userMessage],
+    state: input.state,
+  });
+  const { benefits, drawbacks } = normalizeConcepts({
+    benefits: projection.benefit,
+    drawbacks: projection.drawback,
+  });
+  const stanceRaw = projection.stance;
+  const stance =
+    stanceRaw === "positive"
+      ? "positive"
+      : stanceRaw === "negative"
+        ? "negative"
+        : stanceRaw === "mixed"
+          ? "neutral"
+          : undefined;
+  return {
+    benefits,
+    drawbacks,
+    stance,
+    confidence: benefits.length + drawbacks.length > 0 ? 0.85 : 0.5,
+  };
 }
 
 /** Async LLM projection for latest user sentence; monotonic merge into STATE. */

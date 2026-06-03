@@ -7,6 +7,10 @@ import type {
   PrimaryGap,
 } from "../types";
 import {
+  parseStage1PlanAction,
+  stage1PlanQuestion,
+} from "@/lib/domain/stage1-plan";
+import {
   finalizeHandoffReviewAsk,
   gapQuestionTemplate,
 } from "../mode/deterministic-templates";
@@ -29,15 +33,22 @@ function defaultCoachPlan(
   policy: PolicyPreference,
 ): ArbitratedTurnPlan {
   const gap = world.coaching.primaryGap;
+  const stage1Action = parseStage1PlanAction(policy.intentHint ?? "");
+  const stage1Template =
+    world.subStep === "S1_EVAL" && stage1Action
+      ? stage1PlanQuestion(stage1Action)
+      : undefined;
   return {
     action: "coach",
     objective: policy.objective,
     discourseShape: policy.discourseShape,
     intervention: policy.intervention,
-    allowCompoundMove: policy.allowCompoundMove ?? false,
+    allowCompoundMove:
+      world.subStep === "S1_EVAL" ? false : (policy.allowCompoundMove ?? false),
     intentHint: policy.intentHint ?? "",
     primaryGap: gap ?? undefined,
-    questionTemplate: gap ? gapQuestionTemplate(gap) : undefined,
+    questionTemplate:
+      stage1Template ?? (gap ? gapQuestionTemplate(gap) : undefined),
   };
 }
 
@@ -65,13 +76,8 @@ export function arbitrateTurnDecision(input: {
     world.engagement.fatigueConfidence !== "uncertain";
 
   if (finalizeDecision.defaultFinalize && finalizeDecision.canPropose) {
-    const skipRefinementVeto =
-      world.subStep === "S1_EVAL" &&
-      world.coaching.readyToFinalize &&
-      world.coaching.benefitDepth !== "missing" &&
-      world.coaching.drawbackDepth !== "missing";
     if (
-      !skipRefinementVeto &&
+      world.subStep !== "S1_EVAL" &&
       policyPreference.refinementVeto &&
       world.refinementVetoBudgetRemaining > 0 &&
       world.coaching.refinementCandidate &&
@@ -98,7 +104,7 @@ export function arbitrateTurnDecision(input: {
     };
   }
 
-  if (world.discourse.userTurnFunctionCount >= 2) {
+  if (world.subStep !== "S1_EVAL" && world.discourse.userTurnFunctionCount >= 2) {
     return {
       ...defaultCoachPlan(world, policyPreference),
       allowCompoundMove: true,

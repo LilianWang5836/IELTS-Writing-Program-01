@@ -2,7 +2,10 @@
  * Stage1 PLAN layer — gap types and collection-phase decisions (no NL generation).
  */
 import type { SessionState } from "./types";
-import { isSemanticToken } from "@/runtime/semantic/semantic-projection";
+import {
+  decideStage1Plan,
+  stage1PlanToCoachGap,
+} from "./stage1-plan";
 import type { ExplorationThemes } from "./stage1-exploration-themes";
 
 export type Stage1CoachGapType =
@@ -23,37 +26,42 @@ export interface Stage1CoachGap {
   side?: "benefit" | "drawback";
 }
 
-export function hasConcreteBenefitConcepts(benefits: string[]): boolean {
-  return benefits.some((b) => !isSemanticToken(b));
+const IMPLICIT_PLACEHOLDERS = new Set(["implicit_benefit", "implicit_drawback"]);
+
+export function hasCommittedBenefitConcepts(benefits: string[]): boolean {
+  return benefits.some((b) => !IMPLICIT_PLACEHOLDERS.has(b));
 }
 
-export function hasConcreteDrawbackConcepts(drawbacks: string[]): boolean {
-  return drawbacks.some((d) => !isSemanticToken(d));
+export function hasCommittedDrawbackConcepts(drawbacks: string[]): boolean {
+  return drawbacks.some((d) => !IMPLICIT_PLACEHOLDERS.has(d));
 }
 
-/** Collection / stance gaps only (no body-refinement dependency). */
+/** @deprecated use hasCommittedBenefitConcepts */
+export const hasConcreteBenefitConcepts = hasCommittedBenefitConcepts;
+
+/** @deprecated use hasCommittedDrawbackConcepts */
+export const hasConcreteDrawbackConcepts = hasCommittedDrawbackConcepts;
+
+/** Deterministic collection gap from committed STATE (no deepen). */
 export function resolveStage1CollectionGap(
   themes: ExplorationThemes,
+  state?: SessionState,
 ): Stage1CoachGap {
+  if (state) {
+    return stage1PlanToCoachGap(decideStage1Plan(state));
+  }
   if (themes.readyToFinalize) {
     return { gapType: "confirm_structure", action: "finalize" };
   }
-
-  const hasBenefit = hasConcreteBenefitConcepts(themes.benefits);
-  const hasDrawback = hasConcreteDrawbackConcepts(themes.drawbacks);
-  const hasStance = themes.positionLean !== "unknown";
-
-  if (!hasStance) {
-    return { gapType: "collect_stance", action: "coach" };
-  }
+  const hasBenefit = hasCommittedBenefitConcepts(themes.benefits);
+  const hasDrawback = hasCommittedDrawbackConcepts(themes.drawbacks);
   if (!hasBenefit) {
     return { gapType: "collect_benefit", action: "coach", side: "benefit" };
   }
   if (!hasDrawback) {
     return { gapType: "collect_drawback", action: "coach", side: "drawback" };
   }
-
-  return { gapType: "none", action: "coach" };
+  return { gapType: "confirm_structure", action: "finalize" };
 }
 
 /** Machine-readable hint for LLM / policy — no domain vocabulary. */
@@ -69,11 +77,11 @@ export function formatStage1IntentHint(
     side: gap.side ?? null,
     topic: (state.topic ?? "").trim().slice(0, 200),
     positionLean: themes.positionLean,
-    committedBenefits: themes.benefits.filter((b) => !isSemanticToken(b)),
-    committedDrawbacks: themes.drawbacks.filter((d) => !isSemanticToken(d)),
+    committedBenefits: themes.benefits.filter((b) => hasCommittedBenefitConcepts([b])),
+    committedDrawbacks: themes.drawbacks.filter((d) => hasCommittedDrawbackConcepts([d])),
     implicitBenefitOnly:
-      themes.benefits.some((b) => isSemanticToken(b)) &&
-      !hasConcreteBenefitConcepts(themes.benefits),
+      themes.benefits.some((b) => b === "implicit_benefit") &&
+      !hasCommittedBenefitConcepts(themes.benefits),
   });
 }
 
@@ -86,13 +94,13 @@ export function formatStage1GapMemorySummary(
   if (themes.positionLean !== "unknown") {
     lines.push(`立场倾向：${themes.positionLean}`);
   }
-  const realB = themes.benefits.filter((b) => !isSemanticToken(b));
-  const realD = themes.drawbacks.filter((d) => !isSemanticToken(d));
+  const realB = themes.benefits.filter((b) => hasCommittedBenefitConcepts([b]));
+  const realD = themes.drawbacks.filter((d) => hasCommittedDrawbackConcepts([d]));
   if (realB.length) lines.push(`已 commit 好处 concept：${realB.join("；")}`);
   if (realD.length) lines.push(`已 commit 坏处 concept：${realD.join("；")}`);
   if (
-    themes.benefits.some((b) => isSemanticToken(b)) &&
-    !hasConcreteBenefitConcepts(themes.benefits)
+    themes.benefits.some((b) => b === "implicit_benefit") &&
+    !hasCommittedBenefitConcepts(themes.benefits)
   ) {
     lines.push("系统：仅有立场占位，尚无具体好处 concept");
   }

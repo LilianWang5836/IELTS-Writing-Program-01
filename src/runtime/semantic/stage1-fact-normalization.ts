@@ -33,3 +33,20 @@ export function normalizeFactToCanonical(
   const candidates = side === "benefit" ? projected.benefits : projected.drawbacks;
   return candidates[0] ?? null;
 }
+
+export function normalizeConcepts(input: {
+  benefits?: string[];
+  drawbacks?: string[];
+}): { benefits: Stage1ConceptId[]; drawbacks: Stage1ConceptId[] } {
+  const benefits: Stage1ConceptId[] = [];
+  const drawbacks: Stage1ConceptId[] = [];
+  for (const raw of input.benefits ?? []) {
+    const id = normalizeFactToCanonical(raw, "benefit");
+    if (id && !benefits.includes(id)) benefits.push(id);
+  }
+  for (const raw of input.drawbacks ?? []) {
+    const id = normalizeFactToCanonical(raw, "drawback");
+    if (id && !drawbacks.includes(id)) drawbacks.push(id);
+  }
+  return { benefits, drawbacks };
+}

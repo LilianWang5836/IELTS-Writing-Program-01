@@ -20,7 +20,7 @@ import {
   themesToHandoffPatch,
 } from "../src/lib/domain/stage1-exploration-themes.ts";
 import { resolveStage1CollectionGap } from "../src/lib/domain/stage1-coach-gap.ts";
-import { isStage1Complete } from "../src/lib/domain/stage1-complete.ts";
+import { decideStage1Plan } from "../src/lib/domain/stage1-plan.ts";
 import {
   mergeMonotonicSemanticState,
   sanitizeLlmThemeProjection,
@@ -572,10 +572,10 @@ const shortSessionMsgs = shortSessionState.chatHistory
   .filter((m) => m.role === "user")
   .map((m) => m.content);
 const shortSessionThemes = extractExplorationThemes(shortSessionState, shortSessionMsgs);
-ok(!isStage1Complete(shortSessionState, shortSessionMsgs), "短 Session：仅有 implicit benefit+坏处时未齐");
+ok(decideStage1Plan(shortSessionState) !== "finalize", "短 Session：仅有 implicit benefit+坏处时未齐");
 ok(!shortSessionThemes.themesComplete, "短 Session：无 concrete benefit 时 themesComplete 为 false");
 ok(
-  resolveStage1CollectionGap(shortSessionThemes).gapType === "collect_benefit",
+  resolveStage1CollectionGap(shortSessionThemes, shortSessionState).gapType === "collect_benefit",
   "短 Session：应识别 collect_benefit 缺口",
 );
 ok(
@@ -618,7 +618,40 @@ const userDialogState = stateAfterUserLinesQ7(userDialogLines);
 const userDialogMsgs = userDialogState.chatHistory
   .filter((m) => m.role === "user")
   .map((m) => m.content);
-ok(isStage1Complete(userDialogState, userDialogMsgs), "用户对话 Turn3：benefit+drawback 后 isStage1Complete");
+ok(decideStage1Plan(userDialogState) === "finalize", "用户对话 Turn3：decideStage1Plan 为 finalize");
+
+// ── 仅省时+休息：缺坏处 → collect_drawback，meta 问应被替换 ──
+const timeOnlyLines = [
+  "讨论这个现象是消极的还是积极的，我觉得整体是积极的",
+  "节约时间",
+  "可以有更多的时间休息，娱乐。",
+];
+const timeOnlyState = stateAfterUserLinesQ7(timeOnlyLines);
+ok(decideStage1Plan(timeOnlyState) === "collect_drawback", "省时+休息：PLAN 为 collect_drawback");
+const timeOnlyThemes = extractExplorationThemes(
+  timeOnlyState,
+  timeOnlyLines,
+);
+const metaAsk =
+  "那你觉得这种生活方式的轻松化，为什么对个人或社会来说算是一个「积极」的发展呢？";
+ok(
+  isExplorationQuestionRedundant(metaAsk, timeOnlyThemes),
+  "省时+休息：meta 积极发展问应 redundant",
+);
+const timeOnlyDecision = resolveHandoffTurnDecision({
+  state: { ...timeOnlyState, coachContext: { ...timeOnlyState.coachContext, exploreRound: 3 } },
+  result: {
+    verdict: "coach",
+    advance: false,
+    mirror: "确实，网购省下来的时间能让人们有更多机会去休息和享受娱乐。",
+    coachQuestion: metaAsk,
+  },
+  userMessage: timeOnlyLines[2],
+});
+ok(
+  /潜在的坏处|负面影响/.test(timeOnlyDecision.coach.ask ?? ""),
+  "省时+休息：redundant 后应替换为 collect_drawback 问句",
+);
 const userDialogThemes = extractExplorationThemes(userDialogState, userDialogMsgs);
 ok(userDialogThemes.readyToFinalize, "用户对话 Turn3：readyToFinalize 为 true");
 ok(

@@ -5,6 +5,7 @@ import {
   type Stage1CoachGap,
 } from "@/lib/domain/stage1-coach-gap";
 import type { SessionState } from "@/lib/domain/types";
+import { isStage1Complete } from "@/lib/domain/stage1-complete";
 import { extractExplorationThemes } from "@/lib/domain/stage1-exploration-themes";
 
 function policyFromGap(
@@ -82,6 +83,17 @@ export function suggestStage1PolicyPreference(
 
   if (state && userMessages) {
     const themes = extractExplorationThemes(state, userMessages);
+    if (isStage1Complete(state, userMessages)) {
+      return {
+        objective: "confirm_structure",
+        discourseShape: "none",
+        intervention: "finalize_prompt",
+        allowCompoundMove: false,
+        intentHint: JSON.stringify({ gapType: "confirm_structure", stage1Complete: true }),
+        confidence: 0.9,
+      };
+    }
+
     const collectionGap = resolveStage1CollectionGap(themes);
 
     if (collectionGap.gapType !== "none") {

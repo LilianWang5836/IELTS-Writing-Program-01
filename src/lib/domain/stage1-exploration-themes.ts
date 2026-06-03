@@ -11,6 +11,7 @@ import {
   resolveStage1CollectionGap,
   type Stage1CoachGap,
 } from "./stage1-coach-gap";
+import { isStage1ProjectionComplete } from "./stage1-complete";
 import {
   readStage1ThemeProjection,
   stanceToPositionLean,
@@ -100,6 +101,10 @@ export function enrichStage1ThemeProjection(
   state: SessionState,
   msgs: string[],
 ): Stage1ThemeProjection {
+  if (isStage1ProjectionComplete(projection)) {
+    return { ...projection, themesComplete: true, readyToFinalize: true };
+  }
+
   if (!projection.themesComplete) {
     return { ...projection, readyToFinalize: false };
   }
@@ -133,10 +138,7 @@ export function extractExplorationThemes(
       },
     };
   }
-  const enriched =
-    projection.themesComplete && !projection.readyToFinalize
-      ? enrichStage1ThemeProjection(projection, state, msgs)
-      : projection;
+  const enriched = enrichStage1ThemeProjection(projection, state, msgs);
   return explorationThemesFromProjection(enriched);
 }
 
@@ -245,7 +247,7 @@ export function userMessageRefinesBody(
   const benefitKw =
     /收入|就业|服务业|经济|消费|食宿|餐馆|酒店|带动|促进|文化|交流|收益|购物|餐饮|住宿|节省时间|省时|节约|通勤|周末|休息|爱好|效率|便利|生活质量/;
   const drawbackKw =
-    /拥堵|堵车|拥挤|垃圾|污染|环境|破坏|不便|影响|耗时|节假日|不良|冲动购物|冲动消费|浪费|不需要|过度|不理性|盲目|乱花钱/;
+    /拥堵|堵车|拥挤|垃圾|污染|环境|破坏|不便|影响|耗时|节假日|不良|冲动购物|冲动性?消费|浪费|不需要|过度|不理性|盲目|乱花钱/;
 
   if (!objectRe.test(m) || !relationalRe.test(m)) return false;
 

@@ -1,3 +1,4 @@
+import { isStage1Complete } from "@/lib/domain/stage1-complete";
 import { assessExplorationContent } from "@/lib/domain/essay-substance";
 import {
   extractExplorationThemes,
@@ -42,6 +43,7 @@ export function deriveCoachingSignalsStage1(
 ): Partial<CoachingSignals> {
   const themes = extractExplorationThemes(state, userMessages);
   const substance = assessExplorationContent(state, userMessages[userMessages.length - 1]);
+  const explorationComplete = isStage1Complete(state, userMessages);
 
   const benefitDepth = depthLabel(
     hasConcreteBenefitConcepts(themes.benefits),
@@ -67,13 +69,14 @@ export function deriveCoachingSignalsStage1(
   };
 
   const refinementCandidate =
-    bodyPointDepth.body1 === "weak" ||
-    bodyPointDepth.body2 === "weak" ||
-    discourse.elaborationDepth === "weak";
+    !explorationComplete &&
+    (bodyPointDepth.body1 === "weak" ||
+      bodyPointDepth.body2 === "weak" ||
+      discourse.elaborationDepth === "weak");
 
   return {
-    readyToFinalize: themes.readyToFinalize,
-    themesComplete: themes.themesComplete,
+    readyToFinalize: explorationComplete || themes.readyToFinalize,
+    themesComplete: explorationComplete || themes.themesComplete,
     contentReady: substance.contentReady ?? false,
     positionLean: themes.positionLean,
     benefitDepth,

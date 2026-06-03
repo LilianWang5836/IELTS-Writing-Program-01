@@ -1,6 +1,6 @@
 [
   { "turnIndex": 0, "action": "coach" },
   { "turnIndex": 1, "action": "coach" },
-  { "turnIndex": 2, "action": "coach" },
-  { "turnIndex": 3, "action": "one_refinement_turn" }
+  { "turnIndex": 2, "action": "finalize" },
+  { "turnIndex": 3, "action": "finalize" }
 ]

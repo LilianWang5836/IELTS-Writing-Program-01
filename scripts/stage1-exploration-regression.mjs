@@ -20,6 +20,7 @@ import {
   themesToHandoffPatch,
 } from "../src/lib/domain/stage1-exploration-themes.ts";
 import { resolveStage1CollectionGap } from "../src/lib/domain/stage1-coach-gap.ts";
+import { isStage1Complete } from "../src/lib/domain/stage1-complete.ts";
 import {
   mergeMonotonicSemanticState,
   sanitizeLlmThemeProjection,
@@ -571,7 +572,8 @@ const shortSessionMsgs = shortSessionState.chatHistory
   .filter((m) => m.role === "user")
   .map((m) => m.content);
 const shortSessionThemes = extractExplorationThemes(shortSessionState, shortSessionMsgs);
-ok(!shortSessionThemes.themesComplete, "短 Session：仅有立场+坏处时 themesComplete 为 false");
+ok(!isStage1Complete(shortSessionState, shortSessionMsgs), "短 Session：仅有 implicit benefit+坏处时未齐");
+ok(!shortSessionThemes.themesComplete, "短 Session：无 concrete benefit 时 themesComplete 为 false");
 ok(
   resolveStage1CollectionGap(shortSessionThemes).gapType === "collect_benefit",
   "短 Session：应识别 collect_benefit 缺口",
@@ -579,7 +581,7 @@ ok(
 ok(
   resolveStage1CoachGap(shortSessionState, shortSessionThemes, shortSessionMsgs)
     .gapType === "collect_benefit",
-  "短 Session：PLAN 层应 collect_benefit 而非 deepen_body",
+  "短 Session：PLAN 层应 collect_benefit",
 );
 ok(
   isExplorationQuestionRedundant(
@@ -605,6 +607,47 @@ ok(
 
 ok(detectFrustration("前面不是讲了坏处"), "挫折检测：前面不是讲了坏处");
 ok(detectFrustration("什么叫 平衡"), "挫折检测：什么叫平衡");
+
+// ── 用户对话：省时+便利+冲动性消费 → isStage1Complete，Turn3 后应收口 ──
+const userDialogLines = [
+  "讨论这个现象是消极的还是积极的，我觉得整体是积极的",
+  "可以节约时间，不用专门抽时间去店里，同时也更方便，想买的时候就可以买",
+  "好处就是节省了时间啊，坏处：可能会增加冲动性消费",
+];
+const userDialogState = stateAfterUserLinesQ7(userDialogLines);
+const userDialogMsgs = userDialogState.chatHistory
+  .filter((m) => m.role === "user")
+  .map((m) => m.content);
+ok(isStage1Complete(userDialogState, userDialogMsgs), "用户对话 Turn3：benefit+drawback 后 isStage1Complete");
+const userDialogThemes = extractExplorationThemes(userDialogState, userDialogMsgs);
+ok(userDialogThemes.readyToFinalize, "用户对话 Turn3：readyToFinalize 为 true");
+ok(
+  userDialogThemes.drawbacks.some((d) => d === "impulse_buying" || /冲动/.test(d)),
+  "用户对话：冲动性消费 归一化为 impulse_buying",
+);
+const userDialogDecision = resolveHandoffTurnDecision({
+  state: {
+    ...userDialogState,
+    coachContext: { ...userDialogState.coachContext, exploreRound: 3 },
+  },
+  result: {
+    verdict: "coach",
+    advance: false,
+    coachQuestion: "那对于「节省时间」这一点，你觉得省下来的时间具体能给人们的生活带来什么积极影响呢？",
+  },
+  userMessage: userDialogLines[2],
+});
+ok(
+  userDialogDecision.shouldPropose ||
+    /六栏|核对|确认整理/.test(
+      [userDialogDecision.coach.ask, userDialogDecision.coach.mirror].join(" "),
+    ),
+  "用户对话 Turn3：应收口进六栏而非继续深挖",
+);
+ok(
+  !/积极影响|身心健康|深远|更具体.*影响/.test(userDialogDecision.coach.ask ?? ""),
+  "用户对话 Turn3：不应再追问省时影响",
+);
 
 if (fail) {
   console.error(`\n${fail} failed`);

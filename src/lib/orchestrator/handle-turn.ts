@@ -69,6 +69,7 @@ import {
   postProcessStage3Sentence,
 } from "@/lib/domain/sentence-coach";
 import type { BodyKey, WorkshopBodyKey } from "@/lib/domain/types";
+import { isStage1Complete } from "@/lib/domain/stage1-complete";
 import { formatCoachDisplay } from "@/lib/llm/guard";
 import { callLlm, callLlmJson } from "@/lib/llm/client";
 import { buildFullPrompt } from "@/lib/prompts/loader";
@@ -752,6 +753,39 @@ function buildVars(
   return base;
 }
 
+function tryStage1EarlyFinalize(
+  state: SessionState,
+  userMessage: string,
+): TurnResponse | null {
+  if (state.coachContext?.handoffPhase === "proposed") return null;
+  if (!isStage1Complete(state)) return null;
+
+  const processed = postProcessStage1(
+    state,
+    {
+      verdict: "coach",
+      advance: false,
+      mirror: "",
+      coachQuestion: "",
+      userVisibleText: "",
+      essaySubstanceSufficient: true,
+    },
+    userMessage,
+  );
+  const reply = formatCoachDisplay(processed.result, { stage1: true });
+  const nextState = appendChat(
+    mergeS1FromResult(processed.state, processed.result),
+    "assistant",
+    reply,
+  );
+  return {
+    replies: [reply],
+    state: nextState,
+    requiresConfirm: nextState.coachContext?.handoffPhase === "proposed",
+    canSubmit: true,
+  };
+}
+
 async function processLlmTurn(
   state: SessionState,
   moduleId: PromptModuleId,
@@ -1250,6 +1284,9 @@ export async function handleTurn(
     }
 
     s = await ensureStage1ThemeProjection(s);
+
+    const earlyFinalize = tryStage1EarlyFinalize(s, message);
+    if (earlyFinalize) return earlyFinalize;
   }
 
   if (

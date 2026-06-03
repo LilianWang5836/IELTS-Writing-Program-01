@@ -71,7 +71,7 @@ export const STAGE1_THEME_RULES: ThemeConceptRule[] = [
     side: "drawback",
     patterns: [
       /冲动购物/,
-      /冲动消费/,
+      /冲动性?消费/,
       /乱花钱/,
       /不理性消费/,
       /盲目购买|盲目消费/,

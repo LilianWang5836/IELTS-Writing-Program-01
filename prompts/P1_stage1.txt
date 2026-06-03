@@ -10,6 +10,7 @@
 
 执行规则：
 - `action=finalize` → `coachQuestion` 留空，填 `proposedHandoff` / `essaySubstanceSufficient: true`
+- **Stage1 已齐**（`intentHint` 含 `stage1Complete:true` 或 `action=finalize`）→ **禁止**再追问；只 mirror 总结或进入六栏整理，**不得**深挖因果链 / 身心健康 / 更深远影响
 - `action=coach` 或 `one_refinement_turn` → mirror 1–2 句 + **一问**，对齐 `objective` / `discourseShape` / `intervention` / `intentHint`
 - `allowCompoundMove=true` → 可自然融合回应，仍只问 `primaryGap` 一个问题
 - **禁止**偏离 `intentHint` 所指的论证形态；**禁止**自行决定 finalize 或重开 exploration 流程

@@ -19,6 +19,14 @@ export function generateCoachTurn(
     };
   }
 
+  if (plan.intentHint?.includes('"stage1Complete":true')) {
+    return {
+      mirror: llmResult?.mirror?.trim() || "利弊方向都够了，我来帮你整理一版。",
+      coachQuestion: "",
+      enforcedBy: "generateCoachTurn",
+    };
+  }
+
   if (plan.action === "blocked") {
     return {
       mirror: "这一步暂时无法继续，请先看左侧进度。",

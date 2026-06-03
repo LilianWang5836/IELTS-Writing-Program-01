@@ -1,4 +1,4 @@
 [
-  { "turnIndex": 0, "action": "coach" },
-  { "turnIndex": 1, "action": "coach" }
+  { "turnIndex": 0, "action": "finalize" },
+  { "turnIndex": 1, "action": "finalize" }
 ]

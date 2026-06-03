@@ -65,7 +65,13 @@ export function arbitrateTurnDecision(input: {
     world.engagement.fatigueConfidence !== "uncertain";
 
   if (finalizeDecision.defaultFinalize && finalizeDecision.canPropose) {
+    const skipRefinementVeto =
+      world.subStep === "S1_EVAL" &&
+      world.coaching.readyToFinalize &&
+      world.coaching.benefitDepth !== "missing" &&
+      world.coaching.drawbackDepth !== "missing";
     if (
+      !skipRefinementVeto &&
       policyPreference.refinementVeto &&
       world.refinementVetoBudgetRemaining > 0 &&
       world.coaching.refinementCandidate &&

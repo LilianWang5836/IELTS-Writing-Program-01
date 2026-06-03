@@ -22,6 +22,9 @@ export function resolveFinalizeDecision(
   }
   return {
     defaultFinalize: coaching.readyToFinalize || coaching.discourseReady,
-    canPropose: coaching.contentReady || coaching.discourseReady,
+    canPropose:
+      coaching.contentReady ||
+      coaching.discourseReady ||
+      coaching.readyToFinalize,
   };
 }

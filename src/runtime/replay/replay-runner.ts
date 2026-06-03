@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import type { SessionState } from "@/lib/domain/types";
 import { runRuntimePipeline } from "../pipeline/runtime-pipeline";
+import { syncStage1ThemeProjection } from "../semantic/stage1-theme-resolution";
 import type { ArbitratedTurnPlan, CoachRuntimeMode } from "../types";
 import { validateCoachTurnTrace } from "../trace/coach-trace";
 
@@ -80,6 +81,9 @@ export function replayFixture(fixture: GoldenFixtureInput): {
         { role: "user", content: turn.userMessage },
       ],
     };
+    if (state.subStep === "S1_EVAL") {
+      state = syncStage1ThemeProjection(state);
+    }
     const out = runRuntimePipeline({
       state,
       userMessage: turn.userMessage,

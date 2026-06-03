@@ -1,8 +1,7 @@
 /**
- * Stage1 theme STATE commit — single pipeline: (LLM raw | rules) → sanitize → STATE.
- * No second extraction layer; extractExplorationThemes only passthroughs this shape.
+ * Stage1 semantic pipeline: LLM projection → normalize → commit gate → STATE.
+ * Monotonic commits only; downstream reads STATE without re-extraction.
  */
-import { harvestExplorationSnippets } from "@/lib/domain/stage1-snippet-harvest";
 import type {
   CoachContext,
   SessionState,
@@ -13,12 +12,16 @@ import {
   isKnownDrawbackConcept,
 } from "@/runtime/semantic/stage1-concept-catalog";
 import {
+  normalizeFactToCanonical,
+  type FactSide,
+} from "@/runtime/semantic/stage1-fact-normalization";
+import {
   inferPositionFromText,
-  normalizeConceptId,
-  projectConceptsFromMessages,
   projectConceptsFromText,
   type Stage1ConceptId,
 } from "@/runtime/semantic/theme-normalization";
+
+export const COMMIT_CONFIDENCE_THRESHOLD = 0.7;
 
 export type Stage1Stance = Stage1ThemeProjection["stance"];
 export type PositionLean = Stage1ThemeProjection["positionLean"];
@@ -30,308 +33,344 @@ export function stanceToPositionLean(stance: Stage1Stance): PositionLean {
   return "unknown";
 }
 
-export type LlmThemeProjectionRaw = {
-  /** New schema (preferred) */
-  benefits?: unknown;
-  drawbacks?: unknown;
-  /** Legacy aliases */
-  benefit?: unknown;
-  drawback?: unknown;
-  stance?: unknown;
-  benefitSnippets?: unknown;
-  drawbackSnippets?: unknown;
-  topics?: unknown;
+export type SemanticFactRaw = {
+  type?: unknown;
+  concept?: unknown;
+  normalized_concept?: unknown;
   confidence?: unknown;
 };
 
-function pushUnique(arr: string[], piece: string): void {
-  const t = piece.trim();
-  if (t.length < 4) return;
-  if (arr.some((x) => x === t || x.includes(t) || t.includes(x))) return;
-  arr.push(t);
-}
+export type LlmSemanticProjectionRaw = {
+  stance?: unknown;
+  facts?: unknown;
+};
 
-function rawConceptList(raw: LlmThemeProjectionRaw, side: "benefit" | "drawback"): unknown {
-  if (side === "benefit") {
-    return raw.benefits ?? raw.benefit;
-  }
-  return raw.drawbacks ?? raw.drawback;
-}
+/** @deprecated legacy schema adapter */
+export type LlmThemeProjectionRaw = {
+  benefits?: unknown;
+  drawbacks?: unknown;
+  benefit?: unknown;
+  drawback?: unknown;
+  stance?: unknown;
+  facts?: unknown;
+};
 
-function resolveConceptItem(
-  item: string,
-  side: "benefit" | "drawback",
-): Stage1ConceptId[] {
-  const id = normalizeConceptId(item.trim()) as Stage1ConceptId;
-  const known =
-    side === "benefit" ? isKnownBenefitConcept(id) : isKnownDrawbackConcept(id);
-  if (known) return [id];
+export type SanitizedSemanticFact = {
+  type: FactSide;
+  concept: string;
+  normalizedConcept: Stage1ConceptId;
+  confidence: number;
+};
 
-  const projected = projectConceptsFromText(item);
-  return side === "benefit" ? projected.benefits : projected.drawbacks;
-}
-
-function sanitizeConceptList(
-  raw: unknown,
-  side: "benefit" | "drawback",
-): Stage1ConceptId[] {
-  if (!Array.isArray(raw)) return [];
-  const out: Stage1ConceptId[] = [];
-  for (const item of raw) {
-    if (typeof item !== "string") continue;
-    for (const id of resolveConceptItem(item, side)) {
-      if (!out.includes(id)) out.push(id);
-    }
-  }
-  return out;
-}
-
-function sanitizeTopics(raw: unknown): string[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const out = raw
-    .filter((x): x is string => typeof x === "string")
-    .map((s) => s.trim().replace(/\s+/g, "_").slice(0, 48))
-    .filter(Boolean);
-  return out.length ? out.slice(0, 3) : undefined;
-}
-
-function clampConfidence(value: unknown): number | undefined {
-  if (typeof value !== "number" || Number.isNaN(value)) return undefined;
+function clampConfidence(value: unknown): number {
+  if (typeof value !== "number" || Number.isNaN(value)) return 0;
   return Math.max(0, Math.min(1, value));
 }
 
-function sanitizeConfidence(raw: unknown): Stage1ThemeProjection["confidence"] | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const row = raw as Record<string, unknown>;
-  const benefits = clampConfidence(row.benefits);
-  const drawbacks = clampConfidence(row.drawbacks);
-  if (benefits === undefined && drawbacks === undefined) return undefined;
-  return { benefits, drawbacks };
+function sanitizeFactSide(raw: unknown): FactSide | null {
+  if (raw === "benefit" || raw === "drawback") return raw;
+  return null;
 }
 
-function sanitizeSnippets(raw: unknown): string[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const out = raw
-    .filter((x): x is string => typeof x === "string")
-    .map((s) => s.trim())
-    .filter((s) => s.length >= 4 && s.length <= 48);
-  return out.length ? out.slice(0, 2) : undefined;
-}
-
-function sanitizeStance(raw: unknown): Stage1Stance {
+export function sanitizeStance(raw: unknown): Stage1Stance {
   if (raw === "positive" || raw === "negative" || raw === "mixed") return raw;
   if (raw === "unclear" || raw === "unknown") return "unknown";
   return "unknown";
 }
 
-function dedupeAcrossSides(
-  benefit: Stage1ConceptId[],
-  drawback: Stage1ConceptId[],
-): { benefit: Stage1ConceptId[]; drawback: Stage1ConceptId[] } {
-  const overlap = new Set(benefit.filter((id) => drawback.includes(id)));
-  if (overlap.size === 0) return { benefit, drawback };
-  return {
-    benefit: benefit.filter((id) => !overlap.has(id)),
-    drawback: drawback.filter((id) => !overlap.has(id)),
-  };
+function isCommittableConcept(id: Stage1ConceptId, type: FactSide): boolean {
+  if (type === "benefit" && id === "implicit_benefit") return true;
+  if (type === "drawback" && id === "implicit_drawback") return true;
+  return type === "benefit"
+    ? isKnownBenefitConcept(id)
+    : isKnownDrawbackConcept(id);
 }
 
-/** LLM JSON → canonical fields (internal step of commitStage1ThemeProjection). */
-export function sanitizeLlmThemeProjection(raw: LlmThemeProjectionRaw): {
-  benefit: string[];
-  drawback: string[];
-  stance: Stage1Stance;
-  benefitSnippets?: string[];
-  drawbackSnippets?: string[];
-  topics?: string[];
-  confidence?: Stage1ThemeProjection["confidence"];
-  source: "llm";
-} {
-  let benefit = sanitizeConceptList(rawConceptList(raw, "benefit"), "benefit");
-  let drawback = sanitizeConceptList(rawConceptList(raw, "drawback"), "drawback");
-  ({ benefit, drawback } = dedupeAcrossSides(benefit, drawback));
+export function sanitizeSemanticFacts(raw: unknown): SanitizedSemanticFact[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SanitizedSemanticFact[] = [];
+  const seen = new Set<string>();
 
-  return {
-    benefit,
-    drawback,
-    stance: sanitizeStance(raw.stance),
-    benefitSnippets: sanitizeSnippets(raw.benefitSnippets),
-    drawbackSnippets: sanitizeSnippets(raw.drawbackSnippets),
-    topics: sanitizeTopics(raw.topics),
-    confidence: sanitizeConfidence(raw.confidence),
-    source: "llm",
-  };
-}
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as SemanticFactRaw;
+    const type = sanitizeFactSide(row.type);
+    if (!type) continue;
 
-function inferPositionLeanFromBlob(blob: string): PositionLean {
-  if (/弊大于利|坏处更多|劣势更大|disadvantages?\s+outweigh/i.test(blob)) {
-    return "con";
+    const concept =
+      typeof row.concept === "string" ? row.concept.trim() : "";
+    const normalizedInput =
+      typeof row.normalized_concept === "string"
+        ? row.normalized_concept.trim()
+        : concept;
+    const normalizedConcept = normalizeFactToCanonical(normalizedInput, type);
+    if (!normalizedConcept) continue;
+
+    const sideOk = isCommittableConcept(normalizedConcept, type);
+    if (!sideOk) continue;
+
+    const key = `${type}:${normalizedConcept}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    out.push({
+      type,
+      concept: concept || normalizedInput,
+      normalizedConcept,
+      confidence: clampConfidence(row.confidence),
+    });
   }
-  if (
-    /利大于弊|好处更多|优势更大|overall.*benefit|advantages?\s+outweigh|好处多/i.test(
-      blob,
-    )
-  ) {
-    return "pro";
-  }
-  if (/各有|都有|平衡|相当/i.test(blob)) return "balanced";
-  return "unknown";
+
+  return out;
 }
 
-function sidePresent(
-  benefit: string[],
-  drawback: string[],
-  benefitSnippets: string[] | undefined,
-  drawbackSnippets: string[] | undefined,
-  side: "benefit" | "drawback",
-): boolean {
-  if (side === "benefit") {
-    return benefit.length >= 1 || (benefitSnippets?.length ?? 0) >= 1;
-  }
-  return drawback.length >= 1 || (drawbackSnippets?.length ?? 0) >= 1;
-}
+/** Rules-only step-1 input when LLM is disabled (CI / replay). */
+export function rulesFactsFromUserMessage(message: string): LlmSemanticProjectionRaw {
+  const text = message.trim();
+  if (!text) return { stance: "unclear", facts: [] };
 
-function buildRulesConcepts(messages: string[]): {
-  benefit: string[];
-  drawback: string[];
-  stance: Stage1Stance;
-  benefitSnippets?: string[];
-  drawbackSnippets?: string[];
-} {
-  const projected = projectConceptsFromMessages(messages);
-  const blob = messages.join("\n");
-  const inferred = inferPositionFromText(blob);
-
+  const inferred = inferPositionFromText(text);
   let stance: Stage1Stance = "unknown";
   if (inferred === "pro") stance = "positive";
   else if (inferred === "con") stance = "negative";
   else if (inferred === "balanced") stance = "mixed";
 
-  const benefit = [...projected.benefits];
-  const drawback = [...projected.drawbacks];
+  const projected = projectConceptsFromText(text);
+  const facts: SemanticFactRaw[] = [];
 
-  if (benefit.length === 0 && stance === "positive") {
-    benefit.push("implicit_benefit");
+  for (const id of projected.benefits) {
+    facts.push({
+      type: "benefit",
+      concept: text,
+      normalized_concept: id,
+      confidence: 0.85,
+    });
+  }
+  for (const id of projected.drawbacks) {
+    facts.push({
+      type: "drawback",
+      concept: text,
+      normalized_concept: id,
+      confidence: 0.85,
+    });
   }
 
-  const { benefitSnippets, drawbackSnippets } = harvestExplorationSnippets(messages);
-
-  for (const s of benefitSnippets) {
-    for (const id of projectConceptsFromText(s).benefits) {
-      if (!benefit.includes(id)) benefit.push(id);
-    }
-  }
-  for (const s of drawbackSnippets) {
-    for (const id of projectConceptsFromText(s).drawbacks) {
-      if (!drawback.includes(id)) drawback.push(id);
-    }
-  }
-
-  if (drawback.length === 0 && drawbackSnippets.length >= 1 && stance !== "unknown") {
-    drawback.push("implicit_drawback");
+  if (
+    facts.length === 0 &&
+    stance === "positive" &&
+    /积极|好处|利大于|positive/i.test(text)
+  ) {
+    facts.push({
+      type: "benefit",
+      concept: text,
+      normalized_concept: "implicit_benefit",
+      confidence: 0.8,
+    });
   }
 
+  return { stance, facts };
+}
+
+function emptyProjection(turnIndex: number, source: "llm" | "rules"): Stage1ThemeProjection {
   return {
-    benefit,
-    drawback,
-    stance,
-    benefitSnippets: benefitSnippets.length ? benefitSnippets : undefined,
-    drawbackSnippets: drawbackSnippets.length ? drawbackSnippets : undefined,
+    benefit: [],
+    drawback: [],
+    stance: "unknown",
+    benefits: [],
+    drawbacks: [],
+    concepts: [],
+    positionLean: "unknown",
+    themesComplete: false,
+    readyToFinalize: false,
+    source,
+    turnIndex,
   };
 }
 
-function mergeDisplayLists(
-  concepts: string[],
-  snippets: string[] | undefined,
-): string[] {
-  const out = [...concepts];
-  for (const s of snippets ?? []) {
-    pushUnique(out, s);
-  }
-  return out;
+function mergeStanceMonotonic(
+  existing: Stage1Stance,
+  incoming: Stage1Stance,
+): Stage1Stance {
+  if (incoming === "unknown") return existing;
+  if (existing === "unknown") return incoming;
+  return existing;
+}
+
+function pushConcept(
+  list: string[],
+  concepts: Set<string>,
+  id: Stage1ConceptId,
+): void {
+  if (concepts.has(id)) return;
+  concepts.add(id);
+  list.push(id);
 }
 
 /**
- * Single commit: sanitize (LLM or rules) → full Stage1ThemeProjection STATE.
- * readyToFinalize stays false until enrichStage1ThemeProjection.
+ * Step 3–4: confidence gate + monotonic STATE merge (never delete committed facts).
  */
+export function mergeMonotonicSemanticState(
+  existing: Stage1ThemeProjection | null,
+  raw: LlmSemanticProjectionRaw,
+  meta: { source: "llm" | "rules"; turnIndex: number },
+): Stage1ThemeProjection {
+  const base =
+    existing && existing.concepts !== undefined
+      ? {
+          ...existing,
+          benefit: [...existing.benefit],
+          drawback: [...existing.drawback],
+          concepts: [...(existing.concepts ?? [...existing.benefit, ...existing.drawback])],
+        }
+      : emptyProjection(meta.turnIndex, meta.source);
+
+  const facts = sanitizeSemanticFacts(raw.facts);
+  const approved = facts.filter((f) => f.confidence >= COMMIT_CONFIDENCE_THRESHOLD);
+  const conceptSet = new Set<string>(base.concepts ?? []);
+
+  const benefit = [...base.benefit];
+  const drawback = [...base.drawback];
+
+  for (const fact of approved) {
+    if (fact.type === "benefit") {
+      pushConcept(benefit, conceptSet, fact.normalizedConcept);
+    } else {
+      pushConcept(drawback, conceptSet, fact.normalizedConcept);
+    }
+  }
+
+  const stance = mergeStanceMonotonic(base.stance, sanitizeStance(raw.stance));
+
+  return finalizeProjectionShape({
+    benefit,
+    drawback,
+    stance,
+    concepts: [...conceptSet],
+    source: meta.source,
+    turnIndex: meta.turnIndex,
+    readyToFinalize: base.readyToFinalize ?? false,
+  });
+}
+
+export function bootstrapSemanticStateFromRules(
+  messages: string[],
+): Stage1ThemeProjection {
+  let state: Stage1ThemeProjection | null = null;
+  for (let i = 0; i < messages.length; i++) {
+    const raw = rulesFactsFromUserMessage(messages[i] ?? "");
+    state = mergeMonotonicSemanticState(state, raw, {
+      source: "rules",
+      turnIndex: i + 1,
+    });
+  }
+  return state ?? emptyProjection(0, "rules");
+}
+
+function finalizeProjectionShape(input: {
+  benefit: string[];
+  drawback: string[];
+  stance: Stage1Stance;
+  concepts: string[];
+  source: "llm" | "rules";
+  turnIndex: number;
+  readyToFinalize: boolean;
+}): Stage1ThemeProjection {
+  const positionLean = stanceToPositionLean(input.stance);
+  const themesComplete =
+    input.benefit.length >= 1 &&
+    input.drawback.length >= 1 &&
+    input.stance !== "unknown";
+
+  return {
+    benefit: input.benefit,
+    drawback: input.drawback,
+    stance: input.stance,
+    benefits: [...input.benefit],
+    drawbacks: [...input.drawback],
+    concepts: input.concepts,
+    positionLean,
+    themesComplete,
+    readyToFinalize: input.readyToFinalize,
+    source: input.source,
+    turnIndex: input.turnIndex,
+  };
+}
+
+/** @deprecated use mergeMonotonicSemanticState */
+export function sanitizeLlmThemeProjection(raw: LlmThemeProjectionRaw): {
+  benefit: string[];
+  drawback: string[];
+  stance: Stage1Stance;
+  source: "llm";
+} {
+  if (Array.isArray(raw.facts)) {
+    const merged = mergeMonotonicSemanticState(null, raw, {
+      source: "llm",
+      turnIndex: 0,
+    });
+    return {
+      benefit: merged.benefit,
+      drawback: merged.drawback,
+      stance: merged.stance,
+      source: "llm",
+    };
+  }
+
+  const legacyFacts: SemanticFactRaw[] = [];
+  const benefitList = raw.benefits ?? raw.benefit;
+  const drawbackList = raw.drawbacks ?? raw.drawback;
+  if (Array.isArray(benefitList)) {
+    for (const item of benefitList) {
+      if (typeof item === "string") {
+        legacyFacts.push({
+          type: "benefit",
+          concept: item,
+          normalized_concept: item,
+          confidence: 0.85,
+        });
+      }
+    }
+  }
+  if (Array.isArray(drawbackList)) {
+    for (const item of drawbackList) {
+      if (typeof item === "string") {
+        legacyFacts.push({
+          type: "drawback",
+          concept: item,
+          normalized_concept: item,
+          confidence: 0.85,
+        });
+      }
+    }
+  }
+  const merged = mergeMonotonicSemanticState(
+    null,
+    { stance: raw.stance, facts: legacyFacts },
+    { source: "llm", turnIndex: 0 },
+  );
+  return {
+    benefit: merged.benefit,
+    drawback: merged.drawback,
+    stance: merged.stance,
+    source: "llm",
+  };
+}
+
+/** @deprecated use mergeMonotonicSemanticState */
 export function commitStage1ThemeProjection(
   state: SessionState,
   messages: string[],
   input: { llmRaw?: LlmThemeProjectionRaw; source: "llm" | "rules" },
 ): Stage1ThemeProjection {
-  const rulesFallback = buildRulesConcepts(messages);
-
-  let benefit: string[];
-  let drawback: string[];
-  let stance: Stage1Stance;
-  let benefitSnippets: string[] | undefined;
-  let drawbackSnippets: string[] | undefined;
-  let topics: string[] | undefined;
-  let confidence: Stage1ThemeProjection["confidence"];
-  let source = input.source;
-
+  void state;
   if (input.llmRaw) {
-    const sanitized = sanitizeLlmThemeProjection(input.llmRaw);
-    benefit = sanitized.benefit.length ? sanitized.benefit : rulesFallback.benefit;
-    drawback = sanitized.drawback.length ? sanitized.drawback : rulesFallback.drawback;
-    stance =
-      sanitized.stance !== "unknown" ? sanitized.stance : rulesFallback.stance;
-    benefitSnippets = sanitized.benefitSnippets?.length
-      ? sanitized.benefitSnippets
-      : rulesFallback.benefitSnippets;
-    drawbackSnippets = sanitized.drawbackSnippets?.length
-      ? sanitized.drawbackSnippets
-      : rulesFallback.drawbackSnippets;
-    topics = sanitized.topics;
-    confidence = sanitized.confidence;
-    source = "llm";
-  } else {
-    benefit = rulesFallback.benefit;
-    drawback = rulesFallback.drawback;
-    stance = rulesFallback.stance;
-    benefitSnippets = rulesFallback.benefitSnippets;
-    drawbackSnippets = rulesFallback.drawbackSnippets;
-    topics = undefined;
-    confidence = undefined;
-    source = "rules";
-  }
-
-  const benefits = mergeDisplayLists(benefit, benefitSnippets);
-  const drawbacks = mergeDisplayLists(drawback, drawbackSnippets);
-
-  let positionLean = stanceToPositionLean(stance);
-  if (positionLean === "unknown") {
-    positionLean = inferPositionLeanFromBlob(
-      [
-        messages.join("\n"),
-        state.handoff?.position ?? "",
-        state.s1?.position ?? "",
-      ].join("\n"),
+    return mergeMonotonicSemanticState(
+      readStage1ThemeProjection(state),
+      input.llmRaw,
+      { source: input.source, turnIndex: messages.length },
     );
   }
-
-  const themesComplete =
-    sidePresent(benefit, drawback, benefitSnippets, drawbackSnippets, "benefit") &&
-    sidePresent(benefit, drawback, benefitSnippets, drawbackSnippets, "drawback") &&
-    stance !== "unknown";
-
-  return {
-    benefit,
-    drawback,
-    stance,
-    benefitSnippets,
-    drawbackSnippets,
-    benefits,
-    drawbacks,
-    positionLean,
-    themesComplete,
-    readyToFinalize: false,
-    topics,
-    confidence,
-    source,
-    turnIndex: messages.length,
-  };
+  return bootstrapSemanticStateFromRules(messages);
 }
 
 export function readStage1ThemeProjection(
@@ -349,11 +388,6 @@ export function isStage1ProjectionFresh(
   return proj.turnIndex === messageCount;
 }
 
-function projectionNeedsRecommit(proj: Stage1ThemeProjection | null): boolean {
-  if (!proj) return true;
-  return proj.benefits === undefined || proj.drawbacks === undefined;
-}
-
 export function attachStage1ThemeProjection(
   state: SessionState,
   projection: Stage1ThemeProjection,
@@ -367,25 +401,17 @@ export function attachStage1ThemeProjection(
   };
 }
 
-/**
- * Read fresh STATE or rules commit (no readyToFinalize enrich — caller or extract handles that).
- */
+/** Read committed STATE only — no re-extraction. */
 export function getStage1ThemeProjection(
   state: SessionState,
-  messages: string[],
+  _messages?: string[],
 ): Stage1ThemeProjection {
-  const stored = readStage1ThemeProjection(state);
-  if (
-    stored &&
-    isStage1ProjectionFresh(state, messages.length) &&
-    !projectionNeedsRecommit(stored)
-  ) {
-    return stored;
-  }
-  return commitStage1ThemeProjection(state, messages, { source: "rules" });
+  return (
+    readStage1ThemeProjection(state) ??
+    emptyProjection(0, "rules")
+  );
 }
 
-/** @deprecated use getStage1ThemeProjection */
 export const resolveStage1ThemeProjection = getStage1ThemeProjection;
 
 export function projectionThemesComplete(

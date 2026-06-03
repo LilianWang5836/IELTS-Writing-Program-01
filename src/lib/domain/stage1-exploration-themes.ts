@@ -7,7 +7,7 @@ import {
 } from "./stage1-exploration";
 import { resolveQuestionHintType } from "./stage1-question-hint";
 import {
-  getStage1ThemeProjection,
+  readStage1ThemeProjection,
   stanceToPositionLean,
 } from "@/lib/domain/stage1-theme-projection";
 import {
@@ -93,12 +93,27 @@ export function enrichStage1ThemeProjection(
   return { ...projection, readyToFinalize };
 }
 
-/** Reads stage1ThemeProjection STATE only — no concept re-merge. */
+/** Reads committed stage1ThemeProjection STATE only — no re-extraction. */
 export function extractExplorationThemes(
   state: SessionState,
   msgs: string[],
 ): ExplorationThemes {
-  const projection = getStage1ThemeProjection(state, msgs);
+  const projection = readStage1ThemeProjection(state);
+  if (!projection || projection.concepts === undefined) {
+    return {
+      benefits: [],
+      drawbacks: [],
+      positionLean: "unknown",
+      themesComplete: false,
+      readyToFinalize: false,
+      semantic: {
+        benefits: [],
+        drawbacks: [],
+        positionLean: "unknown",
+        userHasExpressedCompleteIdea: false,
+      },
+    };
+  }
   const enriched =
     projection.themesComplete && !projection.readyToFinalize
       ? enrichStage1ThemeProjection(projection, state, msgs)
@@ -388,6 +403,20 @@ export function isExplorationQuestionRedundant(
     return true;
   }
   if (
+    themes.themesComplete &&
+    /怎么.*平衡|如何.*平衡|平衡这两个|在文章中平衡|两方面.*平衡/i.test(q) &&
+    !/结构|Body|段落|整理|六栏/.test(q)
+  ) {
+    return true;
+  }
+  if (
+    themes.drawbacks.length >= 1 &&
+    /实体店.*倒闭|质量不好|具体定一个|最主要的坏处.*还是/i.test(q) &&
+    !/结构|Body|段落|整理|六栏/.test(q)
+  ) {
+    return true;
+  }
+  if (
     themes.readyToFinalize &&
     /能.*说说|具体是什么|还有什么|哪一方面/i.test(q) &&
     !/Body|结构|整理|具体一点|写实/.test(q)
@@ -569,15 +598,15 @@ function pickLatestSpecificPoint(msgs: string[], kind: SideKind): string {
     const isBenefit = looksLikeBenefitLine(line);
     const isDrawback = looksLikeDrawbackLine(line);
 
-    if (kind === "benefit" && isBenefit && !isDrawback) {
+    if (kind === "benefit" && isBenefit) {
       const isolated = isolatePointForSide(line, "benefit");
       if (isolated && isPointSpecificEnough(isolated)) return isolated;
-      if (isolated.length >= 12) return isolated;
+      if (isolated.length >= 8) return isolated;
     }
     if (kind === "drawback" && isDrawback) {
       const isolated = isolatePointForSide(line, "drawback");
       if (isolated && isPointSpecificEnough(isolated)) return isolated;
-      if (isolated.length >= 12) return isolated;
+      if (isolated.length >= 8) return isolated;
     }
   }
   return "";

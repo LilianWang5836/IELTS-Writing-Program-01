@@ -19,10 +19,12 @@ import {
   themesToHandoffPatch,
 } from "../src/lib/domain/stage1-exploration-themes.ts";
 import {
-  commitStage1ThemeProjection,
+  mergeMonotonicSemanticState,
   sanitizeLlmThemeProjection,
 } from "../src/lib/domain/stage1-theme-projection.ts";
 import { enrichStage1ThemeProjection } from "../src/lib/domain/stage1-exploration-themes.ts";
+import { syncStage1ThemeProjection } from "../src/runtime/semantic/stage1-theme-resolution.ts";
+import { detectFrustration } from "../src/runtime/shared/frustration.ts";
 import {
   resolveQuestionHintType,
   topicImpliesProsConsWeighing,
@@ -78,7 +80,7 @@ function stateAfterUserLines(lines) {
       ],
     };
   }
-  return state;
+  return syncStage1ThemeProjection(state);
 }
 
 const s1 = stateAfterUserLines([
@@ -293,7 +295,7 @@ function stateAfterUserLinesQ7(lines) {
       ],
     };
   }
-  return state;
+  return syncStage1ThemeProjection(state);
 }
 
 const onlineConfirmState = stateAfterUserLinesQ7([
@@ -401,8 +403,10 @@ const naturalThemes = extractExplorationThemes(
   naturalTurn2Lines.slice(0, 2),
 );
 ok(
-  naturalThemes.benefits.some((b) => /节省|时间|网购/.test(b)) &&
-    naturalThemes.drawbacks.some((d) => /冲动|消费/.test(d)),
+  naturalThemes.benefits.some((b) =>
+    ["time_saving", "convenience"].includes(b),
+  ) &&
+    naturalThemes.drawbacks.includes("impulse_buying"),
   "网购题：「A，但是 B」自然转折利弊可被提取",
 );
 
@@ -489,16 +493,33 @@ ok(
 );
 
 // ── LLM projection path（模拟 stored projection = SOURCE OF TRUTH）──
-const llmCommitted = commitStage1ThemeProjection(impulseState, impulseMsgs, {
-  llmRaw: {
-    benefits: ["convenience", "time_saving"],
-    drawbacks: ["impulse_buying"],
+const llmCommitted = mergeMonotonicSemanticState(
+  impulseState.coachContext?.stage1ThemeProjection ?? null,
+  {
     stance: "positive",
-    topics: ["online_shopping"],
-    confidence: { benefits: 0.9, drawbacks: 0.85 },
+    facts: [
+      {
+        type: "benefit",
+        concept: "方便",
+        normalized_concept: "convenience",
+        confidence: 0.9,
+      },
+      {
+        type: "benefit",
+        concept: "节约时间",
+        normalized_concept: "time_saving",
+        confidence: 0.9,
+      },
+      {
+        type: "drawback",
+        concept: "冲动购物",
+        normalized_concept: "impulse_buying",
+        confidence: 0.9,
+      },
+    ],
   },
-  source: "llm",
-});
+  { source: "llm", turnIndex: impulseShoppingLines.length },
+);
 const llmProj = enrichStage1ThemeProjection(llmCommitted, impulseState, impulseMsgs);
 const impulseLlmState = {
   ...impulseState,
@@ -516,21 +537,63 @@ ok(
 ok(impulseLlmThemes.themesComplete, "LLM projection：themesComplete 由 concept 驱动");
 ok(
   sanitizeLlmThemeProjection({
-    benefits: ["convenience", "not_a_real_concept"],
-    drawbacks: ["impulse_buying", "fake_drawback"],
+    facts: [
+      { type: "benefit", concept: "c", normalized_concept: "convenience", confidence: 0.85 },
+      { type: "benefit", concept: "x", normalized_concept: "not_a_real_concept", confidence: 0.85 },
+      { type: "drawback", concept: "i", normalized_concept: "impulse_buying", confidence: 0.85 },
+      { type: "drawback", concept: "f", normalized_concept: "fake_drawback", confidence: 0.85 },
+    ],
     stance: "positive",
   }).benefit.length === 1,
   "LLM projection：sanitize 过滤未知 concept",
 );
 ok(
-  sanitizeLlmThemeProjection({ drawbacks: ["冲动购物"], benefits: [], stance: "unclear" })
-    .drawback.includes("impulse_buying"),
+  sanitizeLlmThemeProjection({
+    facts: [{ type: "drawback", concept: "冲动购物", normalized_concept: "冲动购物", confidence: 0.85 }],
+    stance: "unclear",
+  }).drawback.includes("impulse_buying"),
   "LLM projection：中文 surface form 归一化为 canonical id",
 );
 ok(
   sanitizeLlmThemeProjection({ stance: "unclear" }).stance === "unknown",
   "LLM projection：unclear stance 映射为 unknown",
 );
+
+// ── 短 Session：立场 + 冲动购物 → 平衡/重复坏处/二选一坏处 均应 redundant ──
+const shortSessionLines = [
+  "讨论是消极还是积极变化，我觉得整体上是积极的",
+  "可能会让冲动购物变多",
+];
+const shortSessionState = stateAfterUserLinesQ7(shortSessionLines);
+const shortSessionMsgs = shortSessionState.chatHistory
+  .filter((m) => m.role === "user")
+  .map((m) => m.content);
+const shortSessionThemes = extractExplorationThemes(shortSessionState, shortSessionMsgs);
+ok(shortSessionThemes.themesComplete, "短 Session：立场+冲动购物后 themesComplete");
+ok(
+  isExplorationQuestionRedundant(
+    "结合你之前认为整体是积极趋势的立场，你打算怎么在文章中平衡这两个方面呢？",
+    shortSessionThemes,
+  ),
+  "短 Session：平衡 meta-coaching 问应判 redundant",
+);
+ok(
+  isExplorationQuestionRedundant(
+    "既然你认为网购普及整体是好事，那它有没有带来什么坏处，比如对实体店或我们的生活？",
+    shortSessionThemes,
+  ),
+  "短 Session：重复坏处问应判 redundant",
+);
+ok(
+  isExplorationQuestionRedundant(
+    "那我们具体定一个：你觉得网购普及最主要的坏处，是导致实体店倒闭，还是容易买到质量不好的商品呢？",
+    shortSessionThemes,
+  ),
+  "短 Session：二选一坏处问应判 redundant",
+);
+
+ok(detectFrustration("前面不是讲了坏处"), "挫折检测：前面不是讲了坏处");
+ok(detectFrustration("什么叫 平衡"), "挫折检测：什么叫平衡");
 
 if (fail) {
   console.error(`\n${fail} failed`);

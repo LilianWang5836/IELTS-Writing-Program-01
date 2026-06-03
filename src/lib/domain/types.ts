@@ -161,9 +161,11 @@ export interface Stage1ThemeProjection {
   stance: "positive" | "negative" | "mixed" | "unknown";
   benefitSnippets?: string[];
   drawbackSnippets?: string[];
-  /** Pre-merged display list (concepts + snippets); sole source for downstream reads */
+  /** Pre-merged display list (concept ids); sole source for downstream reads */
   benefits: string[];
   drawbacks: string[];
+  /** Monotonic committed concept ids (benefit + drawback) */
+  concepts?: string[];
   positionLean: "pro" | "con" | "balanced" | "unknown";
   themesComplete: boolean;
   readyToFinalize: boolean;

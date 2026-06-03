@@ -276,8 +276,11 @@ function finalizeProjectionShape(input: {
   readyToFinalize: boolean;
 }): Stage1ThemeProjection {
   const positionLean = stanceToPositionLean(input.stance);
+  const hasConcreteBenefit = input.benefit.some(
+    (id) => id !== "implicit_benefit",
+  );
   const themesComplete =
-    input.benefit.length >= 1 &&
+    hasConcreteBenefit &&
     input.drawback.length >= 1 &&
     input.stance !== "unknown";
 

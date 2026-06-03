@@ -3,6 +3,10 @@ import {
   extractExplorationThemes,
   isPointSpecificEnough,
 } from "@/lib/domain/stage1-exploration-themes";
+import {
+  hasConcreteBenefitConcepts,
+  hasConcreteDrawbackConcepts,
+} from "@/lib/domain/stage1-coach-gap";
 import { getNextNeed, type CoverageState } from "@/lib/domain/chain-discourse";
 import type { SessionState } from "@/lib/domain/types";
 import type { CoachingSignals, DiscourseSignals, PrimaryGap } from "../types";
@@ -40,11 +44,11 @@ export function deriveCoachingSignalsStage1(
   const substance = assessExplorationContent(state, userMessages[userMessages.length - 1]);
 
   const benefitDepth = depthLabel(
-    themes.benefits.length >= 1,
-    themes.benefits.length === 1 && themes.benefits[0].length < 12,
+    hasConcreteBenefitConcepts(themes.benefits),
+    false,
   );
   const drawbackDepth = depthLabel(
-    themes.drawbacks.length >= 1,
+    hasConcreteDrawbackConcepts(themes.drawbacks),
     themes.drawbacks.length === 1 && themes.drawbacks[0].length < 12,
   );
 

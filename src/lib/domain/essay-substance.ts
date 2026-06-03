@@ -10,15 +10,18 @@ import {
   isSemanticToken,
 } from "@/runtime/semantic/semantic-projection";
 import {
+  formatStage1IntentHint,
+  resolveStage1CollectionGap,
+} from "./stage1-coach-gap";
+import {
   bodyPointsTooSimilar,
   extractExplorationThemes,
-  getPointRefinementAsk,
   isPointSpecificEnough,
   isProsConsQuestionType,
   looksLikeBenefitLine,
   looksLikeDrawbackLine,
+  resolveStage1CoachGap,
   sanitizeBodyPointForLean,
-  suggestStructureQuestion,
   themesToHandoffPatch,
   type PositionLean,
 } from "./stage1-exploration-themes";
@@ -1141,18 +1144,12 @@ export function assessEssaySubstance(state: SessionState): EssaySubstanceAssessm
     const hint = resolveQuestionHintType(state);
     if (isProsConsQuestionType(hint)) {
       const themes = extractExplorationThemes(state, msgs);
-      if (themes.positionLean !== "unknown" && !themes.benefits.length) {
+      const gap = resolveStage1CollectionGap(themes);
+      if (gap.gapType !== "none") {
         return {
           sufficient: false,
-          gaps: ["好处方向"],
-          coachPrompt: suggestStructureQuestion(state, themes),
-        };
-      }
-      if (themes.benefits.length && !themes.drawbacks.length) {
-        return {
-          sufficient: false,
-          gaps: ["坏处方向"],
-          coachPrompt: suggestStructureQuestion(state, themes),
+          gaps: [gap.gapType],
+          coachPrompt: formatStage1IntentHint(gap, state, themes),
         };
       }
     }
@@ -1199,7 +1196,13 @@ export function assessEssaySubstance(state: SessionState): EssaySubstanceAssessm
 
   let coachPrompt = singleGapCoachPrompt(sides, state) || gaps[0] || "";
   if (themes?.themesComplete && !themes.readyToFinalize) {
-    coachPrompt = getPointRefinementAsk(state, themes) || coachPrompt;
+    const refineGap = resolveStage1CoachGap(state, themes, msgs);
+    coachPrompt = formatStage1IntentHint(refineGap, state, themes);
+  } else if (themes && !themes.themesComplete) {
+    const collectionGap = resolveStage1CollectionGap(themes);
+    if (collectionGap.gapType !== "none") {
+      coachPrompt = formatStage1IntentHint(collectionGap, state, themes);
+    }
   }
 
   return {

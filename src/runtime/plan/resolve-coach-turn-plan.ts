@@ -50,7 +50,13 @@ export function resolveCoachTurnPlan(
     );
   }
 
-  const policyPreference = suggestPolicyPreference(world);
+  const userMessages = state.chatHistory
+    .filter((m) => m.role === "user")
+    .map((m) => m.content);
+  const policyPreference = suggestPolicyPreference(world, {
+    state,
+    userMessages,
+  });
   const plan = arbitrateTurnDecision({
     world,
     policyPreference,

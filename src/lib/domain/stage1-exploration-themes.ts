@@ -5,7 +5,12 @@ import {
   brainstormFallback,
   explorationSideLabel,
 } from "./stage1-exploration";
-import { resolveQuestionHintType } from "./stage1-question-hint";
+import {
+  formatStage1GapMemorySummary,
+  hasConcreteBenefitConcepts,
+  resolveStage1CollectionGap,
+  type Stage1CoachGap,
+} from "./stage1-coach-gap";
 import {
   readStage1ThemeProjection,
   stanceToPositionLean,
@@ -254,60 +259,61 @@ export function isBodyRefinementSatisfied(
   return msgs.some((m) => userMessageRefinesBody(m, body, themes));
 }
 
-export function getPointRefinementAsk(
+function benefitBodyForLean(pro: boolean, body: "body1" | "body2"): SideKind {
+  if (pro) return body === "body1" ? "benefit" : "drawback";
+  return body === "body1" ? "drawback" : "benefit";
+}
+
+/** PLAN layer: collection + refinement gaps — no NL output. */
+export function resolveStage1CoachGap(
   state: SessionState,
   themes: ExplorationThemes,
-  msgs: string[] = state.chatHistory
-    .filter((m) => m.role === "user")
-    .map((m) => m.content.trim())
-    .filter(Boolean),
-): string | null {
-  if (!themes.themesComplete) return null;
-  const pro = themes.positionLean === "pro";
+  msgs: string[],
+): Stage1CoachGap {
+  const collection = resolveStage1CollectionGap(themes);
+  if (collection.gapType !== "none") return collection;
 
+  if (!themes.themesComplete) {
+    return { gapType: "none", action: "coach" };
+  }
+
+  const pro = themes.positionLean === "pro";
   if (!isBodyRefinementSatisfied("body1", themes, state, msgs)) {
-    return suggestPointRefinementQuestion(state, themes, "body1", pro);
+    return {
+      gapType: "deepen_body1",
+      action: "ask_refinement",
+      targetBody: "body1",
+      side: benefitBodyForLean(pro, "body1"),
+    };
   }
   if (!isBodyRefinementSatisfied("body2", themes, state, msgs)) {
-    return suggestPointRefinementQuestion(state, themes, "body2", pro);
+    return {
+      gapType: "deepen_body2",
+      action: "ask_refinement",
+      targetBody: "body2",
+      side: benefitBodyForLean(pro, "body2"),
+    };
   }
+  return { gapType: "none", action: "coach" };
+}
+
+/** @deprecated Rule layer must not generate NL; use resolveStage1CoachGap + LLM. */
+export function getPointRefinementAsk(
+  _state: SessionState,
+  _themes: ExplorationThemes,
+  _msgs: string[] = [],
+): string | null {
   return null;
 }
 
+/** @deprecated Removed — rule layer must not generate domain-specific questions. */
 export function suggestPointRefinementQuestion(
-  state: SessionState,
-  themes: ExplorationThemes,
-  body: "body1" | "body2",
-  pro: boolean,
+  _state: SessionState,
+  _themes: ExplorationThemes,
+  _body: "body1" | "body2",
+  _pro: boolean,
 ): string {
-  const isBenefitBody = (body === "body1" && pro) || (body === "body2" && !pro);
-  const hint = themes.benefits[0] || themes.drawbacks[0] || "";
-  if (isBenefitBody) {
-    if (/经济|收入|就业|服务/.test(hint)) {
-      return (
-        "Body1 的好处还想再写实一点：例如游客消费怎样带动本地人收入或就业？" +
-        "请用一句话写出这一段要论证的核心（谁 + 怎么受益）。"
-      );
-    }
-    if (/文化|交流/.test(hint)) {
-      return (
-        "Body1 可以写文化方面：具体是哪些交流、对当地人或游客有什么影响？" +
-        "用一句话写出这一段的总括论点。"
-      );
-    }
-    return (
-      "Body1 的好处还偏笼统。请用一句话写清：谁（游客/政府/居民）+ 发生什么 + 带来什么好处。"
-    );
-  }
-  if (/拥堵|交通|拥挤/.test(hint) || /垃圾|环境|污染/.test(hint)) {
-    return (
-      "Body2 的坏处可以再具体：拥堵或垃圾怎样影响居民日常生活？" +
-      "用一句话写出这一段的核心论点（对象 + 负面影响）。"
-    );
-  }
-  return (
-    "Body2 的坏处请再具体一点：对谁、造成什么不便或破坏？用一句话写出能展开论证的总括。"
-  );
+  return "";
 }
 
 /** 过滤不应再展示的开场式追问 */
@@ -326,40 +332,13 @@ export function sanitizeExplorationCoachAsk(
 export function buildExplorationMemorySummary(
   state: SessionState,
   themes: ExplorationThemes,
+  msgs: string[] = state.chatHistory
+    .filter((m) => m.role === "user")
+    .map((m) => m.content.trim())
+    .filter(Boolean),
 ): string {
-  const lines: string[] = [];
-  if (themes.positionLean !== "unknown") {
-    const label =
-      themes.positionLean === "pro"
-        ? "利大于弊 / 好处更多"
-        : themes.positionLean === "con"
-          ? "弊大于利 / 坏处更多"
-          : "利弊相当";
-    lines.push(`立场倾向：${label}`);
-  }
-  if (themes.benefits.length) {
-    lines.push(`已收集的好处（勿再问）：${themes.benefits.join("；")}`);
-  }
-  if (themes.drawbacks.length) {
-    lines.push(`已收集的坏处（勿再问）：${themes.drawbacks.join("；")}`);
-  }
-  if (themes.themesComplete && !themes.readyToFinalize) {
-    lines.push(
-      "系统判断：利弊与立场已齐，但分论点仍偏笼统——引导学生把 Body1/Body2 各收成一句可论证的总括（谁+机制+结果），勿整理六栏，勿再问审题开场白。",
-    );
-  }
-  if (themes.readyToFinalize) {
-    lines.push(
-      "系统判断：可整理六栏；禁止重复追问好处/坏处/「这题讨论什么」。",
-    );
-  }
-  const hint = resolveQuestionHintType(state);
-  if (hint === "adv_disadv" || hint === "pos_neg") {
-    lines.push(
-      "教练内部可先想：经济（收入/就业）、居民生活（拥堵/拥挤）、自然环境（垃圾/污染）等角度；只向学生追问尚未覆盖的角度。",
-    );
-  }
-  return lines.join("\n");
+  const gap = resolveStage1CoachGap(state, themes, msgs);
+  return formatStage1GapMemorySummary(gap, themes);
 }
 
 /** 教练追问是否在要学生重复已说过的利弊 */
@@ -403,6 +382,15 @@ export function isExplorationQuestionRedundant(
     return true;
   }
   if (
+    themes.drawbacks.length >= 1 &&
+    themes.positionLean !== "unknown" &&
+    !hasConcreteBenefitConcepts(themes.benefits) &&
+    /怎么.*平衡|如何.*平衡|平衡这两个|在文章中平衡|两方面.*平衡/i.test(q) &&
+    !/结构|Body|段落|整理|六栏/.test(q)
+  ) {
+    return true;
+  }
+  if (
     themes.themesComplete &&
     /怎么.*平衡|如何.*平衡|平衡这两个|在文章中平衡|两方面.*平衡/i.test(q) &&
     !/结构|Body|段落|整理|六栏/.test(q)
@@ -426,55 +414,12 @@ export function isExplorationQuestionRedundant(
   return false;
 }
 
+/** @deprecated Rule layer must not generate NL; PLAN gap → LLM only. */
 export function suggestStructureQuestion(
-  state: SessionState,
-  themes: ExplorationThemes,
+  _state: SessionState,
+  _themes: ExplorationThemes,
 ): string {
-  const refine = getPointRefinementAsk(state, themes);
-  if (refine) return refine;
-
-  if (themes.readyToFinalize) {
-    if (themes.positionLean === "pro" && themes.benefits.length >= 2) {
-      return (
-        "好处你有两条（如收入和服务业），可以都放在 Body1 一段里写，也可以拆成两段；" +
-        "Body2 写弊端。你更倾向哪种？确认后我整理六栏。"
-      );
-    }
-    return (
-      `利弊和立场都够了：Body1 写${themes.positionLean === "pro" ? "主要好处" : themes.positionLean === "con" ? "主要坏处" : "一方面"}，` +
-      `Body2 写${themes.positionLean === "pro" ? "主要坏处" : themes.positionLean === "con" ? "主要好处" : "另一方面"}。若无异议我整理六栏？`
-    );
-  }
-  if (themes.themesComplete) {
-    return getPointRefinementAsk(state, themes) ?? "请把 Body1、Body2 各收成一句更具体的总括论点。";
-  }
-  if (!themes.benefits.length) {
-    return "还差「好处」一侧：从当地人、经济或文化里选一个你最想写的点，用一句话说说？";
-  }
-  if (!themes.drawbacks.length) {
-    return "还差「坏处」一侧：对居民生活或环境，你最想提的一点是什么？";
-  }
-  return brainstormAngleQuestion(state, themes);
-}
-
-function brainstormAngleQuestion(
-  state: SessionState,
-  themes: ExplorationThemes,
-): string {
-  const missing: string[] = [];
-  if (!themes.benefits.some((b) => /收入|经济|就业|服务/.test(b))) {
-    missing.push("经济/收入");
-  }
-  if (!themes.drawbacks.some((d) => /环境|垃圾|污染/.test(d))) {
-    missing.push("自然环境");
-  }
-  if (!themes.drawbacks.some((d) => /拥堵|拥挤|生活/.test(d))) {
-    missing.push("居民生活");
-  }
-  if (missing.length) {
-    return `还可以从${missing.slice(0, 2).join("、")}想一点：你最想补哪一侧？`;
-  }
-  return "再补一个你还没写到的角度（当地人 / 环境 / 经济），用一句话即可。";
+  return "";
 }
 
 /** 按立场把 themes 写入六栏（利大于弊 → Body1 好处可含多点，Body2 弊端） */
@@ -628,17 +573,11 @@ export function selectStage1CoachAsk(
   const gap = sanitizeExplorationCoachAsk(options.gapQ?.trim() ?? "", themes);
 
   if (themes.themesComplete && !themes.readyToFinalize) {
-    return (
-      getPointRefinementAsk(state, themes) ||
-      suggestStructureQuestion(state, themes) ||
-      llm ||
-      gap ||
-      ""
-    );
+    return llm || gap || "";
   }
 
   if (themes.themesComplete && themes.readyToFinalize) {
-    return llm || suggestStructureQuestion(state, themes) || "";
+    return llm || "";
   }
 
   let substance = coachPrompt.trim();
@@ -663,22 +602,8 @@ export function selectStage1CoachAsk(
     if (clean) return clean;
   }
 
-  if (themes.positionLean !== "unknown") {
-    const structured = suggestStructureQuestion(state, themes);
-    if (structured && !isOpeningExplorationPrompt(structured)) {
-      return structured;
-    }
-  }
-
   if (substance && !isOpeningExplorationPrompt(substance)) {
     return substance;
-  }
-
-  if (!contentReady) {
-    const partial = suggestStructureQuestion(state, themes);
-    if (partial && !isOpeningExplorationPrompt(partial)) {
-      return partial;
-    }
   }
 
   const bb = brainstormFallback(state);
@@ -700,10 +625,7 @@ export function reconcileMirrorAndAsk(
     (mirrorWrapUp || themes.themesComplete) &&
     isOpeningExplorationPrompt(a)
   ) {
-    a =
-      getPointRefinementAsk(state, themes) ||
-      suggestStructureQuestion(state, themes) ||
-      "";
+    a = "";
   }
   return sanitizeExplorationCoachAsk(a, themes);
 }

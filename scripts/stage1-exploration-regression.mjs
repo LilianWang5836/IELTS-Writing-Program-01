@@ -16,8 +16,10 @@ import {
   getPointRefinementAsk,
   isExplorationQuestionRedundant,
   isOpeningExplorationPrompt,
+  resolveStage1CoachGap,
   themesToHandoffPatch,
 } from "../src/lib/domain/stage1-exploration-themes.ts";
+import { resolveStage1CollectionGap } from "../src/lib/domain/stage1-coach-gap.ts";
 import {
   mergeMonotonicSemanticState,
   sanitizeLlmThemeProjection,
@@ -569,7 +571,16 @@ const shortSessionMsgs = shortSessionState.chatHistory
   .filter((m) => m.role === "user")
   .map((m) => m.content);
 const shortSessionThemes = extractExplorationThemes(shortSessionState, shortSessionMsgs);
-ok(shortSessionThemes.themesComplete, "短 Session：立场+冲动购物后 themesComplete");
+ok(!shortSessionThemes.themesComplete, "短 Session：仅有立场+坏处时 themesComplete 为 false");
+ok(
+  resolveStage1CollectionGap(shortSessionThemes).gapType === "collect_benefit",
+  "短 Session：应识别 collect_benefit 缺口",
+);
+ok(
+  resolveStage1CoachGap(shortSessionState, shortSessionThemes, shortSessionMsgs)
+    .gapType === "collect_benefit",
+  "短 Session：PLAN 层应 collect_benefit 而非 deepen_body",
+);
 ok(
   isExplorationQuestionRedundant(
     "结合你之前认为整体是积极趋势的立场，你打算怎么在文章中平衡这两个方面呢？",

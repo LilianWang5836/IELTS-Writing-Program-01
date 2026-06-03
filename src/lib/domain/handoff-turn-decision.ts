@@ -36,14 +36,10 @@ import {
 } from "./stage1-exploration";
 import {
   extractExplorationThemes,
-  getPointRefinementAsk,
-  isBodyRefinementSatisfied,
   isExplorationQuestionRedundant,
   reconcileMirrorAndAsk,
   sanitizeExplorationCoachAsk,
   selectStage1CoachAsk,
-  suggestPointRefinementQuestion,
-  suggestStructureQuestion,
   userMessageRefinesBody,
 } from "./stage1-exploration-themes";
 import type { ExplorationThemes } from "./stage1-exploration-themes";
@@ -351,37 +347,6 @@ export function resolveHandoffTurnDecision(
     const lastTarget = refinementTargetFromAsk(lastQ);
     const curr = userMessage?.trim() ?? "";
     if (lastTarget && curr && userMessageRefinesBody(curr, lastTarget, themes)) {
-      const otherTarget: RefinementTarget =
-        lastTarget === "body1" ? "body2" : "body1";
-      const otherStillNeeded = !isBodyRefinementSatisfied(
-        otherTarget,
-        themes,
-        state,
-        msgs,
-      );
-      if (otherStillNeeded) {
-        const pro = themes.positionLean === "pro";
-        const altAsk = sanitizeExplorationCoachAsk(
-          suggestPointRefinementQuestion(state, themes, otherTarget, pro),
-          themes,
-        );
-        if (altAsk) {
-          return {
-            gap,
-            sides,
-            shouldPropose: false,
-            proposal: null,
-            coach: {
-              mirror:
-                lastTarget === "body1"
-                  ? "很好，你把 Body1 写实了。接下来把 Body2 也收成一句可论证的总括。"
-                  : "很好，你把 Body2 写实了。接下来把 Body1 也收成一句可论证的总括。",
-              ask: altAsk,
-            },
-            handoffPhase: "exploring",
-          };
-        }
-      }
       const refreshed = extractExplorationThemes(state, msgs);
       if (refreshed.readyToFinalize) {
         const auto = repairProposalFromChat(state);
@@ -402,23 +367,6 @@ export function resolveHandoffTurnDecision(
             essaySubstanceSufficient: true,
           };
         }
-      }
-    } else {
-      const refineAsk = getPointRefinementAsk(state, themes, msgs);
-      if (refineAsk) {
-        return {
-          gap,
-          sides,
-          shouldPropose: false,
-          proposal: null,
-          coach: {
-            mirror:
-              llmMirrorEarly ||
-              "利弊和立场我都记下了，接下来把两段论点各写实一点。",
-            ask: refineAsk,
-          },
-          handoffPhase: "exploring",
-        };
       }
     }
   }
@@ -609,14 +557,6 @@ export function resolveHandoffTurnDecision(
         substance.coachPrompt ?? "",
         { llmAsk: result.coachQuestion, gapQ },
       );
-  if (
-    !isRuntimePlanEnforcementEnabled() &&
-    !nextQ &&
-    themes.themesComplete &&
-    !themes.readyToFinalize
-  ) {
-    nextQ = getPointRefinementAsk(state, themes) || "";
-  }
   if (nextQ && isExplorationQuestionRedundant(nextQ, themes)) {
     if (themes.readyToFinalize) {
       const auto = repairProposalFromChat(state);
@@ -638,7 +578,7 @@ export function resolveHandoffTurnDecision(
         };
       }
     }
-    nextQ = suggestStructureQuestion(state, themes);
+    nextQ = gapQ || "";
   }
 
   if (
@@ -695,10 +635,7 @@ export function resolveHandoffTurnDecision(
     (isRepeatedQuestion(lastQ, nextQ, state) ||
       isExplorationQuestionRedundant(nextQ, themes))
   ) {
-    const replacement =
-      themes.readyToFinalize
-        ? suggestStructureQuestion(state, themes)
-        : gapQ || nextQ;
+    const replacement = themes.readyToFinalize ? "" : gapQ || nextQ;
     return {
       gap,
       sides,

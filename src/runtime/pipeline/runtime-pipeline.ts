@@ -46,6 +46,14 @@ export function runRuntimePipeline(input: RuntimePipelineInput): RuntimeCoachOut
   const phaseGate = resolvePhaseGate(world);
   const finalizeDecision = resolveFinalizeDecision(world.coaching, phaseGate);
 
+  const userMsgs = input.state.chatHistory
+    .filter((m) => m.role === "user")
+    .map((m) => m.content);
+  const policyContext = {
+    state: input.state,
+    userMessages: userMsgs,
+  };
+
   let plan =
     runtimeMode === "deterministic"
       ? arbitrateTurnDecision({
@@ -61,7 +69,7 @@ export function runRuntimePipeline(input: RuntimePipelineInput): RuntimeCoachOut
           finalizeDecision,
         })
       : (() => {
-          const policyPreference = suggestPolicyPreference(world);
+          const policyPreference = suggestPolicyPreference(world, policyContext);
           return arbitrateTurnDecision({
             world,
             policyPreference,
@@ -102,7 +110,9 @@ export function runRuntimePipeline(input: RuntimePipelineInput): RuntimeCoachOut
     phaseGate,
     finalizeDecision,
     policyPreference:
-      runtimeMode === "full" ? suggestPolicyPreference(world) : undefined,
+      runtimeMode === "full"
+        ? suggestPolicyPreference(world, policyContext)
+        : undefined,
     arbitrationDecision: plan,
     generatedPlan: plan,
     modelProfileId: profile.modelId,
